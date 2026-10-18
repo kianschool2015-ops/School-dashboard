@@ -135,10 +135,14 @@ export async function getVoipCallLogsAction(): Promise<VoipCallRecord[]> {
  * Get Masked Student Phone for UI display (Client never gets real phone)
  */
 export async function getMaskedStudentPhoneAction(studentProfileId: string): Promise<string> {
-  await requireRole(["MENTOR", "SUPERVISOR", "CEO", "ADMIN"]);
+  const session = await requireRole(["MENTOR", "SUPERVISOR", "CEO", "ADMIN"]);
 
   const profile = memoryRepo.getStudentProfileById(studentProfileId);
   if (!profile) return "۰۹۱۲***۰۰۰۰";
+
+  if (session.role === "MENTOR" && profile.mentorId !== session.userId) {
+    return "۰۹۱۲***۰۰۰۰";
+  }
 
   const studentUser = memoryRepo.getUserById(profile.userId);
   if (!studentUser) return "۰۹۱۲***۰۰۰۰";
