@@ -204,7 +204,7 @@ export async function verifyOtpAction(
 // In-memory sliding window rate limiter for password brute-force prevention
 const passwordRateLimitStore = new Map<string, { attempts: number[]; blockedUntil?: number }>();
 
-export function _clearPasswordRateLimitStores(): void {
+export async function _clearPasswordRateLimitStores(): Promise<void> {
   passwordRateLimitStore.clear();
 }
 
