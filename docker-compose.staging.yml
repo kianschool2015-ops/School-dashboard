@@ -1,0 +1,112 @@
+version: "3.8"
+
+services:
+  nginx:
+    image: nginx:alpine
+    container_name: mashahir_staging_nginx
+    restart: always
+    ports:
+      - "8080:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./public:/usr/share/nginx/html/public:ro
+    depends_on:
+      - web
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: always
+    deploy:
+      replicas: 2
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - HOSTNAME=0.0.0.0
+      - JWT_SECRET=staging_jwt_secret_key_at_least_32_characters_long
+      - DATABASE_URL=postgresql://postgres:staging_secret_password_2026@pgbouncer:6432/mashahir_staging_db
+      - REDIS_URL=redis://redis:6379/0
+      - ENABLE_MOCK_OTP=false
+    depends_on:
+      pgbouncer:
+        condition: service_started
+      redis:
+        condition: service_healthy
+
+  exam-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: ["npx", "tsx", "src/server/queue/exam-worker.ts"]
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=postgresql://postgres:staging_secret_password_2026@pgbouncer:6432/mashahir_staging_db
+      - REDIS_URL=redis://redis:6379/0
+    depends_on:
+      redis:
+        condition: service_healthy
+      pgbouncer:
+        condition: service_started
+
+  pgbouncer:
+    image: edoburu/pgbouncer:latest
+    container_name: mashahir_staging_pgbouncer
+    restart: always
+    environment:
+      - DB_USER=postgres
+      - DB_PASSWORD=staging_secret_password_2026
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_NAME=mashahir_staging_db
+      - POOL_MODE=transaction
+      - MAX_CLIENT_CONN=10000
+      - DEFAULT_POOL_SIZE=50
+      - RESERVE_POOL_SIZE=20
+      - MAX_DB_CONNECTIONS=100
+    ports:
+      - "6432:6432"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: mashahir_staging_postgres
+    restart: always
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=staging_secret_password_2026
+      - POSTGRES_DB=mashahir_staging_db
+    ports:
+      - "5433:5432"
+    volumes:
+      - staging_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d mashahir_staging_db"]
+      interval: 3s
+      timeout: 3s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: mashahir_staging_redis
+    restart: always
+    command: redis-server --appendonly yes --save 60 1
+    ports:
+      - "6379:6379"
+    volumes:
+      - staging_redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  staging_pgdata:
+  staging_redisdata:
+
+networks:
+  default:
+    name: mashahir_staging_net

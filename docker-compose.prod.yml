@@ -91,7 +91,7 @@ services:
   # into 50-120 backend PostgreSQL processes
   # ----------------------------------------------------------------------------
   pgbouncer:
-    image: edoburu/pgbouncer:v1.22.0
+    image: edoburu/pgbouncer:latest
     container_name: mashahir_pgbouncer
     restart: always
     volumes:
