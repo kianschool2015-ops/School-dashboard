@@ -5,8 +5,8 @@ const config: CapacitorConfig = {
   appName: 'پشتیبانی مشاهیر دانش',
   webDir: 'public',
   server: {
-    url: 'http://192.168.64.76:3000',
-    cleartext: true,
+    url: 'https://support.mashahirdanesh.com',
+    cleartext: false,
   },
 };
 
