@@ -50,6 +50,17 @@ export async function sendDirectMessageAction(payload: {
     }
   }
 
+  // Mentor IDOR check: Mentor can only message assigned students
+  if (session.role === "MENTOR" && receiver.role === "STUDENT") {
+    const studentProfile = memoryRepo.getStudentProfileByUserId(receiver.id);
+    if (!studentProfile || studentProfile.mentorId !== session.userId) {
+      return {
+        success: false,
+        message: "پشتیبان تنها مجاز به ارسال پیام به داوطلبان تحت نظارت مستقیم خود است.",
+      };
+    }
+  }
+
   // Validate attachment size
   if (payload.attachmentSize && payload.attachmentSize > MAX_ATTACHMENT_SIZE) {
     return {
