@@ -1,0 +1,70 @@
+import type { Metadata } from "next";
+import { Vazirmatn } from "next/font/google";
+import "./globals.css";
+import { Navbar } from "@/components/navbar";
+import { getSession } from "@/server/auth/guard";
+
+const vazirmatn = Vazirmatn({
+  subsets: ["arabic", "latin"],
+  variable: "--font-vazirmatn",
+  display: "swap",
+});
+
+export const metadata: Metadata = {
+  title: {
+    default: "پشتیبانی مشاهیر دانش",
+    template: "%s | پشتیبانی مشاهیر دانش",
+  },
+  description:
+    "پلتفرم پیشرفته پشتیبانی مشاهیر دانش - هدایت تحصیلی داوطلبان آزمون وکالت کانون وکلا و مرکز وکلای قوه قضائیه",
+  openGraph: {
+    title: "پشتیبانی مشاهیر دانش",
+    description: "سامانه ۳۶۰ درجه پشتیبانی مشاهیر دانش ویژه داوطلبان آزمون وکالت",
+    siteName: "پشتیبانی مشاهیر دانش",
+    locale: "fa_IR",
+    type: "website",
+  },
+};
+
+export default async function RootLayout({
+  children,
+}: Readonly<{
+  children: React.ReactNode;
+}>) {
+  const session = await getSession();
+
+  return (
+    <html lang="fa" dir="rtl" className={vazirmatn.variable} suppressHydrationWarning>
+      <head>
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `(function() {
+              try {
+                var saved = localStorage.getItem('mashahir_theme');
+                if (saved === 'light') {
+                  document.documentElement.setAttribute('data-theme', 'light');
+                  document.documentElement.classList.add('light');
+                  document.documentElement.classList.remove('dark');
+                } else {
+                  document.documentElement.setAttribute('data-theme', 'dark');
+                  document.documentElement.classList.add('dark');
+                  document.documentElement.classList.remove('light');
+                }
+              } catch (e) {}
+            })();`,
+          }}
+        />
+      </head>
+      <body className="min-h-screen bg-background text-foreground font-sans antialiased selection:bg-indigo-500 selection:text-white transition-colors duration-150">
+        <Navbar
+          userRole={session?.role || "STUDENT"}
+          userName={session?.fullName}
+          phoneNumber={session?.phoneNumber}
+        />
+        <main className="container py-6 min-h-[calc(100vh-4rem)]">
+          {children}
+        </main>
+      </body>
+    </html>
+  );
+}
