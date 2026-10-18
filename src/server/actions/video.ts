@@ -97,6 +97,17 @@ export async function createVideoSessionAction(payload: {
  */
 export async function launchInstantTriageRoomAction(studentProfileId: string, studentName: string) {
   const session = await requireRole(["MENTOR", "SUPERVISOR", "CEO", "ADMIN"]);
+  
+  if (session.role === "MENTOR") {
+    const profile = memoryRepo.getStudentProfileById(studentProfileId);
+    if (!profile || profile.mentorId !== session.userId) {
+      return {
+        success: false,
+        message: "شما تنها مجاز به ایجاد جلسه برای داوطلبان تحت نظارت مستقیم خود هستید.",
+      };
+    }
+  }
+
   const videoSettings = memoryRepo.getVideoSettings();
 
   const roomCode = `urgent-triage-${studentProfileId}`;
