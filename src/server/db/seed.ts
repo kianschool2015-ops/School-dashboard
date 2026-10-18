@@ -54,7 +54,7 @@ async function main() {
           bestStudyTime: p.bestStudyTime,
           primaryConstraint: p.primaryConstraint,
           previousBarExamAttempts: p.previousBarExamAttempts,
-          currentDailyStudyHours: p.currentDailyStudyHours,
+          currentDailyStudyHours: Math.round(p.currentDailyStudyHours),
           selfBaselineAssessment: p.selfBaselineAssessment,
           masterclassGoal: p.masterclassGoal,
           riskStatus: p.riskStatus,
