@@ -31,6 +31,7 @@ export default function MiladScrollytelling() {
       mm.add("(min-width: 768px)", () => {
         const tl = gsap.timeline({
           scrollTrigger: {
+            id: "milad-pinned-timeline",
             trigger: containerRef.current,
             start: "top top",
             end: "+=4000",
@@ -239,7 +240,17 @@ export default function MiladScrollytelling() {
         });
       });
 
-      return () => mm.revert();
+      return () => {
+        mm.revert();
+        ScrollTrigger.getAll().forEach((st) => {
+          if (
+            st.vars.id === "milad-pinned-timeline" ||
+            st.vars.trigger === containerRef.current
+          ) {
+            st.kill();
+          }
+        });
+      };
     },
     { scope: containerRef }
   );

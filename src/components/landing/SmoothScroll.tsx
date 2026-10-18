@@ -41,6 +41,7 @@ export default function SmoothScroll({ children }: SmoothScrollProps) {
     gsap.ticker.lagSmoothing(0);
 
     return () => {
+      lenis.off("scroll", ScrollTrigger.update);
       gsap.ticker.remove(updateTicker);
       lenis.destroy();
       lenisRef.current = null;
