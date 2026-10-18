@@ -11,12 +11,28 @@ export async function resolveTriageCaseAction(payload: {
   caseId: string;
   interventionNotes: string;
 }) {
-  const session = await requireRole(["MENTOR", "SUPERVISOR", "ADMIN"]);
+  const session = await requireRole(["MENTOR", "SUPERVISOR", "ADMIN", "CEO"]);
 
   if (!payload.interventionNotes || payload.interventionNotes.trim().length < 5) {
     return {
       success: false,
       message: "ثبت شرح اقدام مداخله‌ای پشتیبان (حداقل ۵ کاراکتر) الزامی است.",
+    };
+  }
+
+  // IDOR Protection: Verify case ownership
+  const targetCase = memoryRepo.triageCases.get(payload.caseId);
+  if (!targetCase) {
+    return {
+      success: false,
+      message: "پرونده پایش مورد نظر یافت نشد.",
+    };
+  }
+
+  if (session.role === "MENTOR" && targetCase.mentorId !== session.userId) {
+    return {
+      success: false,
+      message: "شما تنها مجاز به رسیدگی به پرونده‌های داوطلبان تحت سرپرستی خود هستید.",
     };
   }
 
@@ -62,11 +78,19 @@ export async function logMentorContactAction(payload: {
   studentProfileId: string;
   notes: string;
 }) {
-  await requireRole(["MENTOR", "SUPERVISOR", "ADMIN"]);
+  const session = await requireRole(["MENTOR", "SUPERVISOR", "ADMIN", "CEO"]);
 
   const student = memoryRepo.getStudentProfileById(payload.studentProfileId);
   if (!student) {
     return { success: false, message: "داوطلب یافت نشد." };
+  }
+
+  // IDOR Protection: Mentor can only log contact with assigned students
+  if (session.role === "MENTOR" && student.mentorId !== session.userId) {
+    return {
+      success: false,
+      message: "شما تنها مجاز به ثبت گزارش برای داوطلبان اختصاصی خود هستید.",
+    };
   }
 
   student.lastContactAt = new Date();

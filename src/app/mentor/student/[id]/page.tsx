@@ -25,6 +25,11 @@ export default async function CandidateDetailPage({ params }: CandidateDetailPag
     notFound();
   }
 
+  // IDOR Zero-Trust Guard: Mentors can strictly access ONLY their assigned students
+  if (session.role === "MENTOR" && student.mentorId !== session.userId) {
+    redirect("/mentor/triage");
+  }
+
   const user = memoryRepo.getUserById(student.userId);
   if (!user) {
     notFound();
