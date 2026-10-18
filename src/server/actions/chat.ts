@@ -109,6 +109,16 @@ export async function sendMessageAction(payload: {
     return { success: false, message: "گفتگو یافت نشد." };
   }
 
+  // Enforce membership for non-channel conversations
+  if (conv.type !== "CHANNEL" && session.role !== "CEO" && session.role !== "ADMIN") {
+    if (!conv.memberIds.includes(session.userId)) {
+      return {
+        success: false,
+        message: "شما عضو این گفتگو نیستید و مجاز به ارسال پیام نمی‌باشید.",
+      };
+    }
+  }
+
   // Student check for read-only channels
   if (session.role === "STUDENT" && conv.type === "CHANNEL" && conv.isChannelReadOnlyForStudents) {
     return {
