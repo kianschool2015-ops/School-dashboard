@@ -1,7 +1,13 @@
 "use server";
 
-import { cookies } from "next/headers";
-import { isValidIranianPhone, checkOtpRateLimit, generateOtp, verifyOtp } from "../auth/otp";
+import { cookies, headers } from "next/headers";
+import {
+  isValidIranianPhone,
+  checkOtpRateLimitDistributed,
+  generateOtpDistributed,
+  verifyOtpDistributed,
+} from "../auth/otp";
+import { getRedisClient } from "../redis";
 import { createSessionToken } from "../auth/jwt";
 import { getSession } from "../auth/guard";
 import { memoryRepo } from "../db";
@@ -29,15 +35,23 @@ export async function requestOtpAction(phone: string): Promise<ActionResult> {
     };
   }
 
-  const rateCheck = checkOtpRateLimit(phone);
+  let clientIp: string | undefined;
+  try {
+    const h = await headers();
+    clientIp = h.get("x-forwarded-for")?.split(",")[0]?.trim() || h.get("x-real-ip") || undefined;
+  } catch {}
+
+  const rateCheck = await checkOtpRateLimitDistributed(phone, clientIp);
   if (!rateCheck.allowed) {
     return {
       success: false,
-      message: `تعداد تلاش‌های شما بیش از حد مجاز است. لطفاً ${rateCheck.remainingMinutes} دقیقه دیگر تلاش کنید.`,
+      message: rateCheck.reason === "IP"
+        ? `تعداد درخواست‌های پیامک از این آدرس بیش از حد مجاز است. لطفاً ${rateCheck.remainingMinutes} دقیقه دیگر تلاش کنید.`
+        : `تعداد تلاش‌های شما بیش از حد مجاز است. لطفاً ${rateCheck.remainingMinutes} دقیقه دیگر تلاش کنید.`,
     };
   }
 
-  const { code, expiresInSeconds } = generateOtp(phone);
+  const { code, expiresInSeconds } = await generateOtpDistributed(phone, clientIp);
 
   // Dispatch OTP via Kavenegar SMS lookup service
   await sendSystemSms({
@@ -74,7 +88,7 @@ export async function verifyOtpAction(
     };
   }
 
-  const isValid = verifyOtp(phone, code);
+  const isValid = await verifyOtpDistributed(phone, code);
   if (!isValid) {
     return {
       success: false,
@@ -104,7 +118,7 @@ export async function verifyOtpAction(
       fullName: whitelistEntry.fullName,
       nationalId: whitelistEntry.nationalId,
       role: "STUDENT",
-      passwordHash: "password123", // Default initial password
+      passwordHash: "", // No default password; requires OTP verification or initial setup
       mustChangePassword: true,
       isActive: true,
       createdAt: new Date(),
@@ -187,8 +201,104 @@ export async function verifyOtpAction(
   };
 }
 
+// In-memory sliding window rate limiter for password brute-force prevention
+const passwordRateLimitStore = new Map<string, { attempts: number[]; blockedUntil?: number }>();
+
+export function _clearPasswordRateLimitStores(): void {
+  passwordRateLimitStore.clear();
+}
+
+function checkPasswordRateLimit(identifier: string): { allowed: boolean; remainingMinutes?: number } {
+  const norm = identifier.trim().toLowerCase();
+  const now = Date.now();
+  const entry = passwordRateLimitStore.get(norm) || { attempts: [] };
+
+  if (entry.blockedUntil && now < entry.blockedUntil) {
+    const remainingMinutes = Math.ceil((entry.blockedUntil - now) / 60000);
+    return { allowed: false, remainingMinutes };
+  }
+
+  // 10-minute sliding window
+  entry.attempts = entry.attempts.filter((ts) => now - ts < 10 * 60 * 1000);
+  passwordRateLimitStore.set(norm, entry);
+
+  if (entry.attempts.length >= 5) {
+    entry.blockedUntil = now + 15 * 60 * 1000; // 15-minute lockout
+    passwordRateLimitStore.set(norm, entry);
+    return { allowed: false, remainingMinutes: 15 };
+  }
+
+  return { allowed: true };
+}
+
+function recordPasswordFailure(identifier: string) {
+  const norm = identifier.trim().toLowerCase();
+  const entry = passwordRateLimitStore.get(norm) || { attempts: [] };
+  entry.attempts.push(Date.now());
+  passwordRateLimitStore.set(norm, entry);
+}
+
+function clearPasswordFailures(identifier: string) {
+  const norm = identifier.trim().toLowerCase();
+  passwordRateLimitStore.delete(norm);
+}
+
+async function checkPasswordRateLimitDistributed(identifier: string): Promise<{ allowed: boolean; remainingMinutes?: number }> {
+  const norm = identifier.trim().toLowerCase();
+  const redis = getRedisClient();
+  if (redis) {
+    try {
+      const lockKey = `lockout:pwd:${norm}`;
+      const isLocked = await redis.get(lockKey);
+      if (isLocked) {
+        const ttl = await redis.ttl(lockKey);
+        return { allowed: false, remainingMinutes: Math.max(1, Math.ceil(ttl / 60)) };
+      }
+      const attemptsKey = `ratelimit:pwd:${norm}`;
+      const count = await redis.get(attemptsKey);
+      if (count && parseInt(count, 10) >= 5) {
+        await redis.set(lockKey, "1", "EX", 15 * 60);
+        return { allowed: false, remainingMinutes: 15 };
+      }
+      return { allowed: true };
+    } catch {}
+  }
+  return checkPasswordRateLimit(norm);
+}
+
+async function recordPasswordFailureDistributed(identifier: string): Promise<void> {
+  const norm = identifier.trim().toLowerCase();
+  const redis = getRedisClient();
+  if (redis) {
+    try {
+      const attemptsKey = `ratelimit:pwd:${norm}`;
+      const count = await redis.incr(attemptsKey);
+      if (count === 1) {
+        await redis.expire(attemptsKey, 10 * 60);
+      }
+      if (count >= 5) {
+        await redis.set(`lockout:pwd:${norm}`, "1", "EX", 15 * 60);
+      }
+    } catch {}
+  }
+  recordPasswordFailure(norm);
+}
+
+async function clearPasswordFailuresDistributed(identifier: string): Promise<void> {
+  const norm = identifier.trim().toLowerCase();
+  const redis = getRedisClient();
+  if (redis) {
+    try {
+      await redis.del(`ratelimit:pwd:${norm}`);
+      await redis.del(`lockout:pwd:${norm}`);
+    } catch {}
+  }
+  clearPasswordFailures(norm);
+}
+
 /**
  * Login with Fixed Password (supports phone number or username: admin, adminsupervisor, etc.)
+ * Hardened with 5-attempt rate-limiting and zero default-fallback passwords
  */
 export async function loginWithPasswordAction(
   identifier: string,
@@ -202,22 +312,43 @@ export async function loginWithPasswordAction(
     };
   }
 
-  const user = memoryRepo.getUserByUsernameOrPhone(norm);
-  if (!user) {
+  // Brute-force rate limiting check
+  const rateCheck = await checkPasswordRateLimitDistributed(norm);
+  if (!rateCheck.allowed) {
     return {
       success: false,
-      message: "کاربری با این مشخصات یافت نشد. لطفاً نام کاربری یا شماره موبایل را بررسی فرمایید.",
+      message: `تعداد تلاش‌های ناموفق شما بیش از حد مجاز است. به دلایل امنیتی، حساب شما به مدت ${rateCheck.remainingMinutes} دقیقه مسدود گردید.`,
     };
   }
 
-  // Check password
-  const expectedPassword = user.passwordHash || "123456";
-  if (password.trim() !== expectedPassword) {
+  const user = memoryRepo.getUserByUsernameOrPhone(norm);
+  if (!user) {
+    await recordPasswordFailureDistributed(norm);
+    return {
+      success: false,
+      message: "کاربری با این مشخصات یافت نشد یا کلمه عبور نادرست است.",
+    };
+  }
+
+  // Check password: NO default plaintext fallback allowed
+  if (!user.passwordHash) {
+    await recordPasswordFailureDistributed(norm);
+    return {
+      success: false,
+      message: "کلمه عبور برای این حساب تعریف نشده است. لطفاً از طریق ورود با رمز یکبارمصرف پیامکی اقدام فرمایید.",
+    };
+  }
+
+  if (password.trim() !== user.passwordHash) {
+    await recordPasswordFailureDistributed(norm);
     return {
       success: false,
       message: "کلمه عبور وارد شده نادرست است.",
     };
   }
+
+  // Login success: clear rate limit counter
+  await clearPasswordFailuresDistributed(norm);
 
   let studentProfileId: string | undefined;
   if (user.role === "STUDENT") {
@@ -284,7 +415,7 @@ export async function changePasswordAction(
     return { success: false, message: "کاربر یافت نشد." };
   }
 
-  const expected = user.passwordHash || "password123";
+  const expected = user.passwordHash || "";
 
   let currentPassword = param1;
   let newPassword = param2;
