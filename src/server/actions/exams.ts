@@ -1,9 +1,10 @@
 "use server";
 
-import { requireAuth, requireRole } from "../auth/guard";
+import { requireAuth, requireRole, requireStudentOwnership } from "../auth/guard";
 import { memoryRepo } from "../db";
 import { sendSystemSms } from "../services/sms";
 import { revalidatePath } from "next/cache";
+import { isExamDeadlinePassed } from "@/lib/jalali";
 import type { EvaluationExamRecord, ExamSubmissionRecord, ExamQuestionRecord, QuestionType } from "@/types/models";
 
 /**
@@ -73,6 +74,7 @@ export async function createEvaluationExamAction(payload: {
 
 /**
  * Submit Evaluation Exam Responses & Score Calculation
+ * Hardened against IDOR, Tampering, Expired Deadlines, and Duplicate Submissions
  */
 export async function submitEvaluationExamAction(payload: {
   examId: string;
@@ -84,9 +86,28 @@ export async function submitEvaluationExamAction(payload: {
 }) {
   const session = await requireAuth();
 
+  // Zero-Trust Ownership Check (prevents IDOR)
+  const targetStudentId = session.role === "STUDENT" && session.studentProfileId
+    ? session.studentProfileId
+    : payload.studentProfileId;
+
+  await requireStudentOwnership(targetStudentId);
+
   const exam = memoryRepo.getExamById(payload.examId);
   if (!exam) {
     return { success: false, message: "آزمون مورد نظر یافت نشد." };
+  }
+
+  // Verify Exam Deadline (Timezone-safe Jalali conversion with 5-minute network grace period)
+  if (isExamDeadlinePassed(exam.endTime, 5)) {
+    return { success: false, message: "مهلت رسمی شرکت در این آزمون پایان یافته است." };
+  }
+
+  // Prevent duplicate submissions
+  const previousSubmissions = memoryRepo.getExamSubmissionsForStudent(targetStudentId);
+  const alreadySubmitted = previousSubmissions.some((s) => s.examId === exam.id);
+  if (alreadySubmitted) {
+    return { success: false, message: "پاسخنامه شما پیش از این در سامانه ثبت شده است و ارسال مجدد امکان‌پذیر نیست." };
   }
 
   // Calculate weighted average
@@ -100,7 +121,6 @@ export async function submitEvaluationExamAction(payload: {
   const scorePercent = Math.round(totalScore / (totalWeight || 1));
 
   // Calculate Delta from previous exams
-  const previousSubmissions = memoryRepo.getExamSubmissionsForStudent(payload.studentProfileId);
   const lastSub = previousSubmissions[previousSubmissions.length - 1];
 
   let deltaFromPrevious = 0;
@@ -118,7 +138,7 @@ export async function submitEvaluationExamAction(payload: {
     id: submissionId,
     examId: exam.id,
     examTitle: exam.title,
-    studentProfileId: payload.studentProfileId,
+    studentProfileId: targetStudentId,
     studentName: session.fullName,
     scorePercent,
     subjectScores: payload.subjectScores,
@@ -158,11 +178,15 @@ export async function addExamQuestionAction(payload: {
   modelAnswer?: string;
   points: number;
 }) {
-  await requireRole(["SUPERVISOR", "MENTOR", "CEO", "ADMIN"]);
+  const session = await requireRole(["SUPERVISOR", "MENTOR", "CEO", "ADMIN"]);
 
   const exam = memoryRepo.getExamById(payload.examId);
   if (!exam) {
     return { success: false, message: "آزمون مورد نظر یافت نشد." };
+  }
+
+  if (session.role === "MENTOR" && exam.creatorId !== session.userId) {
+    return { success: false, message: "پشتیبان تنها مجاز به ویرایش آزمون‌های ایجاد شده توسط خود است." };
   }
 
   const questionId = `q_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
@@ -200,7 +224,16 @@ export async function addExamQuestionAction(payload: {
  * Delete a Question from an Evaluation Exam
  */
 export async function deleteExamQuestionAction(examId: string, questionId: string) {
-  await requireRole(["SUPERVISOR", "MENTOR", "CEO", "ADMIN"]);
+  const session = await requireRole(["SUPERVISOR", "MENTOR", "CEO", "ADMIN"]);
+
+  const exam = memoryRepo.getExamById(examId);
+  if (!exam) {
+    return { success: false, message: "آزمون مورد نظر یافت نشد." };
+  }
+
+  if (session.role === "MENTOR" && exam.creatorId !== session.userId) {
+    return { success: false, message: "پشتیبان تنها مجاز به ویرایش آزمون‌های ایجاد شده توسط خود است." };
+  }
 
   const removed = memoryRepo.deleteExamQuestion(examId, questionId);
   if (!removed) {
@@ -220,7 +253,16 @@ export async function deleteExamQuestionAction(examId: string, questionId: strin
  * Update Exam Audience Assignment (All students or specific candidate IDs)
  */
 export async function updateExamAudienceAction(examId: string, assignedStudentIds: string[]) {
-  await requireRole(["SUPERVISOR", "MENTOR", "CEO", "ADMIN"]);
+  const session = await requireRole(["SUPERVISOR", "MENTOR", "CEO", "ADMIN"]);
+
+  const exam = memoryRepo.getExamById(examId);
+  if (!exam) {
+    return { success: false, message: "آزمون مورد نظر یافت نشد." };
+  }
+
+  if (session.role === "MENTOR" && exam.creatorId !== session.userId) {
+    return { success: false, message: "پشتیبان تنها مجاز به ویرایش آزمون‌های ایجاد شده توسط خود است." };
+  }
 
   const updated = memoryRepo.updateExamAudience(examId, assignedStudentIds);
   if (!updated) {

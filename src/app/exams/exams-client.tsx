@@ -743,7 +743,7 @@ export function ExamsClient({
             <CardHeader className="p-4 bg-[#004071]/10 border-b border-border flex flex-row items-center justify-between">
               <div>
                 <CardTitle className="text-base font-bold text-foreground flex items-center gap-2">
-                  <FileQuestion className="h-5 w-5 text-[#004071]" />
+                  <FileQuestion className="h-5 w-5 text-[#004071] dark:text-sky-300" />
                   مدیریت و اضافه کردن سؤال: {questionModalExam.title}
                 </CardTitle>
                 <p className="text-xs text-muted-foreground mt-0.5">
@@ -764,7 +764,7 @@ export function ExamsClient({
               {/* Form to Add New Question */}
               <div className="p-4 rounded-xl border-2 border-[#004071]/20 bg-muted/20 space-y-4">
                 <h4 className="text-xs font-bold text-foreground flex items-center gap-2">
-                  <Plus className="h-4 w-4 text-[#004071]" />
+                  <Plus className="h-4 w-4 text-[#004071] dark:text-sky-300" />
                   طرح سؤال جدید:
                 </h4>
 
@@ -1053,7 +1053,7 @@ export function ExamsClient({
             <CardHeader className="p-4 bg-muted/20 border-b border-border flex flex-row items-center justify-between">
               <div>
                 <CardTitle className="text-base font-bold text-foreground flex items-center gap-2">
-                  <UserCheck className="h-5 w-5 text-[#004071]" />
+                  <UserCheck className="h-5 w-5 text-[#004071] dark:text-sky-300" />
                   جامعه هدف آزمون: {audienceModalExam.title}
                 </CardTitle>
                 <p className="text-xs text-muted-foreground mt-0.5">
@@ -1155,7 +1155,7 @@ export function ExamsClient({
             <CardHeader className="p-4 bg-[#004071]/10 border-b border-border flex flex-row items-center justify-between">
               <div>
                 <CardTitle className="text-base font-bold flex items-center gap-2 text-foreground">
-                  <GraduationCap className="h-5 w-5 text-[#004071]" />
+                  <GraduationCap className="h-5 w-5 text-[#004071] dark:text-sky-300" />
                   آزمون آنلاین: {activeExamForTaking.title}
                 </CardTitle>
                 <p className="text-xs text-muted-foreground mt-0.5">
