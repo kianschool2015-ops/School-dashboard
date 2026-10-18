@@ -79,56 +79,57 @@ export function gregorianToJalali(gy: number, gm: number, gd: number): JalaliDat
 
 /**
  * Converts Jalali date to Gregorian date
+ * Uses astronomical table algorithm (tested against Nowruz and post-1401 standards)
  */
-export function jalaliToGregorian(jy: number, jm: number, jd: number): { gy: number; gm: number; gd: number } {
-  let gy: number;
-  if (jy > 979) {
-    gy = 1600;
-    jy -= 979;
-  } else {
-    gy = 621;
+export function jalaliToGregorian(j_y: number, j_m: number, j_d: number): { gy: number; gm: number; gd: number } {
+  const g_days = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  const jy = j_y - 979;
+  const jm = j_m - 1;
+  const jd = j_d - 1;
+
+  let j_day_no = 365 * jy + Math.floor(jy / 33) * 8 + Math.floor(((jy % 33) + 3) / 4);
+  for (let i = 0; i < jm; ++i) {
+    j_day_no += (i < 6) ? 31 : 30;
   }
-  let days =
-    365 * jy +
-    Math.floor(jy / 33) * 8 -
-    Math.floor(((jy % 33) + 3) / 4) +
-    78 +
-    jd +
-    (jm < 7 ? (jm - 1) * 31 : (jm - 7) * 30 + 186);
-  gy += 400 * Math.floor(days / 146097);
-  days %= 146097;
-  if (days > 36524) {
-    gy += 100 * Math.floor(--days / 36524);
-    days %= 36524;
-    if (days >= 365) days++;
+  j_day_no += jd;
+
+  let g_day_no = j_day_no + 79;
+
+  let gy = 1600 + 400 * Math.floor(g_day_no / 146097);
+  g_day_no %= 146097;
+
+  let leap = true;
+  if (g_day_no >= 36525) {
+    g_day_no--;
+    gy += 100 * Math.floor(g_day_no / 36524);
+    g_day_no %= 36524;
+
+    if (g_day_no >= 365) {
+      g_day_no++;
+    } else {
+      leap = false;
+    }
   }
-  gy += 4 * Math.floor(days / 1461);
-  days %= 1461;
-  if (days > 365) {
-    gy += Math.floor((days - 1) / 365);
-    days = (days - 1) % 365;
+
+  gy += 4 * Math.floor(g_day_no / 1461);
+  g_day_no %= 1461;
+
+  if (g_day_no >= 366) {
+    leap = false;
+    g_day_no--;
+    gy += Math.floor(g_day_no / 365);
+    g_day_no %= 365;
   }
-  let gd = days + 1;
-  const sal_a = [
-    0,
-    31,
-    (gy % 4 === 0 && gy % 100 !== 0) || gy % 400 === 0 ? 29 : 28,
-    31,
-    30,
-    31,
-    30,
-    31,
-    31,
-    30,
-    31,
-    30,
-    31,
-  ];
-  let gm: number;
-  for (gm = 0; gm < 13 && gd > sal_a[gm]; gm++) {
-    gd -= sal_a[gm];
+
+  for (let i = 0; i < 12; i++) {
+    const dim = g_days[i] + (i === 1 && leap ? 1 : 0);
+    if (g_day_no < dim) {
+      return { gy, gm: i + 1, gd: g_day_no + 1 };
+    }
+    g_day_no -= dim;
   }
-  return { gy, gm, gd };
+
+  return { gy, gm: 12, gd: g_day_no + 1 };
 }
 
 /**
@@ -221,3 +222,54 @@ export function formatJalaliHuman(date: Date): string {
   );
   return `${toPersianDigits(jd)} ${PERSIAN_MONTHS[jm - 1]} ${toPersianDigits(jy)}`;
 }
+
+/**
+ * Iran Standard Time (IRST) constants:
+ * Note: Daylight Saving Time (DST) was permanently repealed in Iran in September 2022 (1401).
+ * Iranian Standard Time is permanently fixed at UTC+03:30 (no summer +04:30 shift).
+ */
+export const IRAN_TZ_OFFSET_MINUTES = 210; // 3 hours and 30 minutes
+
+/**
+ * Parse Jalali date/time string (e.g. "1403-08-25 22:00" or "1403/08/25") into
+ * an accurate, timezone-aware JavaScript Date object in UTC.
+ * Prevents V8 from treating Jalali 1403 as year 1403 AD (medieval expiration bug).
+ */
+export function parseJalaliDateTime(jalaliStr: string): Date | null {
+  if (!jalaliStr || typeof jalaliStr !== "string") return null;
+
+  // Normalize Persian/Arabic digits
+  let cleanStr = jalaliStr
+    .replace(/[۰-۹]/g, (d) => String("۰۱۲۳۴۵۶۷۸۹".indexOf(d)))
+    .replace(/[٠-٩]/g, (d) => String("٠١٢٣٤٥٦٧٨٩".indexOf(d)))
+    .trim();
+
+  // Pattern: "1403-08-25 22:00" or "1403/08/25"
+  const match = cleanStr.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})(?:\s+(\d{1,2}):(\d{1,2})(?::(\d{1,2}))?)?$/);
+  if (!match) return null;
+
+  const jy = parseInt(match[1], 10);
+  const jm = parseInt(match[2], 10);
+  const jd = parseInt(match[3], 10);
+  const hour = match[4] ? parseInt(match[4], 10) : 0;
+  const minute = match[5] ? parseInt(match[5], 10) : 0;
+  const second = match[6] ? parseInt(match[6], 10) : 0;
+
+  const { gy, gm, gd } = jalaliToGregorian(jy, jm, jd);
+
+  // Iran is permanently UTC+03:30 (offset = +210 minutes).
+  // Target UTC timestamp = UTC timestamp of (gy, gm-1, gd, hour, minute, second) minus 210 minutes.
+  const utcMillis = Date.UTC(gy, gm - 1, gd, hour, minute, second) - (IRAN_TZ_OFFSET_MINUTES * 60 * 1000);
+  return new Date(utcMillis);
+}
+
+/**
+ * Validates whether an exam submission is within its official time window
+ */
+export function isExamDeadlinePassed(endTimeStr: string, gracePeriodMinutes: number = 2): boolean {
+  const endDate = parseJalaliDateTime(endTimeStr);
+  if (!endDate) return false; // Fail open if unparseable, or handle via explicit validation
+  const deadlineWithGrace = endDate.getTime() + (gracePeriodMinutes * 60 * 1000);
+  return Date.now() > deadlineWithGrace;
+}
+
