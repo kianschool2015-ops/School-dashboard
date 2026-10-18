@@ -343,7 +343,7 @@ export function SettingsClient({
       host: "192.168.1.50",
       port: 5038,
       username: "msh_ami",
-      secret: "AsteriskAmiSecret2024",
+      secret: "",
       context: "from-internal",
       channelTech: "SIP",
       trunk: "TRUNK_IRANCELL_E1",
@@ -396,7 +396,7 @@ export function SettingsClient({
       id: "vconf_default",
       platformName: "سامانه اختصاصی وبینار و وب‌کنفرانس مشاهیر دانش",
       serverUrl: "https://live.mashahirdanesh.com",
-      apiKey: "msh_live_sec_key_2024",
+      apiKey: "",
       isEnabled: true,
     }
   );
