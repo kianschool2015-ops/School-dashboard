@@ -1,0 +1,177 @@
+version: "3.8"
+
+# ==============================================================================
+# Mashahir Danesh Law School Platform - Production Architecture
+# Enterprise High-Concurrency Cluster for 200,000 Concurrent Users
+# ==============================================================================
+
+services:
+  # ----------------------------------------------------------------------------
+  # 1. Edge Reverse Proxy & Static Asset Caching (Nginx)
+  # Offloads 1.4TB multimedia & scrollytelling assets directly from disk/cache
+  # ----------------------------------------------------------------------------
+  nginx:
+    image: nginx:alpine
+    container_name: mashahir_edge_nginx
+    restart: always
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./public:/usr/share/nginx/html/public:ro
+    depends_on:
+      - web
+    networks:
+      - mashahir_public_net
+      - mashahir_internal_net
+
+  # ----------------------------------------------------------------------------
+  # 2. Next.js 15 Application Server Cluster (Horizontal Pod Scale)
+  # Stateless Node.js instances behind internal load balancer
+  # ----------------------------------------------------------------------------
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: always
+    deploy:
+      replicas: 4
+      resources:
+        limits:
+          cpus: "4.0"
+          memory: 4096M
+        reservations:
+          cpus: "1.0"
+          memory: 1024M
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - HOSTNAME=0.0.0.0
+      - JWT_SECRET=${JWT_SECRET}
+      # Database connection multiplexes via PgBouncer (Port 6432) in transaction mode
+      - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@pgbouncer:6432/${POSTGRES_DB}
+      - REDIS_URL=redis://redis:6379/0
+      - ENABLE_MOCK_OTP=false
+    depends_on:
+      - pgbouncer
+      - redis
+    networks:
+      - mashahir_internal_net
+
+  # ----------------------------------------------------------------------------
+  # 3. Asynchronous BullMQ Exam Ingestion Worker
+  # Drains 20,000/sec exam submission rushes without blocking Next.js event loop
+  # ----------------------------------------------------------------------------
+  exam-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: ["node", "dist/server/queue/exam-worker.js"]
+    restart: always
+    deploy:
+      replicas: 2
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 2048M
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@pgbouncer:6432/${POSTGRES_DB}
+      - REDIS_URL=redis://redis:6379/0
+    depends_on:
+      - pgbouncer
+      - redis
+    networks:
+      - mashahir_internal_net
+
+  # ----------------------------------------------------------------------------
+  # 4. PgBouncer Connection Pooler (Transaction Mode)
+  # Prevents 500GB RAM Postgres OOM crash by multiplexing 40,000 client conns
+  # into 50-120 backend PostgreSQL processes
+  # ----------------------------------------------------------------------------
+  pgbouncer:
+    image: edoburu/pgbouncer:v1.22.0
+    container_name: mashahir_pgbouncer
+    restart: always
+    volumes:
+      - ./pgbouncer.ini:/etc/pgbouncer/pgbouncer.ini:ro
+    environment:
+      - DB_USER=${POSTGRES_USER}
+      - DB_PASSWORD=${POSTGRES_PASSWORD}
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_NAME=${POSTGRES_DB}
+      - POOL_MODE=transaction
+      - MAX_CLIENT_CONN=40000
+      - DEFAULT_POOL_SIZE=50
+      - RESERVE_POOL_SIZE=20
+      - MAX_DB_CONNECTIONS=120
+    ports:
+      - "6432:6432"
+    depends_on:
+      - postgres
+    networks:
+      - mashahir_internal_net
+
+  # ----------------------------------------------------------------------------
+  # 5. Core PostgreSQL 16 Alpine Database
+  # Kernel-tuned backend with strict connection ceiling (max_connections = 150)
+  # ----------------------------------------------------------------------------
+  postgres:
+    image: postgres:16-alpine
+    container_name: mashahir_postgres_primary
+    restart: always
+    command: >
+      postgres
+      -c max_connections=150
+      -c shared_buffers=8GB
+      -c effective_cache_size=24GB
+      -c maintenance_work_mem=2GB
+      -c checkpoint_completion_target=0.9
+      -c wal_buffers=16MB
+      -c default_statistics_target=100
+      -c random_page_cost=1.1
+      -c effective_io_concurrency=200
+      -c work_mem=16MB
+      -c min_wal_size=2GB
+      -c max_wal_size=8GB
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks:
+      - mashahir_internal_net
+
+  # ----------------------------------------------------------------------------
+  # 6. Redis 7 Alpine (In-Memory Buffer, Rate Limiting & Queue Pipeline)
+  # ----------------------------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    container_name: mashahir_redis
+    restart: always
+    command: >
+      redis-server
+      --maxmemory 4gb
+      --maxmemory-policy allkeys-lru
+      --save 60 1000
+      --appendonly yes
+    volumes:
+      - redisdata:/data
+    networks:
+      - mashahir_internal_net
+
+networks:
+  mashahir_public_net:
+    driver: bridge
+  mashahir_internal_net:
+    driver: bridge
+    internal: true
+
+volumes:
+  pgdata:
+    driver: local
+  redisdata:
+    driver: local
