@@ -61,9 +61,14 @@ export default async function RootLayout({
           userName={session?.fullName}
           phoneNumber={session?.phoneNumber}
         />
-        <main className="container py-6 min-h-[calc(100vh-4rem)]">
+        <main className="container py-6 min-h-[calc(100vh-8rem)]">
           {children}
         </main>
+        <footer className="w-full border-t border-border/40 py-4 text-center text-xs text-muted-foreground bg-background/80 backdrop-blur-xs">
+          <div className="container mx-auto px-4">
+            <p>تمامی حقوق این وب‌سایت برای مؤسسه حقوقی مشاهیر دانش محفوظ است</p>
+          </div>
+        </footer>
       </body>
     </html>
   );
