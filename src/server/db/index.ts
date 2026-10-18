@@ -1,4 +1,4 @@
-﻿import { drizzle } from "drizzle-orm/postgres-js";
+import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 import * as schema from "./schema";
 import {
@@ -291,7 +291,7 @@ class MemoryRepository {
       this.users.set(u.id, {
         ...u,
         nationalId: "00" + Math.floor(10000000 + Math.random() * 90000000),
-        passwordHash: u.passwordHash || "123456",
+        passwordHash: u.passwordHash || "",
       });
     });
 
