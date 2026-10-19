@@ -1,7 +1,9 @@
 import React from "react";
 import { getSession } from "@/server/auth/guard";
 import { redirect } from "next/navigation";
-import { memoryRepo } from "@/server/db";
+import { db } from "@/server/db";
+import { studentProfiles, scheduleItems, mockExams as mockExamsTable, studentSchedules } from "@/server/db/schema";
+import { eq, desc } from "drizzle-orm";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -37,9 +39,30 @@ export default async function StudentDashboardPage() {
   }
 
   const studentProfileId = session.studentProfileId || "profile_stu_1";
-  const student = memoryRepo.getStudentProfileById(studentProfileId);
-  const items = memoryRepo.getScheduleItemsForStudent(studentProfileId);
-  const mockExams = memoryRepo.getMockExamsForStudent(studentProfileId);
+  const [student] = await db
+    .select()
+    .from(studentProfiles)
+    .where(eq(studentProfiles.id, studentProfileId))
+    .limit(1);
+
+  const [studentSchedule] = await db
+    .select({ id: studentSchedules.id })
+    .from(studentSchedules)
+    .where(eq(studentSchedules.studentProfileId, studentProfileId))
+    .limit(1);
+
+  const items = studentSchedule
+    ? await db
+        .select()
+        .from(scheduleItems)
+        .where(eq(scheduleItems.scheduleId, studentSchedule.id))
+    : [];
+
+  const mockExams = await db
+    .select()
+    .from(mockExamsTable)
+    .where(eq(mockExamsTable.studentProfileId, studentProfileId))
+    .orderBy(desc(mockExamsTable.createdAt));
 
   const { weekStartDate, weekEndDate, jalaliWeekNumber, jalaliYear } = getStudyWeekBoundaries();
   const currentDayIndex = getPersianDayOfWeek(new Date());

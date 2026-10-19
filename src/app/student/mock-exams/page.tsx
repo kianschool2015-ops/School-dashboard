@@ -1,9 +1,12 @@
 import React from "react";
 import { getSession } from "@/server/auth/guard";
 import { redirect } from "next/navigation";
-import { memoryRepo } from "@/server/db";
+import { db } from "@/server/db";
+import { mockExams as mockExamsTable } from "@/server/db/schema";
+import { eq, desc } from "drizzle-orm";
 import { Award } from "lucide-react";
 import { MockExamsClient } from "./mock-exams-client";
+import type { MockExamRecord } from "@/types/models";
 
 export default async function MockExamsPage() {
   const session = await getSession();
@@ -12,7 +15,12 @@ export default async function MockExamsPage() {
   }
 
   const studentProfileId = session.studentProfileId || "profile_stu_1";
-  const mockExams = memoryRepo.getMockExamsForStudent(studentProfileId);
+  const mockExamsRows = await db
+    .select()
+    .from(mockExamsTable)
+    .where(eq(mockExamsTable.studentProfileId, studentProfileId))
+    .orderBy(desc(mockExamsTable.createdAt));
+  const mockExams = mockExamsRows as unknown as MockExamRecord[];
 
   return (
     <div className="space-y-6 max-w-4xl mx-auto">

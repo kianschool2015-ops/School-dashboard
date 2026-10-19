@@ -1,28 +1,38 @@
 "use server";
 
 import { requireAuth, requireRole } from "../auth/guard";
-import { memoryRepo } from "../db";
+import { db } from "../db";
+import { chatConversations, chatMessages } from "../db/schema";
+import { eq, asc } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import type {
   ChatConversationRecord,
   ChatMessageRecord,
   ConversationType,
-  UserRole,
 } from "@/types/models";
 
 /**
- * Get all conversations accessible to the current user
+ * Get all conversations accessible to the current user via Drizzle ORM
  * CEO / ADMIN gets omniscient access to ALL channels, groups, and direct threads!
  */
 export async function getConversationsAction(): Promise<ChatConversationRecord[]> {
   const session = await requireAuth();
-  return memoryRepo.getConversationsForUser(session.userId, session.role);
+
+  const all = await db.select().from(chatConversations);
+
+  if (session.role === "CEO" || session.role === "ADMIN") {
+    return all as unknown as ChatConversationRecord[];
+  }
+
+  return all.filter((c) => {
+    if (c.type === "CHANNEL") return true;
+    const members = (c.memberIds as string[]) || [];
+    return members.includes(session.userId);
+  }) as unknown as ChatConversationRecord[];
 }
 
 /**
- * Create a new Channel or Group
- * Channels can be created by CEO, ADMIN, SUPERVISOR, or MENTOR
- * Groups can be created by any staff member
+ * Create a new Channel or Group via Drizzle ORM
  */
 export async function createConversationAction(payload: {
   title: string;
@@ -58,7 +68,17 @@ export async function createConversationAction(payload: {
     updatedAt: new Date(),
   };
 
-  memoryRepo.createChatConversation(newConv);
+  await db.insert(chatConversations).values({
+    id: convId,
+    type: payload.type,
+    title: payload.title.trim(),
+    description: payload.description?.trim() || null,
+    creatorId: session.userId,
+    creatorRole: session.role,
+    creatorName: session.fullName,
+    memberIds: members,
+    isChannelReadOnlyForStudents: payload.type === "CHANNEL" ? true : (payload.isChannelReadOnlyForStudents ?? false),
+  });
 
   revalidatePath("/messages");
   revalidatePath("/executive");
@@ -71,28 +91,40 @@ export async function createConversationAction(payload: {
 }
 
 /**
- * Get messages for a specific conversation
+ * Get messages for a specific conversation via Drizzle ORM
  */
 export async function getMessagesAction(conversationId: string): Promise<ChatMessageRecord[]> {
   const session = await requireAuth();
 
-  const conv = memoryRepo.getConversationById(conversationId);
+  const [conv] = await db
+    .select()
+    .from(chatConversations)
+    .where(eq(chatConversations.id, conversationId))
+    .limit(1);
+
   if (!conv) {
     throw new Error("گفتگو یافت نشد.");
   }
 
   // CEO / ADMIN has omniscient visibility
   if (session.role !== "CEO" && session.role !== "ADMIN") {
-    if (conv.type !== "CHANNEL" && !conv.memberIds.includes(session.userId)) {
+    const members = (conv.memberIds as string[]) || [];
+    if (conv.type !== "CHANNEL" && !members.includes(session.userId)) {
       throw new Error("شما عضو این گفتگو نیستید.");
     }
   }
 
-  return memoryRepo.getChatMessages(conversationId);
+  const messages = await db
+    .select()
+    .from(chatMessages)
+    .where(eq(chatMessages.conversationId, conversationId))
+    .orderBy(asc(chatMessages.createdAt));
+
+  return messages as unknown as ChatMessageRecord[];
 }
 
 /**
- * Send a message in a conversation with optional attachment (up to 10MB)
+ * Send a message in a conversation with optional attachment (up to 10MB) via Drizzle ORM
  */
 export async function sendMessageAction(payload: {
   conversationId: string;
@@ -104,14 +136,21 @@ export async function sendMessageAction(payload: {
 }) {
   const session = await requireAuth();
 
-  const conv = memoryRepo.getConversationById(payload.conversationId);
+  const [conv] = await db
+    .select()
+    .from(chatConversations)
+    .where(eq(chatConversations.id, payload.conversationId))
+    .limit(1);
+
   if (!conv) {
     return { success: false, message: "گفتگو یافت نشد." };
   }
 
+  const members = (conv.memberIds as string[]) || [];
+
   // Enforce membership for non-channel conversations
   if (conv.type !== "CHANNEL" && session.role !== "CEO" && session.role !== "ADMIN") {
-    if (!conv.memberIds.includes(session.userId)) {
+    if (!members.includes(session.userId)) {
       return {
         success: false,
         message: "شما عضو این گفتگو نیستید و مجاز به ارسال پیام نمی‌باشید.",
@@ -150,7 +189,23 @@ export async function sendMessageAction(payload: {
     createdAt: new Date(),
   };
 
-  memoryRepo.addChatMessage(newMsg);
+  await db.insert(chatMessages).values({
+    id: msgId,
+    conversationId: payload.conversationId,
+    senderId: session.userId,
+    senderName: session.fullName,
+    senderRole: session.role,
+    message: payload.message.trim(),
+    attachmentUrl: payload.attachmentUrl || null,
+    attachmentName: payload.attachmentName || null,
+    attachmentSize: payload.attachmentSize || null,
+    attachmentType: payload.attachmentType || null,
+  });
+
+  await db
+    .update(chatConversations)
+    .set({ updatedAt: new Date() })
+    .where(eq(chatConversations.id, payload.conversationId));
 
   revalidatePath("/messages");
   revalidatePath("/executive");
@@ -158,21 +213,6 @@ export async function sendMessageAction(payload: {
   return {
     success: true,
     message: "پیام با موفقیت ارسال گردید.",
-    data: newMsg,
-  };
-}
-
-/**
- * Omniscient Inspector Action: Manager / CEO can inspect all conversations
- */
-export async function getOmniscientAuditChatAction() {
-  await requireRole(["CEO", "ADMIN"]);
-
-  const allConversations = memoryRepo.getAllChatConversations();
-  const allDirectMessages = memoryRepo.getAllMessages();
-
-  return {
-    conversations: allConversations,
-    directMessages: allDirectMessages,
+    messageRecord: newMsg,
   };
 }

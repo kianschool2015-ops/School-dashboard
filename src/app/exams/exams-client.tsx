@@ -35,13 +35,14 @@ import type {
   ExamSubmissionRecord,
   ExamQuestionRecord,
   QuestionType,
+  UserRole,
 } from "@/types/models";
 
 interface ExamsClientProps {
   currentUser: {
     id: string;
     fullName: string;
-    role: string;
+    role: UserRole;
   };
   studentProfileId?: string;
   exams: EvaluationExamRecord[];
@@ -157,7 +158,7 @@ export function ExamsClient({
         const newlyCreated: EvaluationExamRecord = {
           id: res.examId,
           creatorId: currentUser.id,
-          creatorRole: currentUser.role as any,
+          creatorRole: currentUser.role,
           creatorName: currentUser.fullName,
           title: examTitle.trim(),
           description: examDesc.trim(),

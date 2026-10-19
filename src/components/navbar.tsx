@@ -419,18 +419,16 @@ export function Navbar({ userRole = "STUDENT", userName, phoneNumber }: NavbarPr
           {/* Theme Toggle (Light / Dark Mode) */}
           <ThemeToggle />
 
-          {/* Settings Cog: VISIBLE ONLY TO CEO / ADMIN */}
-          {isManager && (
-            <Link
-              href="/settings"
-              className={`p-2 rounded-lg border border-border text-muted-foreground hover:text-foreground hover:bg-muted transition-colors ${
-                pathname === "/settings" ? "bg-primary/10 text-primary border-primary/50" : ""
-              }`}
-              title="تنظیمات کلان سامانه، زیرساخت VoIP، کاوه‌نگار و وبینار"
-            >
-              <Settings className="h-4 w-4" />
-            </Link>
-          )}
+          {/* Settings Cog: Accessible to all authenticated users (role-tailored tabs) */}
+          <Link
+            href="/settings"
+            className={`p-2 rounded-lg border border-border text-muted-foreground hover:text-foreground hover:bg-muted transition-colors ${
+              pathname === "/settings" ? "bg-primary/10 text-primary border-primary/50" : ""
+            }`}
+            title="تنظیمات پروفایل و سامانه"
+          >
+            <Settings className="h-4 w-4" />
+          </Link>
 
           {/* 4. User Profile Pill: Displays Static User Name + Actual Role Badge + Logout */}
           <div className="flex items-center gap-2 border border-border bg-card/80 px-2.5 py-1 rounded-xl shadow-xs">
@@ -632,14 +630,6 @@ export function Navbar({ userRole = "STUDENT", userName, phoneNumber }: NavbarPr
                   <CheckSquare className="h-4 w-4 text-amber-400" />
                   <span>کارتابل وظایف</span>
                 </Link>
-                <Link
-                  href="/settings"
-                  onClick={() => setMobileMenuOpen(false)}
-                  className="flex items-center space-x-2 space-x-reverse px-3 py-2 rounded-lg text-xs font-medium text-foreground hover:bg-muted"
-                >
-                  <Settings className="h-4 w-4 text-primary" />
-                  <span>تنظیمات، زیرساخت VoIP، کاوه‌نگار و وبینار</span>
-                </Link>
               </>
             )}
 
@@ -660,6 +650,15 @@ export function Navbar({ userRole = "STUDENT", userName, phoneNumber }: NavbarPr
             >
               <MessageSquare className="h-4 w-4 text-blue-400" />
               <span>پیام‌ها و اسناد</span>
+            </Link>
+
+            <Link
+              href="/settings"
+              onClick={() => setMobileMenuOpen(false)}
+              className="flex items-center space-x-2 space-x-reverse px-3 py-2 rounded-lg text-xs font-medium text-foreground hover:bg-muted"
+            >
+              <Settings className="h-4 w-4 text-primary" />
+              <span>تنظیمات و پروفایل</span>
             </Link>
           </nav>
         </div>

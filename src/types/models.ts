@@ -8,12 +8,12 @@ export type UserRole = "STUDENT" | "MENTOR" | "SUPERVISOR" | "CEO" | "ADMIN";
 export interface UserRecord {
   id: string;
   phoneNumber: string;
-  username?: string;
-  sipExtension?: string;
+  username?: string | null;
+  sipExtension?: string | null;
   fullName: string;
   role: UserRole;
-  nationalId?: string;
-  passwordHash?: string;
+  nationalId?: string | null;
+  passwordHash?: string | null;
   mustChangePassword?: boolean;
   isActive: boolean;
   createdAt: Date;
@@ -157,7 +157,7 @@ export type SmsTriggerEvent =
   | "WHITELIST_INVITE";
 
 export interface SmsTriggerConfig {
-  event: SmsTriggerEvent;
+  event?: SmsTriggerEvent;
   title: string;
   description: string;
   isEnabled: boolean;
@@ -183,8 +183,9 @@ export interface SmsLogRecord {
   messageText: string;
   status: "DELIVERED" | "SENT" | "QUEUED" | "FAILED" | "SIMULATED";
   providerMessageId?: string;
-  sentAt: Date;
-  createdAt: Date | string;
+  deliveryTime?: Date;
+  sentAt?: Date;
+  createdAt?: Date | string;
 }
 
 /**
@@ -328,7 +329,7 @@ export interface ExamSubmissionRecord {
  * 8. Issabel Asterisk AMI VoIP Integration & Phone Masking
  */
 export interface VoipAmiSettings {
-  id: string;
+  id?: string;
   host: string;
   port: number;
   username: string;
@@ -339,7 +340,7 @@ export interface VoipAmiSettings {
   callerId: string;
   isActive: boolean;
   mentorExtensions: Record<string, string>; // mentorId -> SIP extension (e.g. { "usr_mentor1": "101", "usr_mentor2": "102" })
-  updatedAt: Date;
+  updatedAt?: Date;
 }
 
 export interface VoipCallRecord {
@@ -394,7 +395,7 @@ export interface ChatMessageRecord {
  * 10. Custom Video Conferencing (Mashahir Danesh Tailor-Made Platform)
  */
 export interface VideoConferenceSettings {
-  id: string;
+  id?: string;
   platformName: string;
   serverUrl: string;
   apiKey: string;
@@ -448,28 +449,34 @@ export interface LandingGalleryImage {
 }
 
 export interface LandingContentSettings {
-  heroTagline: string;
+  heroBadge?: string;
+  heroTagline?: string;
   heroTitle: string;
-  heroDescription: string;
-  towerTitle: string;
-  towerSubtitle: string;
-  galaTitle: string;
-  galaSubtitle: string;
-  featuresTitle: string;
-  featuresDescription: string;
+  heroSubtitle?: string;
+  heroDescription?: string;
+  towerTitle?: string;
+  towerSubtitle?: string;
+  galaTitle?: string;
+  galaSubtitle?: string;
+  featuresTitle?: string;
+  featuresDescription?: string;
   features: LandingFeatureItem[];
-  honorsTitle: string;
-  honorsDescription: string;
+  honorsTitle?: string;
+  honorsDescription?: string;
   honors: LandingHonorsItem[];
-  stats: {
+  stats?: {
     studentsCount: string;
     ranksCount: string;
     checkinSpeed: string;
     adherenceRate: string;
   };
   gallery: LandingGalleryImage[];
-  ctaTitle: string;
-  ctaDescription: string;
-  footerRights: string;
+  ctaTitle?: string;
+  ctaSubtitle?: string;
+  ctaDescription?: string;
+  footerRights?: string;
+  phoneNumber?: string;
+  brandColor?: string;
+  accentColor?: string;
 }
 

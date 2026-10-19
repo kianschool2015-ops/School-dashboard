@@ -1,7 +1,8 @@
 import React from "react";
 import { getSession } from "@/server/auth/guard";
 import { redirect } from "next/navigation";
-import { memoryRepo } from "@/server/db";
+import { db } from "@/server/db";
+import { studentProfiles, triageCases } from "@/server/db/schema";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
@@ -25,8 +26,8 @@ export default async function SupervisorDashboardPage() {
     redirect("/auth/login");
   }
 
-  const allStudents = memoryRepo.getAllStudentProfiles();
-  const allTriage = memoryRepo.getAllTriageCases();
+  const allStudents = await db.select().from(studentProfiles);
+  const allTriage = await db.select().from(triageCases);
 
   // 1. Cohort Health Breakdown
   const total = allStudents.length;

@@ -6,7 +6,6 @@ import {
   _clearOtpStores,
   isValidIranianPhone,
 } from "../src/server/auth/otp";
-import { memoryRepo } from "../src/server/db";
 import { resolveTriageCaseAction, logMentorContactAction } from "../src/server/actions/mentor";
 import { applyTailoredPlanToStudentAction } from "../src/server/actions/plans";
 import { originateMentorCallAction, getMaskedStudentPhoneAction } from "../src/server/actions/voip";
@@ -74,11 +73,193 @@ vi.mock("next/cache", () => ({
   revalidateTag: vi.fn(),
 }));
 
+// In-Memory state for mocked Drizzle ORM
+const mockDbState = {
+  users: new Map<string, any>(),
+  studentProfiles: new Map<string, any>(),
+  triageCases: new Map<string, any>(),
+  evaluationExams: new Map<string, any>(),
+  chatConversations: new Map<string, any>(),
+  chatMessages: new Map<string, any>(),
+  directMessages: new Map<string, any>(),
+  studentWhitelist: new Map<string, any>(),
+  reset() {
+    this.users.clear();
+    this.studentProfiles.clear();
+    this.triageCases.clear();
+    this.evaluationExams.clear();
+    this.chatConversations.clear();
+    this.chatMessages.clear();
+    this.directMessages.clear();
+    this.studentWhitelist.clear();
+  },
+};
+
+function getMapForTable(table: any): Map<string, any> {
+  if (!table) return new Map();
+  const name =
+    table[Symbol.for("drizzle:Name")] ||
+    table._?.name ||
+    (typeof table === "string" ? table : "");
+
+  if (name === "users") return mockDbState.users;
+  if (name === "student_profiles") return mockDbState.studentProfiles;
+  if (name === "triage_cases" || name === "mentor_triage_cases") return mockDbState.triageCases;
+  if (name === "evaluation_exams") return mockDbState.evaluationExams;
+  if (name === "chat_conversations") return mockDbState.chatConversations;
+  if (name === "chat_messages") return mockDbState.chatMessages;
+  if (name === "direct_messages") return mockDbState.directMessages;
+  if (name === "student_whitelist") return mockDbState.studentWhitelist;
+
+  return new Map();
+}
+
+function matchesCondition(row: any, cond: any): boolean {
+  if (!cond) return true;
+  if (cond.operator === "or" && Array.isArray(cond.expressions)) {
+    return cond.expressions.some((expr: any) => matchesCondition(row, expr));
+  }
+  if (cond.operator === "and" && Array.isArray(cond.expressions)) {
+    return cond.expressions.every((expr: any) => matchesCondition(row, expr));
+  }
+  const left = cond.left;
+  let right = cond.right;
+  if (right && typeof right === "object" && "value" in right) {
+    right = right.value;
+  }
+  if (left) {
+    const colName = left.name;
+    const fieldName = left.fieldName;
+    for (const k of [fieldName, colName]) {
+      if (k && row[k] !== undefined) {
+        return row[k] === right;
+      }
+    }
+    const target = (fieldName || colName || "").toLowerCase().replace(/_/g, "");
+    for (const [k, v] of Object.entries(row)) {
+      if (k.toLowerCase().replace(/_/g, "") === target) {
+        return v === right;
+      }
+    }
+  }
+  return true;
+}
+
+const mockDb = {
+  select: (fields?: any) => ({
+    from: (table: any) => {
+      let cond: any = null;
+      let limitCount: number | null = null;
+      const queryBuilder = {
+        where: (c: any) => {
+          cond = c;
+          return queryBuilder;
+        },
+        orderBy: () => queryBuilder,
+        limit: (n: number) => {
+          limitCount = n;
+          return queryBuilder;
+        },
+        then: (resolve: any, reject?: any) => {
+          try {
+            const map = getMapForTable(table);
+            let items = Array.from(map.values()).filter((row) =>
+              matchesCondition(row, cond)
+            );
+            if (limitCount !== null) {
+              items = items.slice(0, limitCount);
+            }
+            return Promise.resolve(items).then(resolve, reject);
+          } catch (e) {
+            return Promise.reject(e).then(resolve, reject);
+          }
+        },
+      };
+      return queryBuilder;
+    },
+  }),
+  insert: (table: any) => ({
+    values: (val: any) => {
+      const map = getMapForTable(table);
+      const records = Array.isArray(val) ? val : [val];
+      for (const r of records) {
+        const id = r.id || `gen_${Date.now()}_${Math.random()}`;
+        map.set(id, { ...r, id });
+      }
+      const insertBuilder = {
+        onConflictDoNothing: () => insertBuilder,
+        returning: () => Promise.resolve(records),
+        then: (resolve: any, reject?: any) =>
+          Promise.resolve(records).then(resolve, reject),
+      };
+      return insertBuilder;
+    },
+  }),
+  update: (table: any) => ({
+    set: (updates: any) => {
+      let cond: any = null;
+      const updateBuilder = {
+        where: (c: any) => {
+          cond = c;
+          return updateBuilder;
+        },
+        returning: () => {
+          const map = getMapForTable(table);
+          const updated: any[] = [];
+          for (const [id, row] of map.entries()) {
+            if (matchesCondition(row, cond)) {
+              const newRow = { ...row, ...updates };
+              map.set(id, newRow);
+              updated.push(newRow);
+            }
+          }
+          return Promise.resolve(updated);
+        },
+        then: (resolve: any, reject?: any) => {
+          const map = getMapForTable(table);
+          const updated: any[] = [];
+          for (const [id, row] of map.entries()) {
+            if (matchesCondition(row, cond)) {
+              const newRow = { ...row, ...updates };
+              map.set(id, newRow);
+              updated.push(newRow);
+            }
+          }
+          return Promise.resolve(updated).then(resolve, reject);
+        },
+      };
+      return updateBuilder;
+    },
+  }),
+  delete: (table: any) => ({
+    where: (cond: any) => {
+      const map = getMapForTable(table);
+      for (const [id, row] of map.entries()) {
+        if (matchesCondition(row, cond)) {
+          map.delete(id);
+        }
+      }
+      return Promise.resolve();
+    },
+  }),
+};
+
+vi.mock("../src/server/db", () => ({
+  db: mockDb,
+  pgClient: { end: vi.fn() },
+}));
+
+vi.mock("@/server/db", () => ({
+  db: mockDb,
+  pgClient: { end: vi.fn() },
+}));
+
 describe("Phase 3: Automated Security & Zero-Trust Audit Test Suite", () => {
   beforeEach(() => {
     _clearOtpStores();
     _clearPasswordRateLimitStores();
     currentMockSession = null;
+    mockDbState.reset();
   });
 
   // ===========================================================================
@@ -95,7 +276,7 @@ describe("Phase 3: Automated Security & Zero-Trust Audit Test Suite", () => {
       };
 
       // Target student assigned to Mentor B
-      memoryRepo.studentProfiles.set("profile_stu_other", {
+      mockDbState.studentProfiles.set("profile_stu_other", {
         id: "profile_stu_other",
         userId: "usr_stu_other",
         mentorId: "usr_mentor_B", // Different mentor
@@ -132,7 +313,7 @@ describe("Phase 3: Automated Security & Zero-Trust Audit Test Suite", () => {
         role: "MENTOR",
       };
 
-      memoryRepo.triageCases.set("case_other", {
+      mockDbState.triageCases.set("case_other", {
         id: "case_other",
         studentProfileId: "profile_stu_other",
         mentorId: "usr_mentor_B",
@@ -162,12 +343,19 @@ describe("Phase 3: Automated Security & Zero-Trust Audit Test Suite", () => {
       };
 
       // Receiver is a student assigned to Mentor B
-      memoryRepo.users.set("usr_stu_other", {
+      mockDbState.users.set("usr_stu_other", {
         id: "usr_stu_other",
         phoneNumber: "09129999999",
         fullName: "داوطلب دیگر",
         role: "STUDENT",
         isActive: true,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      });
+      mockDbState.studentProfiles.set("profile_stu_other", {
+        id: "profile_stu_other",
+        userId: "usr_stu_other",
+        mentorId: "usr_mentor_B",
         createdAt: new Date(),
         updatedAt: new Date(),
       });
@@ -190,7 +378,7 @@ describe("Phase 3: Automated Security & Zero-Trust Audit Test Suite", () => {
       };
 
       // Create private group with members A and B
-      memoryRepo.createChatConversation({
+      mockDbState.chatConversations.set("conv_private_1", {
         id: "conv_private_1",
         type: "GROUP",
         title: "گروه محرمانه سرپرستی",
@@ -231,7 +419,7 @@ describe("Phase 3: Automated Security & Zero-Trust Audit Test Suite", () => {
         role: "MENTOR",
       };
 
-      memoryRepo.evaluationExams.set("exam_by_mentor_B", {
+      mockDbState.evaluationExams.set("exam_by_mentor_B", {
         id: "exam_by_mentor_B",
         title: "آزمون تخصصی مدنی",
         description: "طراحی شده توسط پشتیبان ب",
@@ -391,7 +579,7 @@ describe("Phase 3: Automated Security & Zero-Trust Audit Test Suite", () => {
       const origEnv = process.env.NODE_ENV;
       const origMock = process.env.ENABLE_MOCK_OTP;
       try {
-        process.env.NODE_ENV = "production";
+        (process.env as Record<string, string | undefined>).NODE_ENV = "production";
         process.env.ENABLE_MOCK_OTP = "true";
 
         const phone = "09123456789";
@@ -399,7 +587,7 @@ describe("Phase 3: Automated Security & Zero-Trust Audit Test Suite", () => {
         const result = verifyOtp(phone, "12345");
         expect(result).toBe(false);
       } finally {
-        process.env.NODE_ENV = origEnv;
+        (process.env as Record<string, string | undefined>).NODE_ENV = origEnv;
         process.env.ENABLE_MOCK_OTP = origMock;
       }
     });
@@ -461,9 +649,10 @@ describe("Phase 3: Automated Security & Zero-Trust Audit Test Suite", () => {
   describe("4. Password Authentication Lockout", () => {
     it("locks out user account after 5 consecutive failed password attempts", async () => {
       const targetUser = "09127776655";
-      memoryRepo.users.set(targetUser, {
+      mockDbState.users.set(targetUser, {
         id: "usr_pwd_test",
         phoneNumber: targetUser,
+        username: targetUser,
         fullName: "کاربر تست پسورد",
         role: "STUDENT",
         passwordHash: "Authentic@Password2026",

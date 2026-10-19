@@ -1059,7 +1059,7 @@ export function SettingsClient({
                             </Badge>
                           </td>
                           <td className="p-2 text-muted-foreground text-[10px]">
-                            {new Date(log.createdAt || log.sentAt).toLocaleTimeString("fa-IR")}
+                            {new Date(log.deliveryTime || log.createdAt || log.sentAt || Date.now()).toLocaleTimeString("fa-IR")}
                           </td>
                         </tr>
                       ))}

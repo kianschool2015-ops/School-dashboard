@@ -1,28 +1,20 @@
 "use server";
 
 import { requireAuth } from "../auth/guard";
-import { memoryRepo } from "../db";
+import { db } from "../db";
+import { directMessages, escalationTickets, users, studentProfiles } from "../db/schema";
+import { eq } from "drizzle-orm";
 import { sendSystemSms } from "../services/sms";
 import { revalidatePath } from "next/cache";
 import type { DirectMessageRecord, EscalationTicketRecord } from "@/types/models";
 
 const MAX_ATTACHMENT_SIZE = 10 * 1024 * 1024; // 10MB
-const ALLOWED_MIME_PREFIXES = [
-  "application/pdf",
-  "application/msword",
-  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-  "application/vnd.ms-excel",
-  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-  "image/jpeg",
-  "image/png",
-];
 
 /**
- * Send Direct Message with File Attachment
- * Enforces hierarchical messaging:
+ * Send Direct Message with File Attachment via Drizzle ORM
+ * Enforces hierarchical messaging and zero-trust IDOR checks (Track 4):
  * - Student can ONLY message their assigned Mentor
  * - Mentor can message their assigned Students and Supervisor
- * - Supervisor can message their Mentors
  */
 export async function sendDirectMessageAction(payload: {
   receiverId: string;
@@ -34,14 +26,24 @@ export async function sendDirectMessageAction(payload: {
 }) {
   const session = await requireAuth();
 
-  const receiver = memoryRepo.getUserById(payload.receiverId);
+  const [receiver] = await db
+    .select()
+    .from(users)
+    .where(eq(users.id, payload.receiverId))
+    .limit(1);
+
   if (!receiver) {
     return { success: false, message: "گیرنده پیام یافت نشد." };
   }
 
   // Hierarchy validation
   if (session.role === "STUDENT") {
-    const studentProfile = memoryRepo.getStudentProfileByUserId(session.userId);
+    const [studentProfile] = await db
+      .select()
+      .from(studentProfiles)
+      .where(eq(studentProfiles.userId, session.userId))
+      .limit(1);
+
     if (!studentProfile || studentProfile.mentorId !== receiver.id) {
       return {
         success: false,
@@ -50,9 +52,14 @@ export async function sendDirectMessageAction(payload: {
     }
   }
 
-  // Mentor IDOR check: Mentor can only message assigned students
+  // Mentor IDOR check (Track 4): Mentor can only message assigned students
   if (session.role === "MENTOR" && receiver.role === "STUDENT") {
-    const studentProfile = memoryRepo.getStudentProfileByUserId(receiver.id);
+    const [studentProfile] = await db
+      .select()
+      .from(studentProfiles)
+      .where(eq(studentProfiles.userId, receiver.id))
+      .limit(1);
+
     if (!studentProfile || studentProfile.mentorId !== session.userId) {
       return {
         success: false,
@@ -90,7 +97,22 @@ export async function sendDirectMessageAction(payload: {
     createdAt: new Date(),
   };
 
-  memoryRepo.addMessage(newMsg);
+  await db.insert(directMessages).values({
+    id: messageId,
+    threadId,
+    senderId: session.userId,
+    senderName: session.fullName,
+    senderRole: session.role,
+    receiverId: receiver.id,
+    receiverName: receiver.fullName,
+    receiverRole: receiver.role,
+    message: payload.message.trim(),
+    attachmentUrl: payload.attachmentUrl || null,
+    attachmentName: payload.attachmentName || null,
+    attachmentSize: payload.attachmentSize || null,
+    attachmentType: payload.attachmentType || null,
+    isRead: false,
+  });
 
   // Send SMS notification to receiver
   await sendSystemSms({
@@ -113,7 +135,7 @@ export async function sendDirectMessageAction(payload: {
 }
 
 /**
- * Submit Escalation Ticket from Student to Supervisor (Located inside Settings)
+ * Submit Escalation Ticket from Student to Supervisor (Located inside Settings) via Drizzle ORM
  */
 export async function submitEscalationTicketAction(payload: {
   subject: string;
@@ -128,12 +150,23 @@ export async function submitEscalationTicketAction(payload: {
     return { success: false, message: "ارسال تیکت ارجاع به سرپرست مختص داوطلبان است." };
   }
 
-  const studentProfile = memoryRepo.getStudentProfileByUserId(session.userId);
+  const [studentProfile] = await db
+    .select()
+    .from(studentProfiles)
+    .where(eq(studentProfiles.userId, session.userId))
+    .limit(1);
+
   if (!studentProfile) {
     return { success: false, message: "پروفایل داوطلب یافت نشد." };
   }
 
-  const mentorUser = memoryRepo.getUserById(studentProfile.mentorId);
+  const mentorId = studentProfile.mentorId || "usr_mentor1";
+  const [mentorUser] = await db
+    .select()
+    .from(users)
+    .where(eq(users.id, mentorId))
+    .limit(1);
+
   const ticketId = `ticket_${Date.now()}`;
 
   const newTicket: EscalationTicketRecord = {
@@ -141,7 +174,7 @@ export async function submitEscalationTicketAction(payload: {
     studentId: session.userId,
     studentName: session.fullName,
     studentPhone: session.phoneNumber,
-    mentorId: studentProfile.mentorId,
+    mentorId,
     mentorName: mentorUser ? mentorUser.fullName : "پشتیبان اختصاصی",
     supervisorId: "usr_adminsupervisor",
     subject: payload.subject.trim(),
@@ -153,14 +186,28 @@ export async function submitEscalationTicketAction(payload: {
     createdAt: new Date(),
   };
 
-  memoryRepo.createTicket(newTicket);
+  await db.insert(escalationTickets).values({
+    id: ticketId,
+    studentId: session.userId,
+    studentName: session.fullName,
+    studentPhone: session.phoneNumber,
+    mentorId,
+    mentorName: mentorUser ? mentorUser.fullName : "پشتیبان اختصاصی",
+    supervisorId: "usr_adminsupervisor",
+    subject: payload.subject.trim(),
+    reasonCategory: payload.reasonCategory,
+    description: payload.description.trim(),
+    attachmentUrl: payload.attachmentUrl || null,
+    attachmentName: payload.attachmentName || null,
+    status: "OPEN",
+  });
 
   revalidatePath("/settings");
   revalidatePath("/supervisor");
 
   return {
     success: true,
-    message: "تیکت ارجاع با اولویت بالا به سرپرست کوهورت ارسال گردید.",
-    ticketId,
+    message: "تیکت اضطراری با موفقیت به سرپرست کوهورت ارجاع داده شد.",
+    ticket: newTicket,
   };
 }

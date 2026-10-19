@@ -1,13 +1,15 @@
 "use server";
 
 import { requireAuth, requireRole } from "../auth/guard";
-import { memoryRepo } from "../db";
+import { db } from "../db";
+import { hierarchyTasks, users } from "../db/schema";
+import { eq } from "drizzle-orm";
 import { sendSystemSms } from "../services/sms";
 import { revalidatePath } from "next/cache";
-import type { TaskPriority, TaskStatus, HierarchyTaskRecord, UserRole } from "@/types/models";
+import type { TaskPriority, TaskStatus, HierarchyTaskRecord } from "@/types/models";
 
 /**
- * Assign a Hierarchy Task (Manager -> Supervisor, Supervisor -> Mentor(s))
+ * Assign a Hierarchy Task (Manager -> Supervisor, Supervisor -> Mentor(s)) via Drizzle ORM
  */
 export async function assignHierarchyTaskAction(payload: {
   receiverIds: string[];
@@ -21,7 +23,12 @@ export async function assignHierarchyTaskAction(payload: {
   const createdTasks: HierarchyTaskRecord[] = [];
 
   for (const receiverId of payload.receiverIds) {
-    const receiver = memoryRepo.getUserById(receiverId);
+    const [receiver] = await db
+      .select()
+      .from(users)
+      .where(eq(users.id, receiverId))
+      .limit(1);
+
     if (!receiver) continue;
 
     // Supervisor can only assign to Mentors
@@ -29,7 +36,6 @@ export async function assignHierarchyTaskAction(payload: {
       continue;
     }
 
-    // Manager can assign to Supervisors or Mentors
     const taskId = `task_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
     const newTask: HierarchyTaskRecord = {
       id: taskId,
@@ -48,7 +54,21 @@ export async function assignHierarchyTaskAction(payload: {
       updatedAt: new Date(),
     };
 
-    memoryRepo.addTask(newTask);
+    await db.insert(hierarchyTasks).values({
+      id: taskId,
+      senderId: session.userId,
+      senderRole: session.role,
+      senderName: session.fullName,
+      receiverId: receiver.id,
+      receiverRole: receiver.role,
+      receiverName: receiver.fullName,
+      title: payload.title.trim(),
+      description: payload.description.trim(),
+      priority: payload.priority,
+      status: "PENDING",
+      dueDate: payload.dueDate,
+    });
+
     createdTasks.push(newTask);
 
     // Send SMS Notification
@@ -75,7 +95,7 @@ export async function assignHierarchyTaskAction(payload: {
 }
 
 /**
- * Update Hierarchy Task Status
+ * Update Hierarchy Task Status via Drizzle ORM
  */
 export async function updateHierarchyTaskStatusAction(payload: {
   taskId: string;
@@ -84,7 +104,12 @@ export async function updateHierarchyTaskStatusAction(payload: {
 }) {
   const session = await requireAuth();
 
-  const task = memoryRepo.hierarchyTasks.get(payload.taskId);
+  const [task] = await db
+    .select()
+    .from(hierarchyTasks)
+    .where(eq(hierarchyTasks.id, payload.taskId))
+    .limit(1);
+
   if (!task) {
     return { success: false, message: "وظیفه مورد نظر یافت نشد." };
   }
@@ -94,7 +119,14 @@ export async function updateHierarchyTaskStatusAction(payload: {
     return { success: false, message: "شما مجاز به تغییر وضعیت این وظیفه نیستید." };
   }
 
-  memoryRepo.updateTaskStatus(payload.taskId, payload.status, payload.resolutionNotes);
+  await db
+    .update(hierarchyTasks)
+    .set({
+      status: payload.status,
+      resolutionNotes: payload.resolutionNotes?.trim() || null,
+      updatedAt: new Date(),
+    })
+    .where(eq(hierarchyTasks.id, payload.taskId));
 
   revalidatePath("/tasks");
   revalidatePath("/supervisor");

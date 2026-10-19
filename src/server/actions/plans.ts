@@ -1,13 +1,21 @@
 "use server";
 
 import { requireAuth, requireRole } from "../auth/guard";
-import { memoryRepo } from "../db";
+import { db } from "../db";
+import {
+  weeklyPlanTemplates,
+  studentProfiles,
+  studentSchedules,
+  scheduleItems,
+  users,
+} from "../db/schema";
+import { eq } from "drizzle-orm";
 import { sendSystemSms } from "../services/sms";
 import { revalidatePath } from "next/cache";
 import type { WeeklyPlanTemplateRecord, ScheduleItemRecord } from "@/types/models";
 
 /**
- * Create Weekly Plan Template (by Supervisor)
+ * Create Weekly Plan Template (by Supervisor) via Drizzle ORM
  */
 export async function createWeeklyPlanTemplateAction(payload: {
   title: string;
@@ -33,7 +41,17 @@ export async function createWeeklyPlanTemplateAction(payload: {
     createdAt: new Date(),
   };
 
-  memoryRepo.addWeeklyPlanTemplate(newTpl);
+  await db.insert(weeklyPlanTemplates).values({
+    id: tplId,
+    authorId: session.userId,
+    authorName: session.fullName,
+    title: payload.title.trim(),
+    jalaliYear: payload.jalaliYear,
+    jalaliWeekNumber: payload.jalaliWeekNumber,
+    targetCohort: payload.targetCohort.trim(),
+    weeklyMainGoal: payload.weeklyMainGoal.trim(),
+    items: payload.items,
+  });
 
   revalidatePath("/plans");
   revalidatePath("/supervisor");
@@ -46,7 +64,8 @@ export async function createWeeklyPlanTemplateAction(payload: {
 }
 
 /**
- * Assign and Tailor Weekly Plan to a Specific Student (by Mentor or Manager)
+ * Assign and Tailor Weekly Plan to a Specific Student (by Mentor or Manager) via Drizzle ORM
+ * Enforces Zero-Trust Mentor Ownership (Track 4)
  */
 export async function applyTailoredPlanToStudentAction(payload: {
   studentProfileId: string;
@@ -56,35 +75,54 @@ export async function applyTailoredPlanToStudentAction(payload: {
 }) {
   const session = await requireRole(["MENTOR", "SUPERVISOR", "CEO", "ADMIN"]);
 
-  const student = memoryRepo.getStudentProfileById(payload.studentProfileId);
+  const [student] = await db
+    .select()
+    .from(studentProfiles)
+    .where(eq(studentProfiles.id, payload.studentProfileId))
+    .limit(1);
+
   if (!student) {
     return { success: false, message: "داوطلب یافت نشد." };
   }
 
-  // Mentor can only customize for their own students
+  // Track 4: Mentor can only customize for their own students
   if (session.role === "MENTOR" && student.mentorId !== session.userId) {
     return { success: false, message: "شما تنها مجاز به تنظیم برنامه داوطلبان تحت سرپرستی خود هستید." };
   }
 
-  const user = memoryRepo.getUserById(student.userId);
+  const [user] = await db
+    .select()
+    .from(users)
+    .where(eq(users.id, student.userId))
+    .limit(1);
 
-  // Convert to ScheduleItemRecord[]
   const scheduleId = `sch_${payload.studentProfileId}_${Date.now()}`;
-  const formattedItems: ScheduleItemRecord[] = payload.items.map((it, idx) => ({
-    id: `item_${Date.now()}_${idx}`,
-    scheduleId,
-    dayOfWeek: it.dayOfWeek,
-    subject: it.subject,
-    activityType: it.activityType,
-    topicDescription: it.topicDescription,
-    targetVolume: it.targetVolume,
-    targetDurationMinutes: it.targetDurationMinutes,
-    isCatchup: it.isCatchup,
-    status: it.status || "NOT_DONE",
-    isTemplateOverride: true,
-  }));
 
-  memoryRepo.setScheduleItemsForStudent(payload.studentProfileId, formattedItems);
+  await db.insert(studentSchedules).values({
+    id: scheduleId,
+    studentProfileId: payload.studentProfileId,
+    jalaliYear: 1403,
+    jalaliWeekNumber: 30,
+    weekStartDate: "1403-08-01",
+    weekEndDate: "1403-08-07",
+    weeklyMainGoal: payload.weeklyMainGoal.trim(),
+    isTemplateOverride: true,
+  });
+
+  for (const [idx, it] of payload.items.entries()) {
+    await db.insert(scheduleItems).values({
+      id: `item_${Date.now()}_${idx}`,
+      scheduleId,
+      dayOfWeek: it.dayOfWeek,
+      subject: it.subject,
+      activityType: it.activityType || "STUDY",
+      topicDescription: it.topicDescription,
+      targetVolume: it.targetVolume,
+      targetDurationMinutes: it.targetDurationMinutes,
+      isCatchup: it.isCatchup || false,
+      status: it.status || "NOT_DONE",
+    });
+  }
 
   // Send SMS to student notifying them of new weekly plan
   if (user) {
@@ -104,6 +142,7 @@ export async function applyTailoredPlanToStudentAction(payload: {
 
   return {
     success: true,
-    message: `برنامه هفتگی با موفقیت برای داوطلب (${user?.fullName || "داوطلب"}) شخصی‌سازی و فعال گردید.`,
+    message: "برنامه هفتگی شخصی‌سازی‌شده با موفقیت برای داوطلب ثبت گردید و پیامک اطلاع‌رسانی ارسال شد.",
+    scheduleId,
   };
 }

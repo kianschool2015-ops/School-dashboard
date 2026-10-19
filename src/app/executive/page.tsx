@@ -4,7 +4,26 @@ import { redirect } from "next/navigation";
 import { Badge } from "@/components/ui/badge";
 import { Scale } from "lucide-react";
 import { ExecutiveInspectorTabs } from "./executive-inspector-tabs";
-import { memoryRepo } from "@/server/db";
+import { db } from "@/server/db";
+import { users, studentProfiles as studentProfilesTable, triageCases, voipCalls, landingContent } from "@/server/db/schema";
+import { eq } from "drizzle-orm";
+import type { LandingContentSettings } from "@/types/models";
+
+const defaultLandingContent: LandingContentSettings = {
+  heroBadge: "سامانه پایش هوشمند ۳۶۰ درجه",
+  heroTitle: "پشتیبانی آموزشی مشاهیر دانش",
+  heroSubtitle: "سامانه هدایت تحصیلی، پایش عملکرد و رفع بحران داوطلبان آزمون‌های وکالت",
+  featuresTitle: "خدمات ۳۶۰ درجه آموزشی",
+  honorsTitle: "افتخارات و رتبه‌های برتر",
+  ctaTitle: "شروع قدرتمند در مشاهیر دانش",
+  ctaSubtitle: "با همراهی برترین اساتید و پشتیبانان حقوق کشور، مسیر قبولی را هوشمندانه طی کنید.",
+  phoneNumber: "۰۲۱-۸۸۸۸۸۸۸۸",
+  brandColor: "#004071",
+  accentColor: "#F59E0B",
+  features: [],
+  honors: [],
+  gallery: [],
+};
 
 export default async function ExecutiveDashboardPage() {
   const session = await getSession();
@@ -17,12 +36,43 @@ export default async function ExecutiveDashboardPage() {
     redirect("/auth/login");
   }
 
-  // Fetch hierarchical inspection data
-  const supervisorUser = memoryRepo.getUserById("usr_adminsupervisor");
-  const mentors = memoryRepo.getAllMentors();
-  const studentProfiles = memoryRepo.getAllStudentProfiles();
-  const allTriageCases = memoryRepo.getAllTriageCases();
-  const allVoipCalls = memoryRepo.getAllVoipCalls();
+  // Fetch hierarchical inspection data via Drizzle ORM
+  const [supervisorUser] = await db
+    .select()
+    .from(users)
+    .where(eq(users.id, "usr_adminsupervisor"))
+    .limit(1);
+
+  const mentors = await db
+    .select()
+    .from(users)
+    .where(eq(users.role, "MENTOR"));
+
+  const studentProfiles = await db
+    .select()
+    .from(studentProfilesTable);
+
+  const allTriageCases = await db
+    .select()
+    .from(triageCases);
+
+  const allVoipCalls = await db
+    .select()
+    .from(voipCalls);
+
+  const allUsers = await db
+    .select()
+    .from(users);
+
+  const userMap = new Map(allUsers.map((u) => [u.id, u]));
+
+  const [landingRow] = await db
+    .select()
+    .from(landingContent)
+    .where(eq(landingContent.id, "default_landing_cms"))
+    .limit(1);
+
+  const initialLanding = (landingRow?.content as LandingContentSettings) || defaultLandingContent;
 
   const supervisorsData = supervisorUser
     ? [
@@ -39,8 +89,8 @@ export default async function ExecutiveDashboardPage() {
     : [];
 
   const mentorsData = mentors.map((m) => {
-    const assignedProfiles = memoryRepo.getStudentProfilesByMentorId(m.id);
-    const mentorTriage = memoryRepo.getTriageCasesByMentor(m.id, false);
+    const assignedProfiles = studentProfiles.filter((p) => p.mentorId === m.id);
+    const mentorTriage = allTriageCases.filter((c) => c.mentorId === m.id);
     const mentorCalls = allVoipCalls.filter((c) => c.mentorId === m.id);
 
     return {
@@ -56,8 +106,8 @@ export default async function ExecutiveDashboardPage() {
   });
 
   const studentsData = studentProfiles.map((p) => {
-    const u = memoryRepo.getUserById(p.userId);
-    const mentor = memoryRepo.getUserById(p.mentorId);
+    const u = userMap.get(p.userId);
+    const mentor = p.mentorId ? userMap.get(p.mentorId) : null;
     return {
       id: p.id,
       fullName: u?.fullName || "داوطلب وکالت",
@@ -68,7 +118,7 @@ export default async function ExecutiveDashboardPage() {
         (p.workdayStudyHoursCap * 5) + (p.holidayStudyHoursCap * 2) ||
         (p.currentDailyStudyHours * 7) ||
         0,
-      goal: p.masterclassGoal,
+      goal: p.masterclassGoal || "",
     };
   });
 
@@ -107,7 +157,7 @@ export default async function ExecutiveDashboardPage() {
         mentors={mentorsData}
         students={studentsData}
         subjectGrowth={subjectGrowth}
-        initialLandingContent={memoryRepo.getLandingContent()}
+        initialLandingContent={initialLanding}
       />
     </div>
   );

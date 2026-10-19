@@ -1,7 +1,9 @@
 import React from "react";
 import { getSession } from "@/server/auth/guard";
 import { redirect } from "next/navigation";
-import { memoryRepo } from "@/server/db";
+import { db } from "@/server/db";
+import { triageCases, studentProfiles, users } from "@/server/db/schema";
+import { eq, inArray, desc } from "drizzle-orm";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -18,6 +20,7 @@ import {
 import Link from "next/link";
 import { toPersianDigits, formatJalaliHuman } from "@/lib/jalali";
 import { MentorTriageClient } from "./triage-client";
+import type { TriageCaseRecord } from "@/types/models";
 
 export default async function MentorTriagePage() {
   const session = await getSession();
@@ -27,18 +30,31 @@ export default async function MentorTriagePage() {
   }
 
   const mentorId = session.role === "MENTOR" ? session.userId : "usr_mentor1";
-  const triageCases = memoryRepo.getTriageCasesByMentor(mentorId, false);
-  const students = memoryRepo.getStudentsByMentorId(mentorId);
+  const triageList = await db
+    .select()
+    .from(triageCases)
+    .where(eq(triageCases.mentorId, mentorId))
+    .orderBy(desc(triageCases.createdAt));
 
+  const students = await db
+    .select()
+    .from(studentProfiles)
+    .where(eq(studentProfiles.mentorId, mentorId));
+
+  const studentUserIds = students.map((s) => s.userId).filter(Boolean);
+  const studentUsers = studentUserIds.length > 0
+    ? await db.select().from(users).where(inArray(users.id, studentUserIds))
+    : [];
+
+  const userMap = new Map(studentUsers.map((u) => [u.id, u.fullName]));
   const studentNames: Record<string, string> = {};
   for (const s of students) {
-    const user = memoryRepo.getUserById(s.userId);
-    studentNames[s.id] = user ? user.fullName : `داوطلب ${s.id}`;
+    studentNames[s.id] = userMap.get(s.userId) || `داوطلب ${s.id}`;
   }
 
   // Stats
-  const activeCases = triageCases.filter((c) => !c.isResolved);
-  const resolvedCases = triageCases.filter((c) => c.isResolved);
+  const activeCases = triageList.filter((c) => !c.isResolved);
+  const resolvedCases = triageList.filter((c) => c.isResolved);
 
   return (
     <div className="space-y-6">
@@ -99,7 +115,7 @@ export default async function MentorTriagePage() {
 
       {/* Interactive Triage List Component */}
       <MentorTriageClient
-        initialCases={triageCases}
+        initialCases={triageList as unknown as TriageCaseRecord[]}
         studentNames={studentNames}
       />
     </div>

@@ -1,11 +1,14 @@
 import React from "react";
 import { getSession } from "@/server/auth/guard";
 import { redirect, notFound } from "next/navigation";
-import { memoryRepo } from "@/server/db";
+import { db } from "@/server/db";
+import { studentProfiles, users, mockExams, triageCases } from "@/server/db/schema";
+import { eq, and, desc } from "drizzle-orm";
 import { CandidateDetailClient } from "./candidate-detail-client";
 import Link from "next/link";
 import { ArrowRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import type { StudentProfileRecord, UserRecord, MockExamRecord } from "@/types/models";
 
 interface CandidateDetailPageProps {
   params: Promise<{ id: string }>;
@@ -19,7 +22,11 @@ export default async function CandidateDetailPage({ params }: CandidateDetailPag
   }
 
   const { id } = await params;
-  const student = memoryRepo.getStudentProfileById(id);
+  const [student] = await db
+    .select()
+    .from(studentProfiles)
+    .where(eq(studentProfiles.id, id))
+    .limit(1);
 
   if (!student) {
     notFound();
@@ -30,16 +37,28 @@ export default async function CandidateDetailPage({ params }: CandidateDetailPag
     redirect("/mentor/triage");
   }
 
-  const user = memoryRepo.getUserById(student.userId);
+  const [user] = await db
+    .select()
+    .from(users)
+    .where(eq(users.id, student.userId))
+    .limit(1);
+
   if (!user) {
     notFound();
   }
 
-  const mockExams = memoryRepo.getMockExamsForStudent(student.id);
+  const studentMockExams = await db
+    .select()
+    .from(mockExams)
+    .where(eq(mockExams.studentProfileId, student.id))
+    .orderBy(desc(mockExams.createdAt));
 
   // Find active unresolved triage case for this student if any
   const mentorId = session.role === "MENTOR" ? session.userId : "usr_mentor1";
-  const activeCases = memoryRepo.getTriageCasesByMentor(mentorId, true);
+  const activeCases = await db
+    .select()
+    .from(triageCases)
+    .where(and(eq(triageCases.mentorId, mentorId), eq(triageCases.isResolved, false)));
   const studentActiveCase = activeCases.find((c) => c.studentProfileId === student.id);
 
   return (
@@ -56,9 +75,9 @@ export default async function CandidateDetailPage({ params }: CandidateDetailPag
 
       {/* 360-Degree Candidate Profile Card */}
       <CandidateDetailClient
-        student={student}
-        user={user}
-        mockExams={mockExams}
+        student={student as unknown as StudentProfileRecord}
+        user={user as unknown as UserRecord}
+        mockExams={studentMockExams as unknown as MockExamRecord[]}
         activeCaseId={studentActiveCase?.id}
         activeTriggerCode={studentActiveCase?.triggerCode}
       />

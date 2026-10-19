@@ -1,30 +1,54 @@
 import { requireAuth } from "@/server/auth/guard";
-import { memoryRepo } from "@/server/db";
+import { db } from "@/server/db";
+import { evaluationExams, examSubmissions, studentProfiles, users } from "@/server/db/schema";
+import { eq, desc } from "drizzle-orm";
 import { ExamsClient } from "./exams-client";
 import type { EvaluationExamRecord, ExamSubmissionRecord } from "@/types/models";
 
 export default async function ExamsPage() {
   const session = await requireAuth();
 
-  const exams = memoryRepo.getAllEvaluationExams();
+  const examsRows = await db
+    .select()
+    .from(evaluationExams)
+    .orderBy(desc(evaluationExams.createdAt));
+  const exams = examsRows as unknown as EvaluationExamRecord[];
 
   let submissions: ExamSubmissionRecord[] = [];
   let studentProfileId = "";
 
   if (session.role === "STUDENT") {
-    const studentProfile = memoryRepo.getStudentProfileByUserId(session.userId);
-    if (studentProfile) {
-      studentProfileId = studentProfile.id;
-      submissions = memoryRepo.getExamSubmissionsForStudent(studentProfile.id);
+    const [profile] = await db
+      .select()
+      .from(studentProfiles)
+      .where(eq(studentProfiles.userId, session.userId))
+      .limit(1);
+
+    if (profile) {
+      studentProfileId = profile.id;
+      const subRows = await db
+        .select()
+        .from(examSubmissions)
+        .where(eq(examSubmissions.studentProfileId, profile.id))
+        .orderBy(desc(examSubmissions.submittedAt));
+      submissions = subRows as unknown as ExamSubmissionRecord[];
     }
   } else {
     // Mentor, Supervisor, or CEO: view all submissions
-    submissions = memoryRepo.getAllExamSubmissions();
+    const subRows = await db
+      .select()
+      .from(examSubmissions)
+      .orderBy(desc(examSubmissions.submittedAt));
+    submissions = subRows as unknown as ExamSubmissionRecord[];
   }
 
   // Get available candidates for audience targeting
-  const studentsList = memoryRepo.getAllStudentProfiles().map((st) => {
-    const user = memoryRepo.getUserById(st.userId);
+  const allProfiles = await db.select().from(studentProfiles);
+  const allUsers = await db.select().from(users);
+  const userMap = new Map(allUsers.map((u) => [u.id, u]));
+
+  const studentsList = allProfiles.map((st) => {
+    const user = userMap.get(st.userId);
     return {
       id: st.id,
       fullName: user?.fullName || "داوطلب",

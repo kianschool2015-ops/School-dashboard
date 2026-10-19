@@ -187,8 +187,8 @@ export function MessagesClient({
           attachmentUrl: attachment?.base64,
         });
 
-        if (res.success && res.data) {
-          setChatMessages([...chatMessages, res.data]);
+        if (res.success && res.messageRecord) {
+          setChatMessages([...chatMessages, res.messageRecord]);
           setInputText("");
           setAttachment(null);
         } else {

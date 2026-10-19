@@ -1,8 +1,10 @@
 import React from "react";
 import { getSession } from "@/server/auth/guard";
 import { redirect } from "next/navigation";
-import { memoryRepo } from "@/server/db";
+import { db } from "@/server/db";
+import { coachingMissions as coachingMissionsTable } from "@/server/db/schema";
 import { CoachingMissionsClient } from "./coaching-missions-client";
+import type { CoachingMissionRecord } from "@/types/models";
 
 export default async function CoachingMissionsPage() {
   const session = await getSession();
@@ -10,7 +12,8 @@ export default async function CoachingMissionsPage() {
     redirect("/auth/login");
   }
 
-  const missions = memoryRepo.getCoachingMissions();
+  const missionsRows = await db.select().from(coachingMissionsTable);
+  const missions = missionsRows as unknown as CoachingMissionRecord[];
 
   return <CoachingMissionsClient missions={missions} />;
 }

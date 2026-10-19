@@ -1,13 +1,50 @@
 "use server";
 
 import { requireRole } from "../auth/guard";
-import { memoryRepo } from "../db";
+import { db } from "../db";
+import { smsSettings } from "../db/schema";
+import { eq } from "drizzle-orm";
 import { sendSystemSms } from "../services/sms";
 import { revalidatePath } from "next/cache";
 import type { SmsTriggerEvent, SmsSettingsRecord } from "@/types/models";
 
+const defaultTriggers: Record<SmsTriggerEvent, { isEnabled: boolean; templateMessage: string }> = {
+  LOGIN: {
+    isEnabled: true,
+    templateMessage: "ورود به سامانه پایش مشاهیر دانش در تاریخ {date} ثبت شد.",
+  },
+  MENTOR_CONTACT: {
+    isEnabled: true,
+    templateMessage: "گزارش مشاوره جدید توسط پشتیبان شما ({mentor}) در سامانه مشاهیر دانش ثبت گردید.",
+  },
+  TRIAGE_RESOLVED: {
+    isEnabled: true,
+    templateMessage: "پرونده پایش آموزشی شما با موفقیت توسط پشتیبان بررسی و مرتفع گردید.",
+  },
+  WEEKLY_PLAN_ASSIGNED: {
+    isEnabled: true,
+    templateMessage: "داوطلب گرامی {name}، برنامه مطالعاتی هفتگی جدید شما در پنل بارگذاری شد.",
+  },
+  TASK_ASSIGNED: {
+    isEnabled: true,
+    templateMessage: "وظیفه سازمانی جدید با اولویت {priority} از طرف {sender} به کارتابل شما ارجاع گردید.",
+  },
+  EXAM_PUBLISHED: {
+    isEnabled: true,
+    templateMessage: "آزمون ارزیابی جدید '{examTitle}' فعال گردید. مهلت شرکت: {endTime}",
+  },
+  MESSAGE_RECEIVED: {
+    isEnabled: true,
+    templateMessage: "پیام جدیدی از طرف {sender} در سامانه پشتیبانی مشاهیر دانش دریافت کردید.",
+  },
+  WHITELIST_INVITE: {
+    isEnabled: true,
+    templateMessage: "داوطلب گرامی {name}، ثبت‌نام شما در سامانه مشاهیر دانش مجاز شد: {link}",
+  },
+};
+
 /**
- * Save Manager SMS Settings & API Provider Config (Kavenegar)
+ * Save Manager SMS Settings & API Provider Config (Kavenegar) via Drizzle ORM
  */
 export async function saveSmsSettingsAction(payload: {
   provider: "KAVENEGAR" | "FARAZ" | "MOCK";
@@ -19,9 +56,15 @@ export async function saveSmsSettingsAction(payload: {
 }) {
   await requireRole(["CEO", "ADMIN"]);
 
-  const currentSettings = memoryRepo.getSmsSettings();
+  const [existing] = await db
+    .select()
+    .from(smsSettings)
+    .where(eq(smsSettings.id, "sms_conf_default"))
+    .limit(1);
 
-  const updatedTriggers = { ...currentSettings.triggers };
+  const currentTriggers = ((existing?.triggers as Record<string, any>) || defaultTriggers);
+  const updatedTriggers = { ...currentTriggers };
+
   for (const [evt, conf] of Object.entries(payload.triggers)) {
     const key = evt as SmsTriggerEvent;
     if (updatedTriggers[key]) {
@@ -34,14 +77,30 @@ export async function saveSmsSettingsAction(payload: {
 
   const line = (payload.senderLine || payload.senderNumber || "10008585").trim();
 
-  memoryRepo.updateSmsSettings({
-    provider: payload.provider,
-    apiKey: payload.apiKey.trim(),
-    senderNumber: line,
-    senderLine: line,
-    isActive: payload.isActive,
-    triggers: updatedTriggers,
-  });
+  await db
+    .insert(smsSettings)
+    .values({
+      id: "sms_conf_default",
+      provider: payload.provider,
+      apiKey: payload.apiKey.trim(),
+      senderNumber: line,
+      senderLine: line,
+      isActive: payload.isActive,
+      triggers: updatedTriggers,
+      updatedAt: new Date(),
+    })
+    .onConflictDoUpdate({
+      target: smsSettings.id,
+      set: {
+        provider: payload.provider,
+        apiKey: payload.apiKey.trim(),
+        senderNumber: line,
+        senderLine: line,
+        isActive: payload.isActive,
+        triggers: updatedTriggers,
+        updatedAt: new Date(),
+      },
+    });
 
   revalidatePath("/settings");
   revalidatePath("/executive");
@@ -59,7 +118,7 @@ export async function sendTestSmsAction(testPhone: string, testMessage: string) 
   await requireRole(["CEO", "ADMIN"]);
 
   const res = await sendSystemSms({
-    event: "LOGIN", // Using an active trigger
+    event: "LOGIN",
     recipientPhone: testPhone,
     recipientName: "تست مدیریت ارشد",
     customText: testMessage || "تست ارتباط با وب‌سرویس پیامک کاوه‌نگار از سامانه پشتیبانی مشاهیر دانش.",

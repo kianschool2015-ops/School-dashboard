@@ -67,7 +67,7 @@ interface StudentInfo {
   mentorName: string;
   riskStatus: "GREEN" | "YELLOW" | "RED";
   weeklyHours: number;
-  goal: string;
+  goal?: string | null;
 }
 
 interface SubjectGrowthInfo {
@@ -1023,64 +1023,75 @@ export function ExecutiveInspectorTabs({
                 ۵. آمار و ارقام سراسری مؤسسه در صفحه اول
               </h4>
 
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-                <div className="space-y-1.5">
-                  <label className="text-[11px] font-semibold text-foreground block">تعداد داوطلبان:</label>
-                  <input
-                    type="text"
-                    value={cmsContent.stats.studentsCount}
-                    onChange={(e) =>
-                      setCmsContent({
-                        ...cmsContent,
-                        stats: { ...cmsContent.stats, studentsCount: e.target.value },
-                      })
-                    }
-                    className="w-full h-10 px-3 text-xs border border-border rounded-xl bg-background font-mono"
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <label className="text-[11px] font-semibold text-foreground block">تعداد رتبه‌های برتر:</label>
-                  <input
-                    type="text"
-                    value={cmsContent.stats.ranksCount}
-                    onChange={(e) =>
-                      setCmsContent({
-                        ...cmsContent,
-                        stats: { ...cmsContent.stats, ranksCount: e.target.value },
-                      })
-                    }
-                    className="w-full h-10 px-3 text-xs border border-border rounded-xl bg-background font-mono"
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <label className="text-[11px] font-semibold text-foreground block">سرعت ثبت چک‌این:</label>
-                  <input
-                    type="text"
-                    value={cmsContent.stats.checkinSpeed}
-                    onChange={(e) =>
-                      setCmsContent({
-                        ...cmsContent,
-                        stats: { ...cmsContent.stats, checkinSpeed: e.target.value },
-                      })
-                    }
-                    className="w-full h-10 px-3 text-xs border border-border rounded-xl bg-background font-mono"
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <label className="text-[11px] font-semibold text-foreground block">نرخ پایبندی به برنامه:</label>
-                  <input
-                    type="text"
-                    value={cmsContent.stats.adherenceRate}
-                    onChange={(e) =>
-                      setCmsContent({
-                        ...cmsContent,
-                        stats: { ...cmsContent.stats, adherenceRate: e.target.value },
-                      })
-                    }
-                    className="w-full h-10 px-3 text-xs border border-border rounded-xl bg-background font-mono"
-                  />
-                </div>
-              </div>
+              {(() => {
+                const stats = {
+                  studentsCount: cmsContent.stats?.studentsCount ?? "",
+                  ranksCount: cmsContent.stats?.ranksCount ?? "",
+                  checkinSpeed: cmsContent.stats?.checkinSpeed ?? "",
+                  adherenceRate: cmsContent.stats?.adherenceRate ?? "",
+                };
+
+                return (
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                    <div className="space-y-1.5">
+                      <label className="text-[11px] font-semibold text-foreground block">تعداد داوطلبان:</label>
+                      <input
+                        type="text"
+                        value={stats.studentsCount}
+                        onChange={(e) =>
+                          setCmsContent({
+                            ...cmsContent,
+                            stats: { ...stats, studentsCount: e.target.value },
+                          })
+                        }
+                        className="w-full h-10 px-3 text-xs border border-border rounded-xl bg-background font-mono"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="text-[11px] font-semibold text-foreground block">تعداد رتبه‌های برتر:</label>
+                      <input
+                        type="text"
+                        value={stats.ranksCount}
+                        onChange={(e) =>
+                          setCmsContent({
+                            ...cmsContent,
+                            stats: { ...stats, ranksCount: e.target.value },
+                          })
+                        }
+                        className="w-full h-10 px-3 text-xs border border-border rounded-xl bg-background font-mono"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="text-[11px] font-semibold text-foreground block">سرعت ثبت چک‌این:</label>
+                      <input
+                        type="text"
+                        value={stats.checkinSpeed}
+                        onChange={(e) =>
+                          setCmsContent({
+                            ...cmsContent,
+                            stats: { ...stats, checkinSpeed: e.target.value },
+                          })
+                        }
+                        className="w-full h-10 px-3 text-xs border border-border rounded-xl bg-background font-mono"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="text-[11px] font-semibold text-foreground block">نرخ پایبندی به برنامه:</label>
+                      <input
+                        type="text"
+                        value={stats.adherenceRate}
+                        onChange={(e) =>
+                          setCmsContent({
+                            ...cmsContent,
+                            stats: { ...stats, adherenceRate: e.target.value },
+                          })
+                        }
+                        className="w-full h-10 px-3 text-xs border border-border rounded-xl bg-background font-mono"
+                      />
+                    </div>
+                  </div>
+                );
+              })()}
             </Card>
 
             {/* Section 6: Footer Copyright & Mandatory Legal Text */}

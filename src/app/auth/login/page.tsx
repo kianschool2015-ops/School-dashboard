@@ -41,12 +41,16 @@ export default function LoginPage() {
     setStatusMessage("");
 
     startTransition(async () => {
-      const res = await requestOtpAction(phoneNumber);
-      if (res.success) {
-        setStatusMessage(res.message || "کد تایید پیامک شد.");
-        setOtpStep("OTP");
-      } else {
-        setErrorMessage(res.message || "خطا در ارسال کد تایید.");
+      try {
+        const res = await requestOtpAction(phoneNumber);
+        if (res.success) {
+          setStatusMessage(res.message || "کد تایید پیامک شد.");
+          setOtpStep("OTP");
+        } else {
+          setErrorMessage(res.message || "خطا در ارسال کد تایید.");
+        }
+      } catch (err) {
+        setErrorMessage("خطا در برقراری ارتباط با سرور. لطفاً مجدداً تلاش فرمایید.");
       }
     });
   };
@@ -57,12 +61,16 @@ export default function LoginPage() {
     setStatusMessage("");
 
     startTransition(async () => {
-      const res = await verifyOtpAction(phoneNumber, otpCode);
-      if (res.success && res.redirectUrl) {
-        router.push(res.redirectUrl);
-        router.refresh();
-      } else {
-        setErrorMessage(res.message || "کد تایید نادرست است.");
+      try {
+        const res = await verifyOtpAction(phoneNumber, otpCode);
+        if (res.success && res.redirectUrl) {
+          router.push(res.redirectUrl);
+          router.refresh();
+        } else {
+          setErrorMessage(res.message || "کد تایید نادرست است.");
+        }
+      } catch (err) {
+        setErrorMessage("خطا در اعتبارسنجی کد تایید. لطفاً مجدداً تلاش فرمایید.");
       }
     });
   };
@@ -73,14 +81,26 @@ export default function LoginPage() {
     setStatusMessage("");
 
     startTransition(async () => {
-      const res = await loginWithPasswordAction(passwordIdentifier, password);
-      if (res.success && res.redirectUrl) {
-        router.push(res.redirectUrl);
-        router.refresh();
-      } else {
-        setErrorMessage(res.message || "نام کاربری/شماره موبایل یا رمز عبور نادرست است.");
+      try {
+        const res = await loginWithPasswordAction(passwordIdentifier, password);
+        if (res.success && res.redirectUrl) {
+          router.push(res.redirectUrl);
+          router.refresh();
+        } else {
+          setErrorMessage(res.message || "نام کاربری/شماره موبایل یا رمز عبور نادرست است.");
+        }
+      } catch (err) {
+        setErrorMessage("خطا در برقراری ارتباط با سرور. لطفاً مجدداً تلاش فرمایید.");
       }
     });
+  };
+
+  const fillTestCredentials = (identifier: string, pwd: string) => {
+    setAuthMode("PASSWORD");
+    setPasswordIdentifier(identifier);
+    setPassword(pwd);
+    setErrorMessage("");
+    setStatusMessage("");
   };
 
   return (
@@ -287,8 +307,49 @@ export default function LoginPage() {
               </>
             )}
 
+            {/* Quick-Fill Demo Roles for Testing */}
+            <div className="mt-5 pt-4 border-t border-border space-y-2">
+              <div className="text-[11px] font-semibold text-muted-foreground text-center">
+                حساب‌های سازمانی پیش‌فرض (انتخاب سریع جهت تست):
+              </div>
+              <div className="grid grid-cols-2 gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => fillTestCredentials("admin", "Admin@123456")}
+                  className="px-2.5 py-1.5 rounded-lg border border-border bg-muted/40 hover:bg-muted text-[11px] font-medium text-foreground transition-all flex items-center justify-between hover:border-[#004071]/40"
+                >
+                  <span>مدیرعامل / ادمین</span>
+                  <span className="text-[10px] text-muted-foreground font-mono">admin</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => fillTestCredentials("supervisor", "Supervisor@123456")}
+                  className="px-2.5 py-1.5 rounded-lg border border-border bg-muted/40 hover:bg-muted text-[11px] font-medium text-foreground transition-all flex items-center justify-between hover:border-[#004071]/40"
+                >
+                  <span>سرپرست کوهورت</span>
+                  <span className="text-[10px] text-muted-foreground font-mono">supervisor</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => fillTestCredentials("mentor", "Mentor@123456")}
+                  className="px-2.5 py-1.5 rounded-lg border border-border bg-muted/40 hover:bg-muted text-[11px] font-medium text-foreground transition-all flex items-center justify-between hover:border-[#004071]/40"
+                >
+                  <span>پشتیبان علمی</span>
+                  <span className="text-[10px] text-muted-foreground font-mono">mentor</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => fillTestCredentials("student", "Student@123456")}
+                  className="px-2.5 py-1.5 rounded-lg border border-border bg-muted/40 hover:bg-muted text-[11px] font-medium text-foreground transition-all flex items-center justify-between hover:border-[#004071]/40"
+                >
+                  <span>داوطلب وکالت</span>
+                  <span className="text-[10px] text-muted-foreground font-mono">student</span>
+                </button>
+              </div>
+            </div>
+
             {/* Whitelist Policy Notice */}
-            <div className="mt-6 pt-4 border-t border-border text-[11px] text-muted-foreground leading-relaxed text-center">
+            <div className="mt-4 pt-3 border-t border-border/60 text-[11px] text-muted-foreground leading-relaxed text-center">
               ورود داوطلبان جدید بر اساس فهرست رسمی پذیرش مؤسسه مشاهیر دانش انجام می‌پذیرد.
             </div>
           </CardContent>

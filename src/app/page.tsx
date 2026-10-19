@@ -2,7 +2,10 @@ import React from "react";
 import Link from "next/link";
 import { getSession } from "@/server/auth/guard";
 import { redirect } from "next/navigation";
-import { memoryRepo } from "@/server/db";
+import { db } from "@/server/db";
+import { landingContent as landingContentTable } from "@/server/db/schema";
+import { eq } from "drizzle-orm";
+import type { LandingContentSettings } from "@/types/models";
 import {
   Scale,
   ShieldAlert,
@@ -23,6 +26,22 @@ import SmoothScroll from "@/components/landing/SmoothScroll";
 import AudioController from "@/components/landing/AudioController";
 import MiladScrollytelling from "@/components/landing/MiladScrollytelling";
 
+const defaultLandingContent: LandingContentSettings = {
+  heroBadge: "سامانه پایش هوشمند ۳۶۰ درجه",
+  heroTitle: "پشتیبانی آموزشی مشاهیر دانش",
+  heroSubtitle: "سامانه هدایت تحصیلی، پایش عملکرد و رفع بحران داوطلبان آزمون‌های وکالت",
+  featuresTitle: "خدمات ۳۶۰ درجه آموزشی",
+  honorsTitle: "افتخارات و رتبه‌های برتر",
+  ctaTitle: "شروع قدرتمند در مشاهیر دانش",
+  ctaSubtitle: "با همراهی برترین اساتید و پشتیبانان حقوق کشور، مسیر قبولی را هوشمندانه طی کنید.",
+  phoneNumber: "۰۲۱-۸۸۸۸۸۸۸۸",
+  brandColor: "#004071",
+  accentColor: "#F59E0B",
+  features: [],
+  honors: [],
+  gallery: [],
+};
+
 export default async function HomePage() {
   const session = await getSession();
 
@@ -34,8 +53,22 @@ export default async function HomePage() {
     if (session.role === "CEO" || session.role === "ADMIN") redirect("/executive");
   }
 
-  // Load dynamic landing CMS settings from repository
-  const landingContent = memoryRepo.getLandingContent();
+  // Load dynamic landing CMS settings from Drizzle ORM
+  let landingContent = defaultLandingContent;
+  try {
+    const [landingRow] = await db
+      .select()
+      .from(landingContentTable)
+      .where(eq(landingContentTable.id, "default_landing_cms"))
+      .limit(1);
+
+    if (landingRow?.content) {
+      landingContent = {
+        ...defaultLandingContent,
+        ...(landingRow.content as Partial<LandingContentSettings>),
+      };
+    }
+  } catch {}
 
   const iconMap: Record<string, React.ReactNode> = {
     ShieldAlert: <ShieldAlert className="h-6 w-6" />,

@@ -23,10 +23,47 @@ const MAX_IP_ATTEMPTS = 10;
 const MAX_VERIFY_FAILURES = 5;
 
 /**
+ * Converts Persian and Arabic digits to standard ASCII English digits (0-9)
+ */
+export function toEnglishDigits(str: string | number | null | undefined): string {
+  if (str === null || str === undefined) return "";
+  const persianDigits = ["۰", "۱", "۲", "۳", "۴", "۵", "۶", "۷", "۸", "۹"];
+  const arabicDigits = ["٠", "١", "٢", "٣", "٤", "٥", "٦", "٧", "٨", "٩"];
+  let res = str.toString();
+  for (let i = 0; i < 10; i++) {
+    res = res.replaceAll(persianDigits[i], i.toString()).replaceAll(arabicDigits[i], i.toString());
+  }
+  return res;
+}
+
+/**
+ * Normalizes Iranian phone numbers:
+ * Converts Persian/Arabic digits, strips whitespace/symbols, and handles +98, 0098, 98 prefixes.
+ * Output: standard 11-digit "09xxxxxxxxx" format.
+ */
+export function normalizePhoneNumber(rawPhone: string | null | undefined): string {
+  if (!rawPhone) return "";
+  let clean = toEnglishDigits(rawPhone).trim();
+  clean = clean.replace(/[\s\-\(\)\._]/g, "");
+
+  if (clean.startsWith("+98")) {
+    clean = "0" + clean.slice(3);
+  } else if (clean.startsWith("0098")) {
+    clean = "0" + clean.slice(4);
+  } else if (clean.startsWith("98") && clean.length === 12) {
+    clean = "0" + clean.slice(2);
+  } else if (clean.length === 10 && clean.startsWith("9")) {
+    clean = "0" + clean;
+  }
+  return clean;
+}
+
+/**
  * Validates Iranian mobile phone number format (09xxxxxxxxx)
  */
 export function isValidIranianPhone(phone: string): boolean {
-  return /^09[0-9]{9}$/.test(phone.trim());
+  const norm = normalizePhoneNumber(phone);
+  return /^09[0-9]{9}$/.test(norm);
 }
 
 /**
@@ -45,7 +82,7 @@ export function checkOtpRateLimit(
   phone: string,
   ip?: string
 ): { allowed: boolean; remainingMinutes?: number; reason?: "PHONE" | "IP" } {
-  const normalizedPhone = phone.trim();
+  const normalizedPhone = normalizePhoneNumber(phone);
   const now = Date.now();
 
   // 1. Check Phone Rate Limit (Max 3 attempts per 10 mins)
@@ -85,7 +122,7 @@ export function generateOtp(
   phone: string,
   ip?: string
 ): { code: string; expiresInSeconds: number } {
-  const normalizedPhone = phone.trim();
+  const normalizedPhone = normalizePhoneNumber(phone);
   const now = Date.now();
 
   // Record rate limit attempt
@@ -132,8 +169,8 @@ export function generateOtp(
  * 2. Revoked upon 5 failed attempts (prevents 5-digit brute force)
  */
 export function verifyOtp(phone: string, inputCode: string): boolean {
-  const normalizedPhone = phone.trim();
-  const trimmedCode = inputCode.trim();
+  const normalizedPhone = normalizePhoneNumber(phone);
+  const trimmedCode = toEnglishDigits(inputCode).trim();
 
   // Master Mock OTP: Strictly disabled in production environment
   const isMockAllowed =
@@ -184,7 +221,7 @@ export async function checkOtpRateLimitDistributed(
   }
 
   try {
-    const normalizedPhone = phone.trim();
+    const normalizedPhone = normalizePhoneNumber(phone);
     const phoneKey = `ratelimit:otp:phone:${normalizedPhone}`;
     const phoneCount = await redis.incr(phoneKey);
     if (phoneCount === 1) {
@@ -224,7 +261,7 @@ export async function generateOtpDistributed(
   }
 
   try {
-    const normalizedPhone = phone.trim();
+    const normalizedPhone = normalizePhoneNumber(phone);
     const randomInt = crypto.randomInt(10000, 100000);
     const code = randomInt.toString();
 
@@ -246,8 +283,8 @@ export async function verifyOtpDistributed(
     process.env.NODE_ENV !== "production" &&
     process.env.ENABLE_MOCK_OTP === "true";
 
-  const normalizedPhone = phone.trim();
-  const trimmedCode = inputCode.trim();
+  const normalizedPhone = normalizePhoneNumber(phone);
+  const trimmedCode = toEnglishDigits(inputCode).trim();
 
   if (isMockAllowed && trimmedCode === "12345") {
     const redis = getRedisClient();

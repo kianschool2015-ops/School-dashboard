@@ -1,6 +1,8 @@
 import "server-only";
 import net from "node:net";
-import { memoryRepo } from "../db";
+import { db } from "../db";
+import { voipSettings as voipSettingsTable, voipCalls as voipCallsTable } from "../db/schema";
+import { eq } from "drizzle-orm";
 import type { VoipAmiSettings, VoipCallRecord } from "@/types/models";
 import { toPersianDigits } from "@/lib/jalali";
 
@@ -445,7 +447,48 @@ export async function originateSecureMentorCall(params: {
   maskedPhone: string;
   callRecordId?: string;
 }> {
-  const voipSettings = memoryRepo.getVoipSettings();
+  let voipSettings: VoipAmiSettings = {
+    id: "voip_settings_1",
+    host: "127.0.0.1",
+    port: 5038,
+    username: "admin",
+    secret: "secret123",
+    context: "from-internal",
+    channelTech: "SIP",
+    trunk: "SIP/Trunk-Mashahir",
+    callerId: "02188888888",
+    isActive: true,
+    mentorExtensions: {
+      usr_mentor1: "101",
+    },
+    updatedAt: new Date(),
+  };
+
+  try {
+    const [row] = await db
+      .select()
+      .from(voipSettingsTable)
+      .where(eq(voipSettingsTable.id, "voip_ami_default"))
+      .limit(1);
+
+    if (row) {
+      voipSettings = {
+        id: "voip_settings_1",
+        host: row.host,
+        port: row.port,
+        username: row.username,
+        secret: row.secret,
+        context: row.context,
+        channelTech: row.channelTech as "SIP" | "PJSIP",
+        trunk: row.trunk,
+        callerId: row.callerId,
+        isActive: row.isActive,
+        mentorExtensions: (row.mentorExtensions as Record<string, string>) || {},
+        updatedAt: new Date(),
+      };
+    }
+  } catch {}
+
   const maskedPhone = maskPhoneNumber(params.studentRealPhone);
 
   if (!voipSettings.isActive) {
@@ -518,7 +561,22 @@ export async function originateSecureMentorCall(params: {
       : `خطای برقراری تماس سوکت AMI: ${callMessage}`,
   };
 
-  memoryRepo.addVoipCall(callRecord);
+  try {
+    await db.insert(voipCallsTable).values({
+      id: callId,
+      mentorId: params.mentorId,
+      mentorName: params.mentorName,
+      mentorExtension,
+      studentProfileId: params.studentProfileId,
+      studentName: params.studentName,
+      maskedPhone,
+      status: callSuccess ? "RINGING" : "FAILED",
+      durationSeconds: 0,
+      callUniqueId: actionId || `call_err_${Date.now()}`,
+      initiatedAt: new Date(),
+      notes: callRecord.notes,
+    });
+  } catch {}
 
   return {
     success: callSuccess,

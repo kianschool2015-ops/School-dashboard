@@ -79,6 +79,7 @@ describe("Phase 7: Asterisk AMI Protocol Verification with Mock TCP Server", () 
       trunk: "SIP/trunk1",
       callerId: "02191000000",
       isActive: true,
+      mentorExtensions: { usr_mentor1: "101" },
       updatedAt: new Date(),
     };
 
@@ -105,6 +106,7 @@ describe("Phase 7: Asterisk AMI Protocol Verification with Mock TCP Server", () 
       trunk: "SIP/trunk1",
       callerId: "02191000000",
       isActive: true,
+      mentorExtensions: { usr_mentor1: "101" },
       updatedAt: new Date(),
     };
 
@@ -127,12 +129,11 @@ describe("Phase 7: Asterisk AMI Protocol Verification with Mock TCP Server", () 
     for (let i = 0; i < 25; i++) {
       promises.push(
         client.originate({
-          channel: "SIP/101",
-          exten: `091210000${i.toString().padStart(2, "0")}`,
+          mentorChannel: "SIP/101",
+          destinationPhone: `091210000${i.toString().padStart(2, "0")}`,
           context: "from-internal",
-          priority: 1,
           callerId: "02191000000",
-          timeout: 5000,
+          timeoutMs: 5000,
         })
       );
     }

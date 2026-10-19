@@ -1,11 +1,14 @@
 "use server";
 
 import { requireRole } from "../auth/guard";
-import { memoryRepo } from "../db";
+import { db } from "../db";
+import { triageCases, studentProfiles } from "../db/schema";
+import { eq, and } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 
 /**
  * Resolve a Triage Case by Mentor or Supervisor
+ * Enforces Zero-Trust Mentor-to-Candidate Isolation (Track 4)
  */
 export async function resolveTriageCaseAction(payload: {
   caseId: string;
@@ -20,8 +23,13 @@ export async function resolveTriageCaseAction(payload: {
     };
   }
 
-  // IDOR Protection: Verify case ownership
-  const targetCase = memoryRepo.triageCases.get(payload.caseId);
+  // IDOR Protection: Query case from PostgreSQL via Drizzle ORM
+  const [targetCase] = await db
+    .select()
+    .from(triageCases)
+    .where(eq(triageCases.id, payload.caseId))
+    .limit(1);
+
   if (!targetCase) {
     return {
       success: false,
@@ -29,6 +37,7 @@ export async function resolveTriageCaseAction(payload: {
     };
   }
 
+  // Track 4: Mentor-to-Candidate Isolation
   if (session.role === "MENTOR" && targetCase.mentorId !== session.userId) {
     return {
       success: false,
@@ -36,34 +45,41 @@ export async function resolveTriageCaseAction(payload: {
     };
   }
 
-  const updatedCase = memoryRepo.resolveTriageCase(
-    payload.caseId,
-    payload.interventionNotes
-  );
-
-  if (!updatedCase) {
-    return {
-      success: false,
-      message: "پرونده پایش مورد نظر یافت نشد.",
-    };
-  }
+  // Update triage case status
+  await db
+    .update(triageCases)
+    .set({
+      isResolved: true,
+      resolvedAt: new Date(),
+      interventionNotes: payload.interventionNotes.trim(),
+    })
+    .where(eq(triageCases.id, payload.caseId));
 
   // Check remaining active cases for this student
-  const activeCases = memoryRepo
-    .getTriageCasesByMentor(session.userId, true)
-    .filter((c) => c.studentProfileId === updatedCase.studentProfileId);
+  const activeCases = await db
+    .select()
+    .from(triageCases)
+    .where(
+      and(
+        eq(triageCases.studentProfileId, targetCase.studentProfileId),
+        eq(triageCases.isResolved, false)
+      )
+    );
 
   // If no remaining active cases, return student risk to GREEN
   if (activeCases.length === 0) {
-    memoryRepo.updateStudentRisk(
-      updatedCase.studentProfileId,
-      "GREEN",
-      "وضعیت آموزشی پایدار و چالش‌های تحصیلی با موفقیت مرتفع شدند."
-    );
+    await db
+      .update(studentProfiles)
+      .set({
+        riskStatus: "GREEN",
+        riskReason: "وضعیت آموزشی پایدار و چالش‌های تحصیلی با موفقیت مرتفع شدند.",
+        updatedAt: new Date(),
+      })
+      .where(eq(studentProfiles.id, targetCase.studentProfileId));
   }
 
   revalidatePath("/mentor/triage");
-  revalidatePath(`/mentor/student/${updatedCase.studentProfileId}`);
+  revalidatePath(`/mentor/student/${targetCase.studentProfileId}`);
 
   return {
     success: true,
@@ -73,6 +89,7 @@ export async function resolveTriageCaseAction(payload: {
 
 /**
  * Log phone coaching contact with student
+ * Enforces Zero-Trust Mentor-to-Candidate Isolation (Track 4)
  */
 export async function logMentorContactAction(payload: {
   studentProfileId: string;
@@ -80,12 +97,17 @@ export async function logMentorContactAction(payload: {
 }) {
   const session = await requireRole(["MENTOR", "SUPERVISOR", "ADMIN", "CEO"]);
 
-  const student = memoryRepo.getStudentProfileById(payload.studentProfileId);
+  const [student] = await db
+    .select()
+    .from(studentProfiles)
+    .where(eq(studentProfiles.id, payload.studentProfileId))
+    .limit(1);
+
   if (!student) {
     return { success: false, message: "داوطلب یافت نشد." };
   }
 
-  // IDOR Protection: Mentor can only log contact with assigned students
+  // Track 4: Mentor IDOR Protection: Mentor can only log contact with assigned students
   if (session.role === "MENTOR" && student.mentorId !== session.userId) {
     return {
       success: false,
@@ -93,27 +115,51 @@ export async function logMentorContactAction(payload: {
     };
   }
 
-  student.lastContactAt = new Date();
-  memoryRepo.studentProfiles.set(student.id, student);
+  // Update last contact timestamp
+  await db
+    .update(studentProfiles)
+    .set({
+      lastContactAt: new Date(),
+      updatedAt: new Date(),
+    })
+    .where(eq(studentProfiles.id, student.id));
 
-  // Automatically resolve any pending A08 (communication silence / 4-day dropout) triage alerts
-  const studentCases = memoryRepo.getTriageCasesForStudent(payload.studentProfileId);
-  for (const c of studentCases) {
-    if (!c.isResolved && c.triggerCode === "A08") {
-      memoryRepo.resolveTriageCase(c.id, `تماس برقرار شد و وضعیت داوطلب پیگیری گردید: ${payload.notes}`);
-    }
-  }
+  // Automatically resolve any pending A08 (communication silence) triage alerts
+  await db
+    .update(triageCases)
+    .set({
+      isResolved: true,
+      resolvedAt: new Date(),
+      interventionNotes: `تماس برقرار شد و وضعیت داوطلب پیگیری گردید: ${payload.notes.trim()}`,
+    })
+    .where(
+      and(
+        eq(triageCases.studentProfileId, payload.studentProfileId),
+        eq(triageCases.triggerCode, "A08"),
+        eq(triageCases.isResolved, false)
+      )
+    );
 
   // Check if all active alerts are resolved
-  const remainingActive = memoryRepo
-    .getTriageCasesForStudent(payload.studentProfileId)
-    .filter((c) => !c.isResolved);
-  if (remainingActive.length === 0) {
-    memoryRepo.updateStudentRisk(
-      payload.studentProfileId,
-      "GREEN",
-      "ارتباط تلفنی با موفقیت برقرار شد و داوطلب به روال عادی مطالعه بازگشت."
+  const remainingActive = await db
+    .select()
+    .from(triageCases)
+    .where(
+      and(
+        eq(triageCases.studentProfileId, payload.studentProfileId),
+        eq(triageCases.isResolved, false)
+      )
     );
+
+  if (remainingActive.length === 0) {
+    await db
+      .update(studentProfiles)
+      .set({
+        riskStatus: "GREEN",
+        riskReason: "ارتباط تلفنی با موفقیت برقرار شد و داوطلب به روال عادی مطالعه بازگشت.",
+        updatedAt: new Date(),
+      })
+      .where(eq(studentProfiles.id, payload.studentProfileId));
   }
 
   revalidatePath(`/mentor/student/${payload.studentProfileId}`);

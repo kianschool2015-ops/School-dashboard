@@ -1,7 +1,15 @@
 "use server";
 
 import { requireRole, requireStudentOwnership } from "../auth/guard";
-import { memoryRepo } from "../db";
+import { db } from "../db";
+import {
+  studentProfiles,
+  scheduleItems,
+  dailyCheckins,
+  triageCases,
+  mockExams,
+} from "../db/schema";
+import { eq, and, desc } from "drizzle-orm";
 import {
   calculateProgramExecutionPercent,
   evaluateStudentRisk,
@@ -26,26 +34,44 @@ export interface CheckinPayload {
 
 /**
  * Sub-60-Second Daily Check-in Server Action (< 100ms Execution)
- * Enforces Zero-Trust Ownership & triggers A01 Alert if help requested.
+ * Enforces Zero-Trust Ownership & triggers A01 Alert if help requested via Drizzle ORM
  */
 export async function submitDailyCheckinAction(payload: CheckinPayload) {
   const startTime = Date.now();
 
-  // 1. Enforce RBAC and Zero-Trust Ownership
+  // 1. Enforce RBAC and Zero-Trust Ownership (Track 4)
   const session = await requireRole(["STUDENT", "ADMIN"]);
-  const studentProfileId = (session.role === "STUDENT" && session.studentProfileId)
-    ? session.studentProfileId
-    : (payload.studentProfileId || "profile_stu_1");
+  let studentProfileId = payload.studentProfileId || "profile_stu_1";
+
+  if (session.role === "STUDENT") {
+    if (session.studentProfileId) {
+      studentProfileId = session.studentProfileId;
+    } else {
+      const [profile] = await db
+        .select({ id: studentProfiles.id })
+        .from(studentProfiles)
+        .where(eq(studentProfiles.userId, session.userId))
+        .limit(1);
+      if (profile) {
+        studentProfileId = profile.id;
+      }
+    }
+  }
+
   await requireStudentOwnership(studentProfileId);
 
   const { items, rootFailureCause, helpRequested, studentNotes } = payload;
 
-  // 2. Update task item statuses in memory / DB
+  // 2. Update task item statuses in PostgreSQL via Drizzle ORM
   let doneCount = 0;
   let partialCount = 0;
 
   for (const item of items) {
-    memoryRepo.updateScheduleItemStatus(item.id, item.status);
+    await db
+      .update(scheduleItems)
+      .set({ status: item.status })
+      .where(eq(scheduleItems.id, item.id));
+
     if (item.status === "DONE") doneCount++;
     else if (item.status === "PARTIAL") partialCount++;
   }
@@ -53,28 +79,35 @@ export async function submitDailyCheckinAction(payload: CheckinPayload) {
   // 3. Compute execution percent
   const executionPercent = calculateProgramExecutionPercent(doneCount, partialCount, items.length);
 
-  // 4. Record Daily Check-in
+  // 4. Record Daily Check-in in PostgreSQL
   const checkinDate = formatJalaliDate(new Date());
   const checkinId = `chk_${studentProfileId}_${Date.now()}`;
 
-  memoryRepo.recordCheckin({
-    id: checkinId,
-    studentProfileId,
-    checkinDate,
-    calculatedExecutionPercent: executionPercent,
-    rootFailureCause: rootFailureCause || undefined,
-    helpRequested,
-    studentNotes: studentNotes || undefined,
-    loggedAt: new Date(),
-  });
+  await db
+    .insert(dailyCheckins)
+    .values({
+      id: checkinId,
+      studentProfileId,
+      checkinDate,
+      calculatedExecutionPercent: executionPercent,
+      rootFailureCause: rootFailureCause || null,
+      helpRequested,
+      studentNotes: studentNotes || null,
+    })
+    .onConflictDoNothing();
 
   // 5. Evaluate Risk & Alert Engine Triggers
-  const student = memoryRepo.getStudentProfileById(studentProfileId);
+  const [student] = await db
+    .select()
+    .from(studentProfiles)
+    .where(eq(studentProfiles.id, studentProfileId))
+    .limit(1);
+
   const riskEval = evaluateStudentRisk({
     studentProfileId,
     helpRequested,
     weeklyExecutionPercent: executionPercent,
-    consecutiveMissedCheckinDays: 0, // Reset silence streak upon checkin
+    consecutiveMissedCheckinDays: 0,
   });
 
   // If helpRequested === true (Trigger A01), generate Triage Case for Mentor with 12h SLA
@@ -82,21 +115,27 @@ export async function submitDailyCheckinAction(payload: CheckinPayload) {
     const trigger = { code: "A01" as const, ...TRIGGER_DEFINITIONS.A01 };
     const slaDueAt = calculateSlaDueAt(trigger);
 
-    memoryRepo.addTriageCase({
+    await db.insert(triageCases).values({
       id: `trg_${Date.now()}`,
       studentProfileId,
-      mentorId: student.mentorId,
+      mentorId: student.mentorId || "usr_mentor1",
       triggerCode: "A01",
       priorityTier: 2,
       description: `درخواست کمک فوری داوطلب: ${rootFailureCause || "عدم تسلط یا اضطراب در اجرای برنامه"} - ${studentNotes || "بدون یادداشت اضافی"}`,
       isResolved: false,
       slaDueAt,
-      createdAt: new Date(),
     });
   }
 
-  // Update profile risk state
-  memoryRepo.updateStudentRisk(studentProfileId, riskEval.riskState, riskEval.riskReason);
+  // Update profile risk state in PostgreSQL
+  await db
+    .update(studentProfiles)
+    .set({
+      riskStatus: riskEval.riskState,
+      riskReason: riskEval.riskReason,
+      updatedAt: new Date(),
+    })
+    .where(eq(studentProfiles.id, studentProfileId));
 
   const durationMs = Date.now() - startTime;
 
@@ -123,22 +162,43 @@ export async function submitWeeklyReviewAction(payload: {
   studentFeedbackNote?: string;
 }) {
   const session = await requireRole(["STUDENT", "ADMIN"]);
-  const studentProfileId = (session.role === "STUDENT" && session.studentProfileId)
-    ? session.studentProfileId
-    : (payload.studentProfileId || "profile_stu_1");
+  let studentProfileId = payload.studentProfileId || "profile_stu_1";
+
+  if (session.role === "STUDENT") {
+    if (session.studentProfileId) {
+      studentProfileId = session.studentProfileId;
+    } else {
+      const [profile] = await db
+        .select({ id: studentProfiles.id })
+        .from(studentProfiles)
+        .where(eq(studentProfiles.userId, session.userId))
+        .limit(1);
+      if (profile) {
+        studentProfileId = profile.id;
+      }
+    }
+  }
+
   await requireStudentOwnership(studentProfileId);
 
   // If student had A02 warning, resolve it
-  const student = memoryRepo.getStudentProfileById(studentProfileId);
+  const [student] = await db
+    .select()
+    .from(studentProfiles)
+    .where(eq(studentProfiles.id, studentProfileId))
+    .limit(1);
+
   if (student && student.riskReason?.includes("A02")) {
-    memoryRepo.updateStudentRisk(
-      studentProfileId,
-      "GREEN",
-      "خودارزیابی هفتگی با موفقیت ثبت شد و وضعیت تحصیلی نرمال است."
-    );
+    await db
+      .update(studentProfiles)
+      .set({
+        riskStatus: "GREEN",
+        riskReason: "خودارزیابی هفتگی با موفقیت ثبت شد و وضعیت تحصیلی نرمال است.",
+        updatedAt: new Date(),
+      })
+      .where(eq(studentProfiles.id, studentProfileId));
   }
 
-  // Mark weekly reflection complete and revalidate
   revalidatePath("/student/weekly-review");
   revalidatePath("/student/dashboard");
   revalidatePath("/mentor/triage");
@@ -162,20 +222,35 @@ export async function submitOnboardingAction(payload: {
   baselineScore: number;
 }) {
   const session = await requireRole(["STUDENT", "ADMIN"]);
-  const studentProfileId = (session.role === "STUDENT" && session.studentProfileId)
-    ? session.studentProfileId
-    : (payload.studentProfileId || "profile_stu_1");
+  let studentProfileId = payload.studentProfileId || "profile_stu_1";
+
+  if (session.role === "STUDENT") {
+    if (session.studentProfileId) {
+      studentProfileId = session.studentProfileId;
+    } else {
+      const [profile] = await db
+        .select({ id: studentProfiles.id })
+        .from(studentProfiles)
+        .where(eq(studentProfiles.userId, session.userId))
+        .limit(1);
+      if (profile) {
+        studentProfileId = profile.id;
+      }
+    }
+  }
+
   await requireStudentOwnership(studentProfileId);
 
-  const student = memoryRepo.getStudentProfileById(studentProfileId);
-  if (student) {
-    student.employmentStatus = payload.employmentStatus;
-    student.workdayStudyHoursCap = payload.workdayStudyHoursCap;
-    student.previousBarExamAttempts = payload.previousBarExamAttempts;
-    student.masterclassGoal = payload.masterclassGoal;
-    student.updatedAt = new Date();
-    memoryRepo.studentProfiles.set(student.id, student);
-  }
+  await db
+    .update(studentProfiles)
+    .set({
+      employmentStatus: payload.employmentStatus,
+      workdayStudyHoursCap: payload.workdayStudyHoursCap,
+      previousBarExamAttempts: payload.previousBarExamAttempts,
+      masterclassGoal: payload.masterclassGoal,
+      updatedAt: new Date(),
+    })
+    .where(eq(studentProfiles.id, studentProfileId));
 
   revalidatePath("/student/dashboard");
   revalidatePath(`/mentor/student/${studentProfileId}`);
@@ -200,14 +275,38 @@ export async function submitMockExamAction(payload: {
   priorityReviewSubject?: string;
 }) {
   const session = await requireRole(["STUDENT", "ADMIN"]);
-  const studentProfileId = (session.role === "STUDENT" && session.studentProfileId)
-    ? session.studentProfileId
-    : (payload.studentProfileId || "profile_stu_1");
+  let studentProfileId = payload.studentProfileId || "profile_stu_1";
+
+  if (session.role === "STUDENT") {
+    if (session.studentProfileId) {
+      studentProfileId = session.studentProfileId;
+    } else {
+      const [profile] = await db
+        .select({ id: studentProfiles.id })
+        .from(studentProfiles)
+        .where(eq(studentProfiles.userId, session.userId))
+        .limit(1);
+      if (profile) {
+        studentProfileId = profile.id;
+      }
+    }
+  }
+
   await requireStudentOwnership(studentProfileId);
 
-  const student = memoryRepo.getStudentProfileById(studentProfileId);
-  const previousExams = memoryRepo.getMockExamsForStudent(studentProfileId);
-  const lastExam = previousExams[previousExams.length - 1];
+  const [student] = await db
+    .select()
+    .from(studentProfiles)
+    .where(eq(studentProfiles.id, studentProfileId))
+    .limit(1);
+
+  const previousExams = await db
+    .select()
+    .from(mockExams)
+    .where(eq(mockExams.studentProfileId, studentProfileId))
+    .orderBy(desc(mockExams.createdAt));
+
+  const lastExam = previousExams[0];
 
   let deltaPreviousExam = 0;
   if (lastExam) {
@@ -215,7 +314,7 @@ export async function submitMockExamAction(payload: {
   }
 
   const examId = `exam_${Date.now()}`;
-  memoryRepo.addMockExam({
+  await db.insert(mockExams).values({
     id: examId,
     studentProfileId,
     examTitle: payload.examTitle,
@@ -229,11 +328,10 @@ export async function submitMockExamAction(payload: {
     unansweredCount: 10,
     subjectScores: payload.subjectScores,
     analysisStatus: payload.primaryErrorCause ? "DONE" : "NOT_DONE",
-    primaryErrorCause: payload.primaryErrorCause,
-    priorityReviewSubject: payload.priorityReviewSubject,
+    primaryErrorCause: payload.primaryErrorCause || null,
+    priorityReviewSubject: payload.priorityReviewSubject || null,
     deltaPreviousExam,
     deltaBaseline: deltaPreviousExam,
-    createdAt: new Date(),
   });
 
   // Evaluate A06 (Score Drop > 15%)
@@ -241,31 +339,34 @@ export async function submitMockExamAction(payload: {
     const trigger = { code: "A06" as const, ...TRIGGER_DEFINITIONS.A06 };
     const slaDueAt = calculateSlaDueAt(trigger);
 
-    memoryRepo.addTriageCase({
+    await db.insert(triageCases).values({
       id: `trg_${Date.now()}`,
       studentProfileId,
-      mentorId: student.mentorId,
+      mentorId: student.mentorId || "usr_mentor1",
       triggerCode: "A06",
       priorityTier: 3,
       description: `افت معنادار تراز در ${payload.examTitle}: افت ${Math.abs(deltaPreviousExam)} درصدی در نتایج`,
       isResolved: false,
       slaDueAt,
-      createdAt: new Date(),
     });
 
-    memoryRepo.updateStudentRisk(
-      studentProfileId,
-      "YELLOW",
-      `افت معنادار تراز آزمون آزمایشی (${Math.abs(deltaPreviousExam)}٪)`
-    );
+    await db
+      .update(studentProfiles)
+      .set({
+        riskStatus: "YELLOW",
+        riskReason: `افت معنادار تراز آزمون آزمایشی (${Math.abs(deltaPreviousExam)}٪)`,
+        updatedAt: new Date(),
+      })
+      .where(eq(studentProfiles.id, studentProfileId));
   }
 
   revalidatePath("/student/mock-exams");
+  revalidatePath("/student/dashboard");
   revalidatePath("/mentor/triage");
 
   return {
     success: true,
-    message: "کارنامه آزمون آزمایشی با موفقیت ثبت شد.",
+    message: "کارنامه آزمون آزمایشی با موفقیت ثبت شد و روند رشد آموزشی به‌روزرسانی گردید.",
     deltaPreviousExam,
   };
 }
