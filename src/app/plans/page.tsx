@@ -5,8 +5,14 @@ import { eq, desc } from "drizzle-orm";
 import { PlansClient } from "./plans-client";
 import type { WeeklyPlanTemplateRecord, StudentProfileRecord, ScheduleItemRecord } from "@/types/models";
 
-export default async function PlansPage() {
+interface PlansPageProps {
+  searchParams?: Promise<{ studentId?: string }>;
+}
+
+export default async function PlansPage({ searchParams }: PlansPageProps) {
   const session = await requireRole(["MENTOR", "SUPERVISOR", "CEO", "ADMIN"]);
+  const resolvedParams = searchParams ? await searchParams : {};
+  const initialStudentId = resolvedParams.studentId;
 
   const templateRows = await db
     .select()
@@ -71,6 +77,7 @@ export default async function PlansPage() {
         }}
         templates={templates}
         students={studentsData}
+        initialStudentId={initialStudentId}
       />
     </div>
   );

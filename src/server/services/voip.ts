@@ -1,10 +1,14 @@
 import "server-only";
 import net from "node:net";
 import { db } from "../db";
-import { voipSettings as voipSettingsTable, voipCalls as voipCallsTable } from "../db/schema";
+import {
+  voipSettings as voipSettingsTable,
+  voipCalls as voipCallsTable,
+  mentorCallingWindows as mentorCallingWindowsTable,
+} from "../db/schema";
 import { eq } from "drizzle-orm";
-import type { VoipAmiSettings, VoipCallRecord } from "@/types/models";
-import { toPersianDigits } from "@/lib/jalali";
+import type { VoipAmiSettings, VoipCallRecord, MentorCallingWindowRecord } from "@/types/models";
+import { toPersianDigits, getPersianDayOfWeek, PERSIAN_WEEKDAYS } from "@/lib/jalali";
 
 /**
  * Mask phone number for zero-knowledge privacy:
@@ -410,7 +414,7 @@ export async function testIssabelAmiConnection(settings: VoipAmiSettings): Promi
     const pingResult = await client.ping();
 
     // Step 4: Graceful termination
-    await client.logoff();
+    await client.logoff().catch(() => {});
 
     return {
       success: true,
@@ -419,13 +423,14 @@ export async function testIssabelAmiConnection(settings: VoipAmiSettings): Promi
       rawResponse: pingResult.raw,
     };
   } catch (err: unknown) {
-    client.disconnect();
     const errorMsg = err instanceof Error ? err.message : String(err);
     return {
       success: false,
       message: errorMsg,
       rawResponse: err instanceof Error && err.stack ? err.stack : undefined,
     };
+  } finally {
+    client.disconnect();
   }
 }
 
@@ -541,6 +546,7 @@ export async function originateSecureMentorCall(params: {
     callMessage = err instanceof Error ? err.message : String(err);
   } finally {
     await client.logoff().catch(() => {});
+    client.disconnect();
   }
 
   const callId = `call_${Date.now()}`;
@@ -582,6 +588,287 @@ export async function originateSecureMentorCall(params: {
     success: callSuccess,
     message: callMessage,
     maskedPhone,
+    callRecordId: callId,
+  };
+}
+
+/**
+ * Check if the mentor's calling window is currently open for student-initiated calls
+ */
+export async function checkMentorCallingWindowAvailability(mentorId: string): Promise<{
+  isOpen: boolean;
+  window: MentorCallingWindowRecord | null;
+  message: string;
+  scheduleDescription: string;
+}> {
+  try {
+    const [row] = await db
+      .select()
+      .from(mentorCallingWindowsTable)
+      .where(eq(mentorCallingWindowsTable.mentorId, mentorId))
+      .limit(1);
+
+    if (!row) {
+      // Default institutional window: 17:00 to 20:00, Saturday to Wednesday
+      return {
+        isOpen: false,
+        window: null,
+        message: "پشتیبان شما هنوز پنجره زمانی پاسخگویی تلفنی تعیین نکرده است.",
+        scheduleDescription: "ساعات پیش‌فرض پاسخگویی: روزهای شنبه تا چهارشنبه ساعت ۱۷:۰۰ الی ۲۰:۰۰",
+      };
+    }
+
+    const windowData: MentorCallingWindowRecord = {
+      id: row.id,
+      mentorId: row.mentorId,
+      startTime: row.startTime,
+      endTime: row.endTime,
+      daysOfWeek: (row.daysOfWeek as number[]) || [0, 1, 2, 3, 4],
+      dailyDurationHours: row.dailyDurationHours,
+      isActive: row.isActive,
+      announcement: row.announcement,
+      updatedAt: row.updatedAt,
+    };
+
+    if (!windowData.isActive) {
+      return {
+        isOpen: false,
+        window: windowData,
+        message: "پاسخگویی تلفنی مستقیم پشتیبان در حال حاضر غیرفعال است.",
+        scheduleDescription: "غیرفعال موقت توسط پشتیبان",
+      };
+    }
+
+    const now = new Date();
+    // Get Tehran / local time components
+    const dayOfWeek = getPersianDayOfWeek(now); // 0 (Sat) - 6 (Fri)
+    const hours = now.getHours();
+    const minutes = now.getMinutes();
+    const currentMinutes = hours * 60 + minutes;
+
+    const [startH, startM] = windowData.startTime.split(":").map(Number);
+    const [endH, endM] = windowData.endTime.split(":").map(Number);
+    const startMinutes = (startH || 17) * 60 + (startM || 0);
+    const endMinutes = (endH || 20) * 60 + (endM || 0);
+
+    const isAllowedDay = windowData.daysOfWeek.includes(dayOfWeek);
+    const isAllowedTime = currentMinutes >= startMinutes && currentMinutes <= endMinutes;
+
+    const dayNames = windowData.daysOfWeek
+      .map((d) => PERSIAN_WEEKDAYS[d])
+      .filter(Boolean)
+      .join("، ");
+
+    const scheduleDescription = `روزهای ${dayNames} از ساعت ${toPersianDigits(windowData.startTime)} الی ${toPersianDigits(windowData.endTime)}`;
+
+    if (isAllowedDay && isAllowedTime) {
+      return {
+        isOpen: true,
+        window: windowData,
+        message: `پشتیبان شما هم‌اکنون در بازه پاسخگویی تلفنی قرار دارد (تا ساعت ${toPersianDigits(windowData.endTime)}).`,
+        scheduleDescription,
+      };
+    }
+
+    let nextNotice = "";
+    if (!isAllowedDay) {
+      nextNotice = `امروز (${PERSIAN_WEEKDAYS[dayOfWeek]}) روز پاسخگویی تلفنی پشتیبان نیست.`;
+    } else if (currentMinutes < startMinutes) {
+      nextNotice = `پاسخگویی تلفنی امروز از ساعت ${toPersianDigits(windowData.startTime)} آغاز می‌شود.`;
+    } else {
+      nextNotice = `زمان پاسخگویی امروز در ساعت ${toPersianDigits(windowData.endTime)} به پایان رسیده است.`;
+    }
+
+    return {
+      isOpen: false,
+      window: windowData,
+      message: nextNotice,
+      scheduleDescription,
+    };
+  } catch (err) {
+    console.warn("[VoIP] checkMentorCallingWindowAvailability error:", err);
+    return {
+      isOpen: false,
+      window: null,
+      message: "خطا در استعلام ساعات کاری پشتیبان.",
+      scheduleDescription: "روزهای کاری: ۱۷:۰۰ الی ۲۰:۰۰",
+    };
+  }
+}
+
+/**
+ * Initiate Reverse Call from Student to Coach via Asterisk AMI
+ * Step 1: System calls Coach's Zoiper / extension first (Channel: SIP/{mentorExtension})
+ * Step 2: When Coach picks up, Asterisk immediately calls the Learner (Exten: {studentPhone})
+ * Step 3: Zero-Knowledge Privacy: PBX CallerID is used, real numbers never displayed
+ */
+export async function originateReverseStudentCall(params: {
+  studentProfileId: string;
+  studentName: string;
+  studentRealPhone: string;
+  mentorId: string;
+  mentorName: string;
+}): Promise<{
+  success: boolean;
+  message: string;
+  maskedStudentPhone: string;
+  maskedMentorPhone: string;
+  callRecordId?: string;
+}> {
+  // 1. Check availability window
+  const availability = await checkMentorCallingWindowAvailability(params.mentorId);
+  if (!availability.isOpen) {
+    return {
+      success: false,
+      message: availability.message || "پشتیبان شما در حال حاضر خارج از ساعات تعیین‌شده پاسخگویی تلفنی است.",
+      maskedStudentPhone: maskPhoneNumber(params.studentRealPhone),
+      maskedMentorPhone: "۰۹۱۲***۰۰۰۰",
+    };
+  }
+
+  // 2. Fetch VoIP settings
+  let voipSettings: VoipAmiSettings = {
+    id: "voip_settings_1",
+    host: "127.0.0.1",
+    port: 5038,
+    username: "admin",
+    secret: "secret123",
+    context: "from-internal",
+    channelTech: "SIP",
+    trunk: "SIP/Trunk-Mashahir",
+    callerId: "02188888888",
+    isActive: true,
+    mentorExtensions: {
+      usr_mentor1: "101",
+    },
+    updatedAt: new Date(),
+  };
+
+  try {
+    const [row] = await db
+      .select()
+      .from(voipSettingsTable)
+      .where(eq(voipSettingsTable.id, "voip_ami_default"))
+      .limit(1);
+
+    if (row) {
+      voipSettings = {
+        id: "voip_settings_1",
+        host: row.host,
+        port: row.port,
+        username: row.username,
+        secret: row.secret,
+        context: row.context,
+        channelTech: row.channelTech as "SIP" | "PJSIP",
+        trunk: row.trunk,
+        callerId: row.callerId,
+        isActive: row.isActive,
+        mentorExtensions: (row.mentorExtensions as Record<string, string>) || {},
+        updatedAt: new Date(),
+      };
+    }
+  } catch {}
+
+  const maskedStudentPhone = maskPhoneNumber(params.studentRealPhone);
+  const mentorExtension = voipSettings.mentorExtensions[params.mentorId] || "101";
+  const maskedMentorPhone = `داخلی ${toPersianDigits(mentorExtension)}`;
+
+  if (!voipSettings.isActive) {
+    return {
+      success: false,
+      message: "سرویس وب‌سرویس تماس امن Asterisk AMI در سامانه موقتاً غیرفعال است.",
+      maskedStudentPhone,
+      maskedMentorPhone,
+    };
+  }
+
+  const sanitizedStudentPhone = sanitizeIranianPhone(params.studentRealPhone);
+  if (!sanitizedStudentPhone || sanitizedStudentPhone.length !== 11) {
+    return {
+      success: false,
+      message: "شماره موبایل داوطلب در پروفایل معتبر نیست.",
+      maskedStudentPhone,
+      maskedMentorPhone,
+    };
+  }
+
+  // Asterisk AMI Two-Leg Reverse Call:
+  // Leg 1: Dial Coach's softphone/Zoiper extension
+  // Leg 2: Upon Coach answering, dial Student's mobile number
+  const channelPrefix = voipSettings.channelTech === "PJSIP" ? "PJSIP" : "SIP";
+  const coachChannel = `${channelPrefix}/${mentorExtension}`;
+  const context = voipSettings.context || "from-internal";
+  const callerIdNumber = voipSettings.callerId || "02191000000";
+  const callerId = `"مشاهیر دانش - تماس داوطلب" <${callerIdNumber}>`;
+
+  const client = new AsteriskAmiClient(voipSettings);
+  let callSuccess = false;
+  let callMessage = "";
+  let actionId = "";
+  let rawResponse = "";
+
+  try {
+    await client.connect(5000);
+    await client.login();
+    const res = await client.originate({
+      mentorChannel: coachChannel,
+      destinationPhone: sanitizedStudentPhone,
+      context,
+      callerId,
+      timeoutMs: 30000,
+    });
+    callSuccess = true;
+    callMessage = `درخواست تماس ثبت شد. ابتدا زویپر پشتیبان شما به صدا درمی‌آید و به محض پاسخگویی ایشان، گوشی شما زنگ خواهد خورد.`;
+    actionId = res.actionId;
+    rawResponse = res.raw;
+  } catch (err: unknown) {
+    callSuccess = false;
+    callMessage = err instanceof Error ? err.message : String(err);
+  } finally {
+    await client.logoff().catch(() => {});
+    client.disconnect();
+  }
+
+  const callId = `call_rev_${Date.now()}`;
+  const callRecord: VoipCallRecord = {
+    id: callId,
+    mentorId: params.mentorId,
+    mentorName: params.mentorName,
+    mentorExtension,
+    studentProfileId: params.studentProfileId,
+    studentName: params.studentName,
+    maskedPhone: maskedStudentPhone,
+    status: callSuccess ? "RINGING" : "FAILED",
+    durationSeconds: 0,
+    callUniqueId: actionId || `call_err_${Date.now()}`,
+    initiatedAt: new Date(),
+    notes: callSuccess
+      ? `تماس از جانب داوطلب در ساعت مجاز ثبت شد. ابتدا با داخلی مربی (${mentorExtension}) تماس گرفته شد و سپس به شماره همراه داوطلب متصل می‌شود.`
+      : `خطا در برقراری تماس معکوس AMI: ${callMessage}`,
+  };
+
+  try {
+    await db.insert(voipCallsTable).values({
+      id: callId,
+      mentorId: params.mentorId,
+      mentorName: params.mentorName,
+      mentorExtension,
+      studentProfileId: params.studentProfileId,
+      studentName: params.studentName,
+      maskedPhone: maskedStudentPhone,
+      status: callSuccess ? "RINGING" : "FAILED",
+      durationSeconds: 0,
+      callUniqueId: actionId || `call_err_${Date.now()}`,
+      initiatedAt: new Date(),
+      notes: callRecord.notes,
+    });
+  } catch {}
+
+  return {
+    success: callSuccess,
+    message: callMessage,
+    maskedStudentPhone,
+    maskedMentorPhone,
     callRecordId: callId,
   };
 }

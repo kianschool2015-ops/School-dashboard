@@ -10,7 +10,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "db:push": "drizzle-kit push",
-    "db:seed": "node --loader ts-node/esm src/server/db/seed.ts"
+    "db:seed": "tsx src/server/db/seed.ts",
+    "db:init": "drizzle-kit push && tsx src/server/db/seed.ts"
   },
   "dependencies": {
     "@gsap/react": "^2.1.1",
@@ -39,6 +40,7 @@
     "react-dom": "^19.0.0",
     "tailwind-merge": "^2.5.5",
     "tailwindcss-animate": "^1.0.7",
+    "xlsx": "^0.18.5",
     "zod": "^3.24.1"
   },
   "devDependencies": {

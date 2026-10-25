@@ -262,6 +262,123 @@ export async function submitOnboardingAction(payload: {
 }
 
 /**
+ * Submit Daily Study Log (ساعات مطالعه واقعی و بازخورد روزانه داوطلب)
+ */
+export async function submitDailyStudyLogAction(payload: {
+  studentProfileId?: string;
+  checkinDate?: string;
+  plannedHours?: number;
+  actualHours: number;
+  studentNotes?: string;
+  rootFailureCause?: string;
+  helpRequested?: boolean;
+}) {
+  const session = await requireRole(["STUDENT", "ADMIN"]);
+  let studentProfileId = payload.studentProfileId || "profile_stu_1";
+
+  if (session.role === "STUDENT") {
+    if (session.studentProfileId) {
+      studentProfileId = session.studentProfileId;
+    } else {
+      const [profile] = await db
+        .select({ id: studentProfiles.id })
+        .from(studentProfiles)
+        .where(eq(studentProfiles.userId, session.userId))
+        .limit(1);
+      if (profile) {
+        studentProfileId = profile.id;
+      }
+    }
+  }
+
+  await requireStudentOwnership(studentProfileId);
+
+  const checkinDate = payload.checkinDate || formatJalaliDate(new Date());
+  const plannedHours = payload.plannedHours ?? 6;
+  const actualHours = Math.max(0, payload.actualHours);
+  const executionPercent = plannedHours > 0
+    ? Math.min(100, Math.round((actualHours / plannedHours) * 100))
+    : 100;
+
+  // Check if a record already exists for this date
+  const [existingCheckin] = await db
+    .select()
+    .from(dailyCheckins)
+    .where(
+      and(
+        eq(dailyCheckins.studentProfileId, studentProfileId),
+        eq(dailyCheckins.checkinDate, checkinDate)
+      )
+    )
+    .limit(1);
+
+  if (existingCheckin) {
+    await db
+      .update(dailyCheckins)
+      .set({
+        plannedHours,
+        actualHours,
+        calculatedExecutionPercent: executionPercent,
+        studentNotes: payload.studentNotes?.trim() || null,
+        rootFailureCause: payload.rootFailureCause?.trim() || null,
+        helpRequested: payload.helpRequested || false,
+        loggedAt: new Date(),
+      })
+      .where(eq(dailyCheckins.id, existingCheckin.id));
+  } else {
+    const checkinId = `chk_${studentProfileId}_${Date.now()}`;
+    await db.insert(dailyCheckins).values({
+      id: checkinId,
+      studentProfileId,
+      checkinDate,
+      plannedHours,
+      actualHours,
+      calculatedExecutionPercent: executionPercent,
+      studentNotes: payload.studentNotes?.trim() || null,
+      rootFailureCause: payload.rootFailureCause?.trim() || null,
+      helpRequested: payload.helpRequested || false,
+    });
+  }
+
+  // If helpRequested === true, alert mentor
+  if (payload.helpRequested) {
+    const [student] = await db
+      .select()
+      .from(studentProfiles)
+      .where(eq(studentProfiles.id, studentProfileId))
+      .limit(1);
+
+    if (student) {
+      const trigger = { code: "A01" as const, ...TRIGGER_DEFINITIONS.A01 };
+      const slaDueAt = calculateSlaDueAt(trigger);
+
+      await db.insert(triageCases).values({
+        id: `trg_${Date.now()}`,
+        studentProfileId,
+        mentorId: student.mentorId || "usr_mentor1",
+        triggerCode: "A01",
+        priorityTier: 2,
+        description: `درخواست راهنمایی در گزارش مطالعه روزانه: ${payload.rootFailureCause || "عدم تحقق برنامه"} - ${payload.studentNotes || ""}`,
+        isResolved: false,
+        slaDueAt,
+      });
+    }
+  }
+
+  revalidatePath("/student/study-plan");
+  revalidatePath("/student/dashboard");
+  revalidatePath(`/mentor/student/${studentProfileId}`);
+
+  return {
+    success: true,
+    message: "گزارش مطالعه روزانه با موفقیت ثبت و محاسبه گردید.",
+    executionPercent,
+    actualHours,
+    plannedHours,
+  };
+}
+
+/**
  * Submit Mock Exam Record & Score Breakdown
  * Evaluates Trigger A06 (Score drop > 15%)
  */

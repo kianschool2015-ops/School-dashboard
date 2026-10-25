@@ -95,6 +95,50 @@ export async function assignHierarchyTaskAction(payload: {
 }
 
 /**
+ * Mark a task as seen by recipient or supervisor/admin
+ * Transitions PENDING -> SEEN_IN_PROGRESS with timestamp (Requirement 5.3)
+ */
+export async function markTaskSeenAction(taskId: string) {
+  const session = await requireAuth();
+
+  const [task] = await db
+    .select()
+    .from(hierarchyTasks)
+    .where(eq(hierarchyTasks.id, taskId))
+    .limit(1);
+
+  if (!task) {
+    return { success: false, message: "وظیفه مورد نظر یافت نشد." };
+  }
+
+  // Only transition if currently PENDING
+  if (task.status !== "PENDING") {
+    return { success: true, status: task.status, alreadySeen: true, seenAt: task.seenAt };
+  }
+
+  const now = new Date();
+  await db
+    .update(hierarchyTasks)
+    .set({
+      status: "SEEN_IN_PROGRESS",
+      seenAt: now,
+      updatedAt: now,
+    })
+    .where(eq(hierarchyTasks.id, taskId));
+
+  revalidatePath("/tasks");
+  revalidatePath("/supervisor");
+  revalidatePath("/executive");
+
+  return {
+    success: true,
+    message: "وضعیت وظیفه به «مشاهده‌شده و در حال پیگیری» تغییر یافت.",
+    status: "SEEN_IN_PROGRESS" as TaskStatus,
+    seenAt: now,
+  };
+}
+
+/**
  * Update Hierarchy Task Status via Drizzle ORM
  */
 export async function updateHierarchyTaskStatusAction(payload: {
@@ -119,13 +163,24 @@ export async function updateHierarchyTaskStatusAction(payload: {
     return { success: false, message: "شما مجاز به تغییر وضعیت این وظیفه نیستید." };
   }
 
+  const updateData: {
+    status: TaskStatus;
+    resolutionNotes: string | null;
+    updatedAt: Date;
+    seenAt?: Date;
+  } = {
+    status: payload.status,
+    resolutionNotes: payload.resolutionNotes?.trim() || null,
+    updatedAt: new Date(),
+  };
+
+  if (payload.status === "SEEN_IN_PROGRESS" && !task.seenAt) {
+    updateData.seenAt = new Date();
+  }
+
   await db
     .update(hierarchyTasks)
-    .set({
-      status: payload.status,
-      resolutionNotes: payload.resolutionNotes?.trim() || null,
-      updatedAt: new Date(),
-    })
+    .set(updateData)
     .where(eq(hierarchyTasks.id, payload.taskId));
 
   revalidatePath("/tasks");
@@ -137,3 +192,95 @@ export async function updateHierarchyTaskStatusAction(payload: {
     message: "وضعیت وظیفه با موفقیت به‌روزرسانی شد.",
   };
 }
+
+/**
+ * Mentor marks task completed -> transitions to COMPLETED_BY_MENTOR
+ * awaiting Supervisor or Admin approval
+ */
+export async function completeHierarchyTaskByMentorAction(payload: {
+  taskId: string;
+  resolutionNotes: string;
+}) {
+  const session = await requireAuth();
+
+  const [task] = await db
+    .select()
+    .from(hierarchyTasks)
+    .where(eq(hierarchyTasks.id, payload.taskId))
+    .limit(1);
+
+  if (!task) {
+    return { success: false, message: "وظیفه مورد نظر یافت نشد." };
+  }
+
+  if (task.receiverId !== session.userId && task.senderId !== session.userId && session.role !== "CEO" && session.role !== "ADMIN") {
+    return { success: false, message: "شما مجاز به ثبت انجام این وظیفه نیستید." };
+  }
+
+  await db
+    .update(hierarchyTasks)
+    .set({
+      status: "COMPLETED_BY_MENTOR",
+      resolutionNotes: payload.resolutionNotes.trim(),
+      completedAt: new Date(),
+      updatedAt: new Date(),
+    })
+    .where(eq(hierarchyTasks.id, payload.taskId));
+
+  revalidatePath("/tasks");
+  revalidatePath("/supervisor");
+  revalidatePath("/executive");
+
+  return {
+    success: true,
+    message: "وظیفه با موفقیت تکمیل شد و در صف تأیید سرپرست قرار گرفت.",
+  };
+}
+
+/**
+ * Supervisor or Admin reviews and approves/rejects a completed task
+ */
+export async function reviewHierarchyTaskAction(payload: {
+  taskId: string;
+  decision: "APPROVED" | "REJECTED";
+  reviewNotes?: string;
+}) {
+  const session = await requireRole(["SUPERVISOR", "CEO", "ADMIN"]);
+
+  const [task] = await db
+    .select()
+    .from(hierarchyTasks)
+    .where(eq(hierarchyTasks.id, payload.taskId))
+    .limit(1);
+
+  if (!task) {
+    return { success: false, message: "وظیفه مورد نظر یافت نشد." };
+  }
+
+  const finalStatus: TaskStatus = payload.decision === "APPROVED" ? "APPROVED" : "REJECTED";
+
+  await db
+    .update(hierarchyTasks)
+    .set({
+      status: finalStatus,
+      reviewedBy: session.userId,
+      reviewedByName: session.fullName,
+      reviewNotes: payload.reviewNotes?.trim() || null,
+      reviewedAt: new Date(),
+      updatedAt: new Date(),
+    })
+    .where(eq(hierarchyTasks.id, payload.taskId));
+
+  revalidatePath("/tasks");
+  revalidatePath("/supervisor");
+  revalidatePath("/executive");
+
+  return {
+    success: true,
+    message:
+      payload.decision === "APPROVED"
+        ? "وظیفه با موفقیت تأیید نهایی شد."
+        : "وظیفه رد شد و جهت بازبینی به پشتیبان ارجاع داده شد.",
+  };
+}
+

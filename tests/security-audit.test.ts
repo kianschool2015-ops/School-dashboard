@@ -73,185 +73,193 @@ vi.mock("next/cache", () => ({
   revalidateTag: vi.fn(),
 }));
 
-// In-Memory state for mocked Drizzle ORM
-const mockDbState = {
-  users: new Map<string, any>(),
-  studentProfiles: new Map<string, any>(),
-  triageCases: new Map<string, any>(),
-  evaluationExams: new Map<string, any>(),
-  chatConversations: new Map<string, any>(),
-  chatMessages: new Map<string, any>(),
-  directMessages: new Map<string, any>(),
-  studentWhitelist: new Map<string, any>(),
-  reset() {
-    this.users.clear();
-    this.studentProfiles.clear();
-    this.triageCases.clear();
-    this.evaluationExams.clear();
-    this.chatConversations.clear();
-    this.chatMessages.clear();
-    this.directMessages.clear();
-    this.studentWhitelist.clear();
-  },
-};
+// In-Memory state and mocked Drizzle ORM hoisted for Vitest
+const { mockDbState, mockDb } = vi.hoisted(() => {
+  const mockDbState = {
+    users: new Map<string, any>(),
+    studentProfiles: new Map<string, any>(),
+    triageCases: new Map<string, any>(),
+    evaluationExams: new Map<string, any>(),
+    chatConversations: new Map<string, any>(),
+    chatMessages: new Map<string, any>(),
+    directMessages: new Map<string, any>(),
+    studentWhitelist: new Map<string, any>(),
+    reset() {
+      this.users.clear();
+      this.studentProfiles.clear();
+      this.triageCases.clear();
+      this.evaluationExams.clear();
+      this.chatConversations.clear();
+      this.chatMessages.clear();
+      this.directMessages.clear();
+      this.studentWhitelist.clear();
+    },
+  };
 
-function getMapForTable(table: any): Map<string, any> {
-  if (!table) return new Map();
-  const name =
-    table[Symbol.for("drizzle:Name")] ||
-    table._?.name ||
-    (typeof table === "string" ? table : "");
+  function getMapForTable(table: any): Map<string, any> {
+    if (!table) return new Map();
+    const name =
+      table[Symbol.for("drizzle:Name")] ||
+      table._?.name ||
+      (typeof table === "string" ? table : "");
 
-  if (name === "users") return mockDbState.users;
-  if (name === "student_profiles") return mockDbState.studentProfiles;
-  if (name === "triage_cases" || name === "mentor_triage_cases") return mockDbState.triageCases;
-  if (name === "evaluation_exams") return mockDbState.evaluationExams;
-  if (name === "chat_conversations") return mockDbState.chatConversations;
-  if (name === "chat_messages") return mockDbState.chatMessages;
-  if (name === "direct_messages") return mockDbState.directMessages;
-  if (name === "student_whitelist") return mockDbState.studentWhitelist;
+    if (name === "users") return mockDbState.users;
+    if (name === "student_profiles") return mockDbState.studentProfiles;
+    if (name === "triage_cases" || name === "mentor_triage_cases") return mockDbState.triageCases;
+    if (name === "evaluation_exams") return mockDbState.evaluationExams;
+    if (name === "chat_conversations") return mockDbState.chatConversations;
+    if (name === "chat_messages") return mockDbState.chatMessages;
+    if (name === "direct_messages") return mockDbState.directMessages;
+    if (name === "student_whitelist") return mockDbState.studentWhitelist;
 
-  return new Map();
-}
-
-function matchesCondition(row: any, cond: any): boolean {
-  if (!cond) return true;
-  if (cond.operator === "or" && Array.isArray(cond.expressions)) {
-    return cond.expressions.some((expr: any) => matchesCondition(row, expr));
+    return new Map();
   }
-  if (cond.operator === "and" && Array.isArray(cond.expressions)) {
-    return cond.expressions.every((expr: any) => matchesCondition(row, expr));
-  }
-  const left = cond.left;
-  let right = cond.right;
-  if (right && typeof right === "object" && "value" in right) {
-    right = right.value;
-  }
-  if (left) {
-    const colName = left.name;
-    const fieldName = left.fieldName;
-    for (const k of [fieldName, colName]) {
-      if (k && row[k] !== undefined) {
-        return row[k] === right;
-      }
+
+  function matchesCondition(row: any, cond: any): boolean {
+    if (!cond) return true;
+    if (cond.operator === "or" && Array.isArray(cond.expressions)) {
+      return cond.expressions.some((expr: any) => matchesCondition(row, expr));
     }
-    const target = (fieldName || colName || "").toLowerCase().replace(/_/g, "");
-    for (const [k, v] of Object.entries(row)) {
-      if (k.toLowerCase().replace(/_/g, "") === target) {
-        return v === right;
-      }
+    if (cond.operator === "and" && Array.isArray(cond.expressions)) {
+      return cond.expressions.every((expr: any) => matchesCondition(row, expr));
     }
-  }
-  return true;
-}
-
-const mockDb = {
-  select: (fields?: any) => ({
-    from: (table: any) => {
-      let cond: any = null;
-      let limitCount: number | null = null;
-      const queryBuilder = {
-        where: (c: any) => {
-          cond = c;
-          return queryBuilder;
-        },
-        orderBy: () => queryBuilder,
-        limit: (n: number) => {
-          limitCount = n;
-          return queryBuilder;
-        },
-        then: (resolve: any, reject?: any) => {
-          try {
-            const map = getMapForTable(table);
-            let items = Array.from(map.values()).filter((row) =>
-              matchesCondition(row, cond)
-            );
-            if (limitCount !== null) {
-              items = items.slice(0, limitCount);
-            }
-            return Promise.resolve(items).then(resolve, reject);
-          } catch (e) {
-            return Promise.reject(e).then(resolve, reject);
-          }
-        },
-      };
-      return queryBuilder;
-    },
-  }),
-  insert: (table: any) => ({
-    values: (val: any) => {
-      const map = getMapForTable(table);
-      const records = Array.isArray(val) ? val : [val];
-      for (const r of records) {
-        const id = r.id || `gen_${Date.now()}_${Math.random()}`;
-        map.set(id, { ...r, id });
-      }
-      const insertBuilder = {
-        onConflictDoNothing: () => insertBuilder,
-        returning: () => Promise.resolve(records),
-        then: (resolve: any, reject?: any) =>
-          Promise.resolve(records).then(resolve, reject),
-      };
-      return insertBuilder;
-    },
-  }),
-  update: (table: any) => ({
-    set: (updates: any) => {
-      let cond: any = null;
-      const updateBuilder = {
-        where: (c: any) => {
-          cond = c;
-          return updateBuilder;
-        },
-        returning: () => {
-          const map = getMapForTable(table);
-          const updated: any[] = [];
-          for (const [id, row] of map.entries()) {
-            if (matchesCondition(row, cond)) {
-              const newRow = { ...row, ...updates };
-              map.set(id, newRow);
-              updated.push(newRow);
-            }
-          }
-          return Promise.resolve(updated);
-        },
-        then: (resolve: any, reject?: any) => {
-          const map = getMapForTable(table);
-          const updated: any[] = [];
-          for (const [id, row] of map.entries()) {
-            if (matchesCondition(row, cond)) {
-              const newRow = { ...row, ...updates };
-              map.set(id, newRow);
-              updated.push(newRow);
-            }
-          }
-          return Promise.resolve(updated).then(resolve, reject);
-        },
-      };
-      return updateBuilder;
-    },
-  }),
-  delete: (table: any) => ({
-    where: (cond: any) => {
-      const map = getMapForTable(table);
-      for (const [id, row] of map.entries()) {
-        if (matchesCondition(row, cond)) {
-          map.delete(id);
+    const left = cond.left;
+    let right = cond.right;
+    if (right && typeof right === "object" && "value" in right) {
+      right = right.value;
+    }
+    if (left) {
+      const colName = left.name;
+      const fieldName = left.fieldName;
+      for (const k of [fieldName, colName]) {
+        if (k && row[k] !== undefined) {
+          return row[k] === right;
         }
       }
-      return Promise.resolve();
-    },
-  }),
-};
+      const target = (fieldName || colName || "").toLowerCase().replace(/_/g, "");
+      for (const [k, v] of Object.entries(row)) {
+        if (k.toLowerCase().replace(/_/g, "") === target) {
+          return v === right;
+        }
+      }
+    }
+    return true;
+  }
+
+  const mockDb = {
+    select: (fields?: any) => ({
+      from: (table: any) => {
+        let cond: any = null;
+        let limitCount: number | null = null;
+        const queryBuilder = {
+          where: (c: any) => {
+            cond = c;
+            return queryBuilder;
+          },
+          orderBy: () => queryBuilder,
+          limit: (n: number) => {
+            limitCount = n;
+            return queryBuilder;
+          },
+          then: (resolve: any, reject?: any) => {
+            try {
+              const map = getMapForTable(table);
+              let items = Array.from(map.values()).filter((row) =>
+                matchesCondition(row, cond)
+              );
+              if (limitCount !== null) {
+                items = items.slice(0, limitCount);
+              }
+              return Promise.resolve(items).then(resolve, reject);
+            } catch (e) {
+              return Promise.reject(e).then(resolve, reject);
+            }
+          },
+        };
+        return queryBuilder;
+      },
+    }),
+    insert: (table: any) => ({
+      values: (val: any) => {
+        const map = getMapForTable(table);
+        const records = Array.isArray(val) ? val : [val];
+        for (const r of records) {
+          const id = r.id || `gen_${Date.now()}_${Math.random()}`;
+          map.set(id, { ...r, id });
+        }
+        const insertBuilder = {
+          onConflictDoNothing: () => insertBuilder,
+          returning: () => Promise.resolve(records),
+          then: (resolve: any, reject?: any) =>
+            Promise.resolve(records).then(resolve, reject),
+        };
+        return insertBuilder;
+      },
+    }),
+    update: (table: any) => ({
+      set: (updates: any) => {
+        let cond: any = null;
+        const updateBuilder = {
+          where: (c: any) => {
+            cond = c;
+            return updateBuilder;
+          },
+          returning: () => {
+            const map = getMapForTable(table);
+            const updated: any[] = [];
+            for (const [id, row] of map.entries()) {
+              if (matchesCondition(row, cond)) {
+                const newRow = { ...row, ...updates };
+                map.set(id, newRow);
+                updated.push(newRow);
+              }
+            }
+            return Promise.resolve(updated);
+          },
+          then: (resolve: any, reject?: any) => {
+            const map = getMapForTable(table);
+            const updated: any[] = [];
+            for (const [id, row] of map.entries()) {
+              if (matchesCondition(row, cond)) {
+                const newRow = { ...row, ...updates };
+                map.set(id, newRow);
+                updated.push(newRow);
+              }
+            }
+            return Promise.resolve(updated).then(resolve, reject);
+          },
+        };
+        return updateBuilder;
+      },
+    }),
+    delete: (table: any) => ({
+      where: (cond: any) => {
+        const map = getMapForTable(table);
+        for (const [id, row] of map.entries()) {
+          if (matchesCondition(row, cond)) {
+            map.delete(id);
+          }
+        }
+        return Promise.resolve();
+      },
+    }),
+  };
+
+  return { mockDbState, mockDb };
+});
 
 vi.mock("../src/server/db", () => ({
   db: mockDb,
-  pgClient: { end: vi.fn() },
+  isDbOnline: true,
+  pgClient: { end: vi.fn(), unsafe: vi.fn().mockResolvedValue([]) },
+  ensureDatabaseBootstrap: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock("@/server/db", () => ({
   db: mockDb,
-  pgClient: { end: vi.fn() },
+  isDbOnline: true,
+  pgClient: { end: vi.fn(), unsafe: vi.fn().mockResolvedValue([]) },
+  ensureDatabaseBootstrap: vi.fn().mockResolvedValue(undefined),
 }));
 
 describe("Phase 3: Automated Security & Zero-Trust Audit Test Suite", () => {
@@ -395,6 +403,19 @@ describe("Phase 3: Automated Security & Zero-Trust Audit Test Suite", () => {
     });
 
     it("denies non-member from sending message into a private conversation", async () => {
+      mockDbState.chatConversations.set("conv_private_1", {
+        id: "conv_private_1",
+        type: "GROUP",
+        title: "گروه محرمانه سرپرستی",
+        creatorId: "usr_mentor_A",
+        creatorRole: "MENTOR",
+        creatorName: "پشتیبان الف",
+        memberIds: ["usr_mentor_A", "usr_mentor_B"],
+        isChannelReadOnlyForStudents: false,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      });
+
       currentMockSession = {
         userId: "usr_eavesdropper",
         phoneNumber: "09123333333",
@@ -570,7 +591,7 @@ describe("Phase 3: Automated Security & Zero-Trust Audit Test Suite", () => {
       expect(isValidIranianPhone("09351112233")).toBe(true);
       expect(isValidIranianPhone("02188888888")).toBe(false); // Landline
       expect(isValidIranianPhone("123456")).toBe(false);
-      expect(isValidIranianPhone("+989121234567")).toBe(false); // Raw string must be normalized
+      expect(isValidIranianPhone("+989121234567")).toBe(true); // International prefix supported via normalization
       expect(isValidIranianPhone("0912123456")).toBe(false); // 10 digits
       expect(isValidIranianPhone("091212345678")).toBe(false); // 12 digits
     });

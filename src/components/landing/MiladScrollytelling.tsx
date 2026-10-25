@@ -378,7 +378,7 @@ export default function MiladScrollytelling() {
                 مسیر موفقیت خود در آزمون وکالت را انتخاب کنید
               </h3>
               <p className="text-xs lg:text-sm text-slate-300 max-w-lg mx-auto">
-                اتصال یکپارچه به پنل‌های داوطلبان، سرپرستان کوهورت و خدمات جامع پایش آموزشی
+                اتصال یکپارچه به پنل‌های داوطلبان، سرپرستان آموزشی و خدمات جامع پایش آموزشی
               </p>
             </div>
 
@@ -436,7 +436,7 @@ export default function MiladScrollytelling() {
                   ثبت‌نام طرح‌های جامع
                 </h4>
                 <p className="text-xs text-slate-300 leading-relaxed mb-4">
-                  عضویت در طرح‌های هدایت تحصیلی ۳۶۰ درجه، پایش بحران‌های مطالعاتی، آزمون‌های ارزیابی و برنامه راهبردی تطبیقی.
+                  عضویت در طرح‌های هدایت تحصیلی ۳۶۰ درجه، شناسایی مشکلات مطالعاتی، آزمون‌های ارزیابی و برنامه راهبردی تطبیقی.
                 </p>
                 <div className="flex items-center text-xs font-semibold text-indigo-400 gap-1.5 pt-2 border-t border-white/5">
                   <span>ثبت نام و شروع فرآیند مشاوره</span>

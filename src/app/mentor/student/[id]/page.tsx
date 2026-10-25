@@ -63,12 +63,18 @@ export default async function CandidateDetailPage({ params }: CandidateDetailPag
 
   return (
     <div className="space-y-6">
-      {/* Back button */}
-      <div>
-        <Link href="/mentor/triage">
-          <Button variant="ghost" size="sm" className="text-xs text-muted-foreground hover:text-white">
+      {/* Navigation buttons */}
+      <div className="flex items-center gap-3">
+        <Link href="/mentor/students">
+          <Button variant="ghost" size="sm" className="text-xs text-muted-foreground hover:text-foreground">
             <ArrowRight className="h-4 w-4 ms-1.5" />
-            <span>بازگشت به پایش بحران‌های مطالعاتی</span>
+            <span>بازگشت به کارتابل داوطلبان من</span>
+          </Button>
+        </Link>
+        <span className="text-muted-foreground">•</span>
+        <Link href="/mentor/triage">
+          <Button variant="ghost" size="sm" className="text-xs text-muted-foreground hover:text-foreground">
+            <span>رفع مشکلات علمی</span>
           </Button>
         </Link>
       </div>

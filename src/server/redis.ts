@@ -10,13 +10,10 @@ export function getRedisClient(): Redis | null {
 
   try {
     redisClient = new Redis(redisUrl, {
-      maxRetriesPerRequest: 3,
-      connectTimeout: 5000,
+      maxRetriesPerRequest: 1,
+      connectTimeout: 2000,
       enableOfflineQueue: true,
-      retryStrategy: (times) => {
-        if (times > 5) return null;
-        return Math.min(times * 200, 2000);
-      },
+      retryStrategy: (times) => (times > 3 ? null : Math.min(times * 100, 1000)),
     });
 
     redisClient.on("error", (err) => {

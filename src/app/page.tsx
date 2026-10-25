@@ -2,7 +2,7 @@ import React from "react";
 import Link from "next/link";
 import { getSession } from "@/server/auth/guard";
 import { redirect } from "next/navigation";
-import { db } from "@/server/db";
+import { db, ensureDatabaseBootstrap } from "@/server/db";
 import { landingContent as landingContentTable } from "@/server/db/schema";
 import { eq } from "drizzle-orm";
 import type { LandingContentSettings } from "@/types/models";
@@ -56,6 +56,7 @@ export default async function HomePage() {
   // Load dynamic landing CMS settings from Drizzle ORM
   let landingContent = defaultLandingContent;
   try {
+    await ensureDatabaseBootstrap().catch(() => {});
     const [landingRow] = await db
       .select()
       .from(landingContentTable)
@@ -66,6 +67,15 @@ export default async function HomePage() {
       landingContent = {
         ...defaultLandingContent,
         ...(landingRow.content as Partial<LandingContentSettings>),
+        features: Array.isArray((landingRow.content as any)?.features)
+          ? (landingRow.content as any).features
+          : defaultLandingContent.features,
+        honors: Array.isArray((landingRow.content as any)?.honors)
+          ? (landingRow.content as any).honors
+          : defaultLandingContent.honors,
+        gallery: Array.isArray((landingRow.content as any)?.gallery)
+          ? (landingRow.content as any).gallery
+          : defaultLandingContent.gallery,
       };
     }
   } catch {}
@@ -107,7 +117,7 @@ export default async function HomePage() {
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-            {landingContent.features.map((feat, idx) => (
+            {(landingContent.features || []).map((feat, idx) => (
               <div
                 key={feat.id || idx}
                 className="rounded-2xl border border-border bg-card p-6 shadow-sm hover:shadow-md hover:border-[#004071]/40 transition-all space-y-3"
@@ -151,7 +161,7 @@ export default async function HomePage() {
 
             {/* Testimonials Grid */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-              {landingContent.honors.map((honor, idx) => (
+              {(landingContent.honors || []).map((honor, idx) => (
                 <div
                   key={honor.id || idx}
                   className="rounded-2xl border border-border bg-card p-6 shadow-sm space-y-4"
@@ -195,7 +205,7 @@ export default async function HomePage() {
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-              {landingContent.gallery.map((img) => (
+              {(landingContent.gallery || []).map((img) => (
                 <div
                   key={img.id}
                   className="group relative rounded-2xl overflow-hidden border border-border bg-card shadow-sm hover:shadow-lg transition-all"
@@ -269,7 +279,7 @@ export default async function HomePage() {
 
             <p className="text-xs sm:text-sm text-slate-300 max-w-xl mx-auto leading-relaxed">
               {landingContent.ctaDescription ||
-                "با همراهی تیمی از زبده‌ترین رتبه‌های برتر، سرپرستان کوهورت و اساتید دکترین حقوق، موفقیت خود را به قطعیت تبدیل کنید."}
+                "با همراهی تیمی از زبده‌ترین رتبه‌های برتر، سرپرستان گروه آموزشی داوطلبان و اساتید دکترین حقوق، موفقیت خود را به قطعیت تبدیل کنید."}
             </p>
 
             <div className="pt-4 flex flex-wrap justify-center items-center gap-4">

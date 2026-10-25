@@ -273,3 +273,65 @@ export function isExamDeadlinePassed(endTimeStr: string, gracePeriodMinutes: num
   return Date.now() > deadlineWithGrace;
 }
 
+/**
+ * Checks whether the current time in Iran (Asia/Tehran) is Friday.
+ */
+export function isIranFriday(date: Date = new Date()): boolean {
+  try {
+    const formatter = new Intl.DateTimeFormat("en-US", {
+      timeZone: "Asia/Tehran",
+      weekday: "long",
+    });
+    return formatter.format(date) === "Friday";
+  } catch {
+    return date.getDay() === 5;
+  }
+}
+
+/**
+ * Returns time parts in Iran (Asia/Tehran) timezone
+ */
+export function getIranTimeInfo(date: Date = new Date()) {
+  try {
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZone: "Asia/Tehran",
+      weekday: "long",
+      year: "numeric",
+      month: "numeric",
+      day: "numeric",
+      hour: "numeric",
+      minute: "numeric",
+      second: "numeric",
+      hour12: false,
+    }).formatToParts(date);
+
+    const map: Record<string, string> = {};
+    for (const part of parts) {
+      map[part.type] = part.value;
+    }
+    const isFriday = map.weekday === "Friday";
+    return {
+      isFriday,
+      weekday: map.weekday,
+      year: Number(map.year),
+      month: Number(map.month),
+      day: Number(map.day),
+      hour: Number(map.hour),
+      minute: Number(map.minute),
+      second: Number(map.second),
+    };
+  } catch {
+    return {
+      isFriday: date.getDay() === 5,
+      weekday: date.getDay() === 5 ? "Friday" : "Other",
+      year: date.getFullYear(),
+      month: date.getMonth() + 1,
+      day: date.getDate(),
+      hour: date.getHours(),
+      minute: date.getMinutes(),
+      second: date.getSeconds(),
+    };
+  }
+}
+
+

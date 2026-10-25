@@ -83,7 +83,7 @@ export function MultiHorizonGantt({
     },
     MONTH: {
       title: "گانت پیشرفت ماه جاری",
-      subtitle: "عملکرد ۴ هفته مطالعاتی کوهورت کانون وکلا",
+      subtitle: "عملکرد ۴ هفته مطالعاتی دوره کانون وکلا",
       columns: ["هفته اول", "هفته دوم", "هفته سوم", "هفته چهارم"],
       items: [
         { id: "m-1", title: "تسلط بر حقوق مدنی (دوره اول)", category: "حقوق مدنی", startHourOrDay: 0, duration: 3.8, actualDuration: 3.8, status: "COMPLETED", progressPercent: 100 },
@@ -134,7 +134,7 @@ export function MultiHorizonGantt({
         { id: "men-w-1", title: "تخصیص برنامه هفتگی به ۳۵ داوطلب", category: "برنامه هفتگی", startHourOrDay: 0, duration: 1.8, actualDuration: 1.8, status: "COMPLETED", progressPercent: 100 },
         { id: "men-w-2", title: "پایش نرخ مطالعه روزانه و ثبت هشدارها", category: "پایش مستمر", startHourOrDay: 0, duration: 6.8, actualDuration: 5.5, status: "COMPLETED", progressPercent: 90 },
         { id: "men-w-3", title: "جلسات تحلیل کارنامه آزمون‌های مرحله‌ای", category: "تحلیل کارنامه", startHourOrDay: 2, duration: 3.5, actualDuration: 3.0, status: "COMPLETED", progressPercent: 85 },
-        { id: "men-w-4", title: "جلسه هم‌اندیشی با سرپرست کوهورت", category: "جلسه سرپرستی", startHourOrDay: 4, duration: 1, actualDuration: 1, status: "COMPLETED", progressPercent: 100 },
+        { id: "men-w-4", title: "جلسه هم‌اندیشی با سرپرست آموزشی", category: "جلسه سرپرستی", startHourOrDay: 4, duration: 1, actualDuration: 1, status: "COMPLETED", progressPercent: 100 },
       ],
     },
     MONTH: {
@@ -143,7 +143,7 @@ export function MultiHorizonGantt({
       columns: ["هفته اول", "هفته دوم", "هفته سوم", "هفته چهارم"],
       items: [
         { id: "men-m-1", title: "کاهش نرخ ترک مطالعه (Zero Drop-out Initiative)", category: "رسیدگی به داوطلبان", startHourOrDay: 0, duration: 3.9, actualDuration: 3.9, status: "COMPLETED", progressPercent: 100 },
-        { id: "men-m-2", title: "افزایش میانگین ساعات مطالعه کوهورت از ۵.۲ به ۷.۴ ساعت", category: "شاخص عملکرد", startHourOrDay: 0.5, duration: 3.2, actualDuration: 3.0, status: "COMPLETED", progressPercent: 94 },
+        { id: "men-m-2", title: "افزایش میانگین ساعات مطالعه گروه داوطلبان از ۵.۲ به ۷.۴ ساعت", category: "شاخص عملکرد", startHourOrDay: 0.5, duration: 3.2, actualDuration: 3.0, status: "COMPLETED", progressPercent: 94 },
       ],
     },
     CUMULATIVE: {
@@ -151,7 +151,7 @@ export function MultiHorizonGantt({
       subtitle: "شاخص موفقیت داوطلبان در آزمون‌های ادواری کانون وکلا",
       columns: ["مهر", "آبان", "آذر", "دی", "بهمن", "اسفند"],
       items: [
-        { id: "men-c-1", title: "هدایت ۳ دوره کوهورت موفق با نرخ قبولی بالای ۸۲٪", category: "دستاورد کلان", startHourOrDay: 0, duration: 5.8, actualDuration: 5.8, status: "COMPLETED", progressPercent: 100 },
+        { id: "men-c-1", title: "هدایت ۳ دوره آموزشی موفق با نرخ قبولی بالای ۸۲٪", category: "دستاورد کلان", startHourOrDay: 0, duration: 5.8, actualDuration: 5.8, status: "COMPLETED", progressPercent: 100 },
       ],
     },
   };
@@ -177,7 +177,7 @@ export function MultiHorizonGantt({
               </CardTitle>
               {readOnlyAuditorRole && (
                 <Badge variant="outline" className="border-amber-400 bg-amber-50 text-amber-800 text-xs">
-                  در حال نظارت توسط: {readOnlyAuditorRole === "CEO" ? "مدیر ارشد / مدیرعامل" : "سرپرست کوهورت"}
+                  در حال نظارت توسط: {readOnlyAuditorRole === "CEO" ? "مدیر ارشد / مدیرعامل" : "سرپرست گروه آموزشی"}
                 </Badge>
               )}
             </div>

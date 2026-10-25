@@ -46,7 +46,7 @@ export default async function TasksPage() {
     const supervisors = allUsers.filter((u) => u.role === "SUPERVISOR");
     const mentors = allUsers.filter((u) => u.role === "MENTOR");
     assignees = [
-      ...supervisors.map((s) => ({ id: s.id, fullName: s.fullName, role: "سرپرست کوهورت" })),
+      ...supervisors.map((s) => ({ id: s.id, fullName: s.fullName, role: "سرپرست گروه آموزشی" })),
       ...mentors.map((m) => ({ id: m.id, fullName: m.fullName, role: "پشتیبان آموزشی" })),
     ];
   } else if (session.role === "SUPERVISOR") {

@@ -12,6 +12,7 @@ export type {
   MockExamRecord,
   CoachingMissionRecord,
   StudentMissionLogRecord,
+  StudentWhitelistRecord,
 } from "@/types/models";
 import type {
   UserRecord,
@@ -20,6 +21,7 @@ import type {
   TriageCaseRecord,
   MockExamRecord,
   CoachingMissionRecord,
+  StudentWhitelistRecord,
 } from "@/types/models";
 
 // 1. Production Users: Exactly 4 Authentic Institutional Users
@@ -239,5 +241,50 @@ export const initialMockExams: MockExamRecord[] = [
     deltaPreviousExam: 5,
     deltaBaseline: 22,
     createdAt: new Date("2024-10-10"),
+  },
+];
+
+// 7. Initial Whitelist of Pre-Approved Bar Exam Candidates
+export const initialWhitelist: StudentWhitelistRecord[] = [
+  {
+    id: "wl_1",
+    fullName: "سارا احمدی (داوطلب کانون وکلا)",
+    nationalId: "0012345678",
+    phoneNumber: "09121000005",
+    assignedMentorId: "usr_mentor1",
+    status: "REGISTERED",
+    invitedAt: new Date("2024-06-01"),
+    registeredAt: new Date("2024-06-01"),
+    createdAt: new Date("2024-06-01"),
+  },
+  {
+    id: "wl_2",
+    fullName: "رضا حسینی (داوطلب کانون وکلای مرکز)",
+    nationalId: "0023456789",
+    phoneNumber: "09121000006",
+    assignedMentorId: "usr_mentor1",
+    status: "PENDING",
+    invitedAt: new Date(),
+    createdAt: new Date(),
+  },
+  {
+    id: "wl_3",
+    fullName: "فاطمه محمدی (داوطلب مرکز وکلا)",
+    nationalId: "0034567890",
+    phoneNumber: "09121000007",
+    assignedMentorId: "usr_mentor1",
+    status: "PENDING",
+    invitedAt: new Date(),
+    createdAt: new Date(),
+  },
+  {
+    id: "wl_4",
+    fullName: "محمد احمدی (داوطلب کانون وکلای دادگستری)",
+    nationalId: "0045678901",
+    phoneNumber: "09121000008",
+    assignedMentorId: "usr_mentor1",
+    status: "PENDING",
+    invitedAt: new Date(),
+    createdAt: new Date(),
   },
 ];

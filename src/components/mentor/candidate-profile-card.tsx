@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useTransition } from "react";
+import Link from "next/link";
 import { Card, CardHeader, CardTitle, CardContent } from "../ui/card";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
@@ -20,6 +21,7 @@ import {
   ShieldAlert,
   Send,
   Wifi,
+  Sliders,
 } from "lucide-react";
 import { toPersianDigits, formatJalaliHuman } from "@/lib/jalali";
 import { logMentorContactAction } from "@/server/actions/mentor";
@@ -148,6 +150,17 @@ export function CandidateProfileCard({
               <PhoneCall className="h-3.5 w-3.5 text-indigo-600 dark:text-indigo-400" />
               <span>ثبت یادداشت تماس</span>
             </Button>
+
+            <Link href={`/plans?studentId=${student.id}`}>
+              <Button
+                variant="secondary"
+                size="sm"
+                className="text-xs flex items-center space-x-1.5 space-x-reverse bg-purple-500/10 hover:bg-purple-500/20 text-purple-700 dark:text-purple-300"
+              >
+                <Sliders className="h-3.5 w-3.5" />
+                <span>تنظیم برنامه هفتگی</span>
+              </Button>
+            </Link>
             {onOpenResolveDialog && student.riskStatus !== "GREEN" && (
               <Button
                 variant="emerald"

@@ -2,8 +2,8 @@
 
 import { requireAuth, requireRole } from "../auth/guard";
 import { db } from "../db";
-import { chatConversations, chatMessages } from "../db/schema";
-import { eq, asc } from "drizzle-orm";
+import { chatConversations, chatMessages, studentProfiles } from "../db/schema";
+import { eq, asc, or } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import type {
   ChatConversationRecord,
@@ -214,5 +214,212 @@ export async function sendMessageAction(payload: {
     success: true,
     message: "پیام با موفقیت ارسال گردید.",
     messageRecord: newMsg,
+  };
+}
+
+/**
+ * Add Member to Channel or Group (Requirement 5: Channel Member Management)
+ */
+export async function addMemberToConversationAction(payload: {
+  conversationId: string;
+  userId: string;
+}) {
+  const session = await requireAuth();
+
+  const [conv] = await db
+    .select()
+    .from(chatConversations)
+    .where(eq(chatConversations.id, payload.conversationId))
+    .limit(1);
+
+  if (!conv) {
+    return { success: false, message: "گفتگو یافت نشد." };
+  }
+
+  // Only Admin, CEO, Supervisor or the creator can manage members
+  const canManage =
+    session.role === "CEO" ||
+    session.role === "ADMIN" ||
+    session.role === "SUPERVISOR" ||
+    conv.creatorId === session.userId;
+
+  if (!canManage) {
+    return { success: false, message: "شما مجوز مدیریت اعضای این گفتگو را ندارید." };
+  }
+
+  const currentMembers = Array.isArray(conv.memberIds) ? (conv.memberIds as string[]) : [];
+  if (currentMembers.includes(payload.userId)) {
+    return { success: false, message: "کاربر مورد نظر در حال حاضر عضو این گفتگو است." };
+  }
+
+  const updatedMembers = [...currentMembers, payload.userId];
+
+  await db
+    .update(chatConversations)
+    .set({
+      memberIds: updatedMembers,
+      updatedAt: new Date(),
+    })
+    .where(eq(chatConversations.id, payload.conversationId));
+
+  revalidatePath("/messages");
+
+  return {
+    success: true,
+    message: "عضو جدید با موفقیت به گفتگو اضافه شد.",
+    memberIds: updatedMembers,
+  };
+}
+
+/**
+ * Remove Member from Channel or Group (Requirement 5: Channel Member Management)
+ */
+export async function removeMemberFromConversationAction(payload: {
+  conversationId: string;
+  userId: string;
+}) {
+  const session = await requireAuth();
+
+  const [conv] = await db
+    .select()
+    .from(chatConversations)
+    .where(eq(chatConversations.id, payload.conversationId))
+    .limit(1);
+
+  if (!conv) {
+    return { success: false, message: "گفتگو یافت نشد." };
+  }
+
+  // Only Admin, CEO, Supervisor or creator can manage members
+  const canManage =
+    session.role === "CEO" ||
+    session.role === "ADMIN" ||
+    session.role === "SUPERVISOR" ||
+    conv.creatorId === session.userId;
+
+  if (!canManage) {
+    return { success: false, message: "شما مجوز حذف اعضای این گفتگو را ندارید." };
+  }
+
+  const currentMembers = Array.isArray(conv.memberIds) ? (conv.memberIds as string[]) : [];
+  const updatedMembers = currentMembers.filter((id) => id !== payload.userId);
+
+  await db
+    .update(chatConversations)
+    .set({
+      memberIds: updatedMembers,
+      updatedAt: new Date(),
+    })
+    .where(eq(chatConversations.id, payload.conversationId));
+
+  revalidatePath("/messages");
+
+  return {
+    success: true,
+    message: "کاربر با موفقیت از گفتگو حذف گردید.",
+    memberIds: updatedMembers,
+  };
+}
+
+/**
+ * Toggle Ghost/Incognito Monitoring Mode on Conversation (Requirement 5)
+ */
+export async function toggleConversationGhostModeAction(payload: {
+  conversationId: string;
+  isGhostMode: boolean;
+}) {
+  const session = await requireRole(["CEO", "ADMIN", "SUPERVISOR"]);
+
+  const [conv] = await db
+    .select()
+    .from(chatConversations)
+    .where(eq(chatConversations.id, payload.conversationId))
+    .limit(1);
+
+  if (!conv) {
+    return { success: false, message: "گفتگو یافت نشد." };
+  }
+
+  await db
+    .update(chatConversations)
+    .set({
+      isGhostMode: payload.isGhostMode,
+      updatedAt: new Date(),
+    })
+    .where(eq(chatConversations.id, payload.conversationId));
+
+  revalidatePath("/messages");
+
+  return {
+    success: true,
+    message: payload.isGhostMode
+      ? "حالت نظارت نامحسوس (Ghost Mode) برای این گفتگو فعال گردید."
+      : "حالت نظارت عادی فعال شد.",
+  };
+}
+
+/**
+ * Bulk Add Members by Course to Channel or Group (Requirement 4.5)
+ */
+export async function bulkAddMembersByCourseAction(payload: {
+  conversationId: string;
+  courseNameOrCode: string;
+}) {
+  const session = await requireRole(["CEO", "ADMIN", "SUPERVISOR"]);
+
+  const [conv] = await db
+    .select()
+    .from(chatConversations)
+    .where(eq(chatConversations.id, payload.conversationId))
+    .limit(1);
+
+  if (!conv) {
+    return { success: false, message: "گفتگو یافت نشد." };
+  }
+
+  // Fetch students enrolled in this course or all students if "ALL"
+  let targetUserIds: string[] = [];
+  if (payload.courseNameOrCode === "ALL") {
+    const allStudents = await db.select({ userId: studentProfiles.userId }).from(studentProfiles);
+    targetUserIds = allStudents.map((s) => s.userId);
+  } else {
+    const matchingProfiles = await db
+      .select({ userId: studentProfiles.userId })
+      .from(studentProfiles)
+      .where(
+        or(
+          eq(studentProfiles.enrolledCourseCode, payload.courseNameOrCode),
+          eq(studentProfiles.enrolledCourseName, payload.courseNameOrCode)
+        )
+      );
+    targetUserIds = matchingProfiles.map((s) => s.userId);
+  }
+
+  if (targetUserIds.length === 0) {
+    return {
+      success: false,
+      message: "هیچ داوطلبی در دوره آموزشی انتخاب‌شده یافت نشد.",
+    };
+  }
+
+  const currentMembers = Array.isArray(conv.memberIds) ? (conv.memberIds as string[]) : [];
+  const mergedMembers = Array.from(new Set([...currentMembers, ...targetUserIds]));
+  const addedCount = mergedMembers.length - currentMembers.length;
+
+  await db
+    .update(chatConversations)
+    .set({
+      memberIds: mergedMembers,
+      updatedAt: new Date(),
+    })
+    .where(eq(chatConversations.id, payload.conversationId));
+
+  revalidatePath("/messages");
+
+  return {
+    success: true,
+    message: `${addedCount} داوطلب از دوره آموزشی با موفقیت به این گفتگو اضافه شدند.`,
+    memberIds: mergedMembers,
+    addedCount,
   };
 }

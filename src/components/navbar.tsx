@@ -19,23 +19,40 @@ import {
   Menu,
   X,
   User,
+  Users,
 } from "lucide-react";
 import { Button } from "./ui/button";
 import { ThemeToggle } from "./theme-toggle";
 import { logoutAction } from "@/server/actions/auth";
+import { toPersianDigits } from "@/lib/jalali";
 import type { UserRole } from "@/types/models";
 
 interface NavbarProps {
   userRole?: UserRole;
   userName?: string;
   phoneNumber?: string;
+  unreadMessagesCount?: number;
+  pendingTasksCount?: number;
+  pendingReportsCount?: number;
 }
 
-export function Navbar({ userRole = "STUDENT", userName, phoneNumber }: NavbarProps) {
+export function Navbar({
+  userRole = "STUDENT",
+  userName,
+  phoneNumber,
+  unreadMessagesCount = 0,
+  pendingTasksCount = 0,
+  pendingReportsCount = 0,
+}: NavbarProps) {
   const pathname = usePathname();
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+
+  // Requirement 1: Completely remove top navbar/header from /auth/login
+  if (pathname === "/auth/login") {
+    return null;
+  }
 
   const handleLogout = () => {
     startTransition(async () => {
@@ -68,7 +85,7 @@ export function Navbar({ userRole = "STUDENT", userName, phoneNumber }: NavbarPr
       borderClass: "border-indigo-500/30",
     },
     SUPERVISOR: {
-      badge: "سرپرست کوهورت",
+      badge: "سرپرست گروه آموزشی",
       roleLabel: "سرپرست پشتیبانی",
       bgClass: "bg-amber-500/10",
       textClass: "text-amber-800 dark:text-amber-400",
@@ -146,27 +163,27 @@ export function Navbar({ userRole = "STUDENT", userName, phoneNumber }: NavbarPr
                 </Link>
 
                 <Link
-                  href="/student/weekly-review"
+                  href="/student/friday-report"
                   className={`flex items-center space-x-1.5 space-x-reverse px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors ${
-                    pathname === "/student/weekly-review"
+                    pathname === "/student/friday-report"
                       ? "bg-primary/10 text-primary font-semibold"
                       : "text-muted-foreground hover:bg-muted hover:text-foreground"
                   }`}
                 >
                   <BookOpen className="h-3.5 w-3.5 text-blue-400" />
-                  <span>خودارزیابی جمعه</span>
+                  <span>گزارشات خودارزیابی جمعه</span>
                 </Link>
 
                 <Link
-                  href="/exams"
+                  href="/student/exams"
                   className={`flex items-center space-x-1.5 space-x-reverse px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors ${
-                    pathname === "/exams"
+                    pathname?.startsWith("/student/exams")
                       ? "bg-primary/10 text-primary font-semibold"
                       : "text-muted-foreground hover:bg-muted hover:text-foreground"
                   }`}
                 >
                   <GraduationCap className="h-3.5 w-3.5 text-emerald-400" />
-                  <span>آزمون‌های ارزیابی</span>
+                  <span>آزمون‌های آنلاین و کارنامه</span>
                 </Link>
 
                 <Link
@@ -187,6 +204,30 @@ export function Navbar({ userRole = "STUDENT", userName, phoneNumber }: NavbarPr
             {userRole === "MENTOR" && (
               <>
                 <Link
+                  href="/mentor/students"
+                  className={`flex items-center space-x-1.5 space-x-reverse px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                    pathname === "/mentor/students"
+                      ? "bg-primary/10 text-primary font-semibold"
+                      : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                  }`}
+                >
+                  <Users className="h-3.5 w-3.5 text-sky-400" />
+                  <span>داوطلبان من (تماس و مشاوره)</span>
+                </Link>
+
+                <Link
+                  href="/mentor/friday-reports"
+                  className={`flex items-center space-x-1.5 space-x-reverse px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                    pathname === "/mentor/friday-reports"
+                      ? "bg-primary/10 text-primary font-semibold"
+                      : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                  }`}
+                >
+                  <BookOpen className="h-3.5 w-3.5 text-blue-400" />
+                  <span>گزارشات خودارزیابی جمعه</span>
+                </Link>
+
+                <Link
                   href="/mentor/triage"
                   className={`flex items-center space-x-1.5 space-x-reverse px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors ${
                     pathname === "/mentor/triage"
@@ -195,7 +236,7 @@ export function Navbar({ userRole = "STUDENT", userName, phoneNumber }: NavbarPr
                   }`}
                 >
                   <ShieldAlert className="h-3.5 w-3.5 text-rose-400" />
-                  <span>پایش بحران‌های مطالعاتی</span>
+                  <span>رفع مشکلات علمی</span>
                 </Link>
 
                 <Link
@@ -219,19 +260,19 @@ export function Navbar({ userRole = "STUDENT", userName, phoneNumber }: NavbarPr
                   }`}
                 >
                   <CheckSquare className="h-3.5 w-3.5 text-amber-400" />
-                  <span>کارتابل وظایف</span>
+                  <span>ارجاع وظیفه</span>
                 </Link>
 
                 <Link
-                  href="/exams"
+                  href="/exams/builder"
                   className={`flex items-center space-x-1.5 space-x-reverse px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors ${
-                    pathname === "/exams"
+                    pathname?.startsWith("/exams")
                       ? "bg-primary/10 text-primary font-semibold"
                       : "text-muted-foreground hover:bg-muted hover:text-foreground"
                   }`}
                 >
                   <GraduationCap className="h-3.5 w-3.5 text-emerald-400" />
-                  <span>آزمون‌های ارزیابی</span>
+                  <span>طراحی و بارگذاری آزمون</span>
                 </Link>
 
                 <Link
@@ -260,7 +301,19 @@ export function Navbar({ userRole = "STUDENT", userName, phoneNumber }: NavbarPr
                   }`}
                 >
                   <BarChart3 className="h-3.5 w-3.5 text-amber-400" />
-                  <span>داشبورد سرپرستی کوهورت</span>
+                  <span>داشبورد سرپرستی گروه آموزشی</span>
+                </Link>
+
+                <Link
+                  href="/mentor/friday-reports"
+                  className={`flex items-center space-x-1.5 space-x-reverse px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                    pathname === "/mentor/friday-reports"
+                      ? "bg-primary/10 text-primary font-semibold"
+                      : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                  }`}
+                >
+                  <BookOpen className="h-3.5 w-3.5 text-blue-400" />
+                  <span>گزارشات خودارزیابی جمعه</span>
                 </Link>
 
                 <Link
@@ -300,15 +353,15 @@ export function Navbar({ userRole = "STUDENT", userName, phoneNumber }: NavbarPr
                 </Link>
 
                 <Link
-                  href="/exams"
+                  href="/exams/builder"
                   className={`flex items-center space-x-1.5 space-x-reverse px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors ${
-                    pathname === "/exams"
+                    pathname?.startsWith("/exams")
                       ? "bg-primary/10 text-primary font-semibold"
                       : "text-muted-foreground hover:bg-muted hover:text-foreground"
                   }`}
                 >
                   <GraduationCap className="h-3.5 w-3.5 text-emerald-400" />
-                  <span>آزمون‌های ارزیابی</span>
+                  <span>طراحی و پایش آزمون‌ها</span>
                 </Link>
 
                 <Link
@@ -337,7 +390,7 @@ export function Navbar({ userRole = "STUDENT", userName, phoneNumber }: NavbarPr
                   }`}
                 >
                   <BarChart3 className="h-3.5 w-3.5 text-emerald-400" />
-                  <span>شاخص‌های راهبردی</span>
+                  <span>شاخص‌های کلیدی</span>
                 </Link>
 
                 <Link
@@ -349,7 +402,19 @@ export function Navbar({ userRole = "STUDENT", userName, phoneNumber }: NavbarPr
                   }`}
                 >
                   <Eye className="h-3.5 w-3.5 text-amber-400" />
-                  <span>نظارت سرپرستی</span>
+                  <span>نظارت و پیگیری سرپرستان</span>
+                </Link>
+
+                <Link
+                  href="/mentor/students"
+                  className={`flex items-center space-x-1.5 space-x-reverse px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                    pathname === "/mentor/students"
+                      ? "bg-primary/10 text-primary font-semibold"
+                      : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                  }`}
+                >
+                  <Users className="h-3.5 w-3.5 text-sky-400" />
+                  <span>داوطلبان و تماس‌ها</span>
                 </Link>
 
                 <Link
@@ -361,7 +426,7 @@ export function Navbar({ userRole = "STUDENT", userName, phoneNumber }: NavbarPr
                   }`}
                 >
                   <ShieldAlert className="h-3.5 w-3.5 text-rose-400" />
-                  <span>پایش و حل موانع علمی</span>
+                  <span>رفع مشکلات علمی</span>
                 </Link>
 
                 <Link
@@ -385,7 +450,19 @@ export function Navbar({ userRole = "STUDENT", userName, phoneNumber }: NavbarPr
                   }`}
                 >
                   <CheckSquare className="h-3.5 w-3.5 text-amber-400" />
-                  <span>کارتابل وظایف</span>
+                  <span>ارجاع وظیفه</span>
+                </Link>
+
+                <Link
+                  href="/exams/builder"
+                  className={`flex items-center space-x-1.5 space-x-reverse px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                    pathname?.startsWith("/exams")
+                      ? "bg-primary/10 text-primary font-semibold"
+                      : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                  }`}
+                >
+                  <GraduationCap className="h-3.5 w-3.5 text-emerald-400" />
+                  <span>طراحی و مدیریت آزمون‌ها</span>
                 </Link>
 
                 <Link
@@ -397,7 +474,7 @@ export function Navbar({ userRole = "STUDENT", userName, phoneNumber }: NavbarPr
                   }`}
                 >
                   <MessageSquare className="h-3.5 w-3.5 text-blue-400" />
-                  <span>پیام‌ها و ممیزی</span>
+                  <span>پیام‌ها و بازبینی</span>
                 </Link>
               </>
             )}
@@ -406,14 +483,48 @@ export function Navbar({ userRole = "STUDENT", userName, phoneNumber }: NavbarPr
 
         {/* 3. Action Utilities & User Profile Pill */}
         <div className="flex items-center space-x-2 space-x-reverse">
-          {/* Notifications / Messages Indicator */}
+          {/* Notification 1: Friday Reports Counter */}
+          <Link
+            href={userRole === "STUDENT" ? "/student/friday-reports" : "/mentor/friday-reports"}
+            className="p-2 rounded-lg border border-border text-muted-foreground hover:text-foreground hover:bg-muted transition-colors relative"
+            title={`گزارشات خودارزیابی جمعه${pendingReportsCount > 0 ? ` (${toPersianDigits(pendingReportsCount)} در انتظار اقدام)` : ""}`}
+          >
+            <BookOpen className="h-4 w-4" />
+            {pendingReportsCount > 0 && (
+              <span className="absolute -top-1 -end-1 px-1.5 py-0.2 min-w-4.5 h-4.5 text-[10px] font-bold rounded-full bg-emerald-600 text-white flex items-center justify-center font-mono shadow-xs animate-in zoom-in-75">
+                {toPersianDigits(pendingReportsCount)}
+              </span>
+            )}
+          </Link>
+
+          {/* Notification 2: Hierarchy Tasks Counter (Mentors / Supervisors / Management) */}
+          {userRole !== "STUDENT" && (
+            <Link
+              href="/tasks"
+              className="p-2 rounded-lg border border-border text-muted-foreground hover:text-foreground hover:bg-muted transition-colors relative"
+              title={`کارتابل وظایف سازمانی${pendingTasksCount > 0 ? ` (${toPersianDigits(pendingTasksCount)} وظیفه در انتظار)` : ""}`}
+            >
+              <CheckSquare className="h-4 w-4" />
+              {pendingTasksCount > 0 && (
+                <span className="absolute -top-1 -end-1 px-1.5 py-0.2 min-w-4.5 h-4.5 text-[10px] font-bold rounded-full bg-amber-600 text-white flex items-center justify-center font-mono shadow-xs animate-in zoom-in-75">
+                  {toPersianDigits(pendingTasksCount)}
+                </span>
+              )}
+            </Link>
+          )}
+
+          {/* Notification 3: Direct & Internal Messages Counter */}
           <Link
             href="/messages"
             className="p-2 rounded-lg border border-border text-muted-foreground hover:text-foreground hover:bg-muted transition-colors relative"
-            title="مرکز پیام‌ها و مکاتبات"
+            title={`مرکز پیام‌ها و مکاتبات${unreadMessagesCount > 0 ? ` (${toPersianDigits(unreadMessagesCount)} پیام خوانده‌نشده)` : ""}`}
           >
             <MessageSquare className="h-4 w-4" />
-            <span className="absolute top-1.5 end-1.5 h-2 w-2 rounded-full bg-indigo-500 animate-pulse" />
+            {unreadMessagesCount > 0 ? (
+              <span className="absolute -top-1 -end-1 px-1.5 py-0.2 min-w-4.5 h-4.5 text-[10px] font-bold rounded-full bg-indigo-600 text-white flex items-center justify-center font-mono shadow-xs animate-in zoom-in-75">
+                {toPersianDigits(unreadMessagesCount)}
+              </span>
+            ) : null}
           </Link>
 
           {/* Theme Toggle (Light / Dark Mode) */}
@@ -512,12 +623,20 @@ export function Navbar({ userRole = "STUDENT", userName, phoneNumber }: NavbarPr
                   <span>میز کار و برنامه</span>
                 </Link>
                 <Link
-                  href="/student/weekly-review"
+                  href="/student/friday-report"
                   onClick={() => setMobileMenuOpen(false)}
                   className="flex items-center space-x-2 space-x-reverse px-3 py-2 rounded-lg text-xs font-medium text-foreground hover:bg-muted"
                 >
                   <BookOpen className="h-4 w-4 text-blue-400" />
-                  <span>خودارزیابی جمعه</span>
+                  <span>گزارشات خودارزیابی جمعه</span>
+                </Link>
+                <Link
+                  href="/student/exams"
+                  onClick={() => setMobileMenuOpen(false)}
+                  className="flex items-center space-x-2 space-x-reverse px-3 py-2 rounded-lg text-xs font-medium text-foreground hover:bg-muted"
+                >
+                  <GraduationCap className="h-4 w-4 text-emerald-400" />
+                  <span>آزمون‌های آنلاین و کارنامه</span>
                 </Link>
               </>
             )}
@@ -525,12 +644,28 @@ export function Navbar({ userRole = "STUDENT", userName, phoneNumber }: NavbarPr
             {userRole === "MENTOR" && (
               <>
                 <Link
+                  href="/mentor/students"
+                  onClick={() => setMobileMenuOpen(false)}
+                  className="flex items-center space-x-2 space-x-reverse px-3 py-2 rounded-lg text-xs font-medium text-foreground hover:bg-muted"
+                >
+                  <Users className="h-4 w-4 text-sky-400" />
+                  <span>داوطلبان من (تماس و مشاوره)</span>
+                </Link>
+                <Link
+                  href="/mentor/friday-reports"
+                  onClick={() => setMobileMenuOpen(false)}
+                  className="flex items-center space-x-2 space-x-reverse px-3 py-2 rounded-lg text-xs font-medium text-foreground hover:bg-muted"
+                >
+                  <BookOpen className="h-4 w-4 text-blue-400" />
+                  <span>گزارشات خودارزیابی جمعه</span>
+                </Link>
+                <Link
                   href="/mentor/triage"
                   onClick={() => setMobileMenuOpen(false)}
                   className="flex items-center space-x-2 space-x-reverse px-3 py-2 rounded-lg text-xs font-medium text-foreground hover:bg-muted"
                 >
                   <ShieldAlert className="h-4 w-4 text-rose-400" />
-                  <span>پایش بحران‌های مطالعاتی</span>
+                  <span>رفع مشکلات علمی</span>
                 </Link>
                 <Link
                   href="/plans"
@@ -546,7 +681,15 @@ export function Navbar({ userRole = "STUDENT", userName, phoneNumber }: NavbarPr
                   className="flex items-center space-x-2 space-x-reverse px-3 py-2 rounded-lg text-xs font-medium text-foreground hover:bg-muted"
                 >
                   <CheckSquare className="h-4 w-4 text-amber-400" />
-                  <span>کارتابل وظایف</span>
+                  <span>ارجاع وظیفه</span>
+                </Link>
+                <Link
+                  href="/exams/builder"
+                  onClick={() => setMobileMenuOpen(false)}
+                  className="flex items-center space-x-2 space-x-reverse px-3 py-2 rounded-lg text-xs font-medium text-foreground hover:bg-muted"
+                >
+                  <GraduationCap className="h-4 w-4 text-emerald-400" />
+                  <span>طراحی و بارگذاری آزمون</span>
                 </Link>
               </>
             )}
@@ -559,7 +702,15 @@ export function Navbar({ userRole = "STUDENT", userName, phoneNumber }: NavbarPr
                   className="flex items-center space-x-2 space-x-reverse px-3 py-2 rounded-lg text-xs font-medium text-foreground hover:bg-muted"
                 >
                   <BarChart3 className="h-4 w-4 text-amber-400" />
-                  <span>داشبورد سرپرستی کوهورت</span>
+                  <span>داشبورد سرپرستی گروه آموزشی</span>
+                </Link>
+                <Link
+                  href="/mentor/friday-reports"
+                  onClick={() => setMobileMenuOpen(false)}
+                  className="flex items-center space-x-2 space-x-reverse px-3 py-2 rounded-lg text-xs font-medium text-foreground hover:bg-muted"
+                >
+                  <BookOpen className="h-4 w-4 text-blue-400" />
+                  <span>گزارشات خودارزیابی جمعه</span>
                 </Link>
                 <Link
                   href="/mentor/triage"
@@ -585,6 +736,14 @@ export function Navbar({ userRole = "STUDENT", userName, phoneNumber }: NavbarPr
                   <CheckSquare className="h-4 w-4 text-amber-400" />
                   <span>ارجاع وظایف</span>
                 </Link>
+                <Link
+                  href="/exams/builder"
+                  onClick={() => setMobileMenuOpen(false)}
+                  className="flex items-center space-x-2 space-x-reverse px-3 py-2 rounded-lg text-xs font-medium text-foreground hover:bg-muted"
+                >
+                  <GraduationCap className="h-4 w-4 text-emerald-400" />
+                  <span>طراحی و پایش آزمون‌ها</span>
+                </Link>
               </>
             )}
 
@@ -596,7 +755,7 @@ export function Navbar({ userRole = "STUDENT", userName, phoneNumber }: NavbarPr
                   className="flex items-center space-x-2 space-x-reverse px-3 py-2 rounded-lg text-xs font-medium text-foreground hover:bg-muted"
                 >
                   <BarChart3 className="h-4 w-4 text-emerald-400" />
-                  <span>شاخص‌های راهبردی مدیریت ارشد</span>
+                  <span>شاخص‌های کلیدی</span>
                 </Link>
                 <Link
                   href="/supervisor"
@@ -604,7 +763,7 @@ export function Navbar({ userRole = "STUDENT", userName, phoneNumber }: NavbarPr
                   className="flex items-center space-x-2 space-x-reverse px-3 py-2 rounded-lg text-xs font-medium text-foreground hover:bg-muted"
                 >
                   <Eye className="h-4 w-4 text-amber-400" />
-                  <span>نظارت سرپرستی</span>
+                  <span>نظارت و پیگیری سرپرستان</span>
                 </Link>
                 <Link
                   href="/mentor/triage"
@@ -612,7 +771,7 @@ export function Navbar({ userRole = "STUDENT", userName, phoneNumber }: NavbarPr
                   className="flex items-center space-x-2 space-x-reverse px-3 py-2 rounded-lg text-xs font-medium text-foreground hover:bg-muted"
                 >
                   <ShieldAlert className="h-4 w-4 text-rose-400" />
-                  <span>پایش و حل موانع علمی</span>
+                  <span>رفع مشکلات علمی</span>
                 </Link>
                 <Link
                   href="/plans"
@@ -628,7 +787,15 @@ export function Navbar({ userRole = "STUDENT", userName, phoneNumber }: NavbarPr
                   className="flex items-center space-x-2 space-x-reverse px-3 py-2 rounded-lg text-xs font-medium text-foreground hover:bg-muted"
                 >
                   <CheckSquare className="h-4 w-4 text-amber-400" />
-                  <span>کارتابل وظایف</span>
+                  <span>ارجاع وظیفه</span>
+                </Link>
+                <Link
+                  href="/exams/builder"
+                  onClick={() => setMobileMenuOpen(false)}
+                  className="flex items-center space-x-2 space-x-reverse px-3 py-2 rounded-lg text-xs font-medium text-foreground hover:bg-muted"
+                >
+                  <GraduationCap className="h-4 w-4 text-emerald-400" />
+                  <span>بانک و طراحی آزمون‌ها</span>
                 </Link>
               </>
             )}

@@ -15,6 +15,9 @@ export interface UserRecord {
   nationalId?: string | null;
   passwordHash?: string | null;
   mustChangePassword?: boolean;
+  garnetUserId?: string | null;
+  garnetUsername?: string | null;
+  canCreateExams?: boolean;
   isActive: boolean;
   createdAt: Date;
   updatedAt: Date;
@@ -42,6 +45,9 @@ export interface StudentProfileRecord {
   riskStatus: "GREEN" | "YELLOW" | "RED";
   riskReason: string;
   lastContactAt: Date;
+  enrolledCourseCode?: string | null;
+  enrolledCourseName?: string | null;
+  hasActiveSupport?: boolean;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -65,6 +71,8 @@ export interface DailyCheckinRecord {
   studentProfileId: string;
   checkinDate: string; // "1403-07-21"
   calculatedExecutionPercent: number;
+  plannedHours?: number;
+  actualHours?: number;
   rootFailureCause?: string;
   helpRequested: boolean;
   studentNotes?: string;
@@ -192,7 +200,14 @@ export interface SmsLogRecord {
  * 3. Hierarchical Tasks (Manager -> Supervisor, Supervisor -> Mentors)
  */
 export type TaskPriority = "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
-export type TaskStatus = "PENDING" | "IN_PROGRESS" | "COMPLETED";
+export type TaskStatus =
+  | "PENDING"
+  | "SEEN_IN_PROGRESS"
+  | "IN_PROGRESS"
+  | "COMPLETED_BY_MENTOR"
+  | "APPROVED"
+  | "REJECTED"
+  | "COMPLETED";
 
 export interface HierarchyTaskRecord {
   id: string;
@@ -208,7 +223,49 @@ export interface HierarchyTaskRecord {
   status: TaskStatus;
   dueDate: string; // "1403-08-01"
   resolutionNotes?: string;
+  reviewedBy?: string;
+  reviewedByName?: string;
+  reviewNotes?: string;
+  seenAt?: Date;
+  reviewedAt?: Date;
+  completedAt?: Date;
   createdAt: Date;
+  updatedAt: Date;
+}
+
+/**
+ * Friday Self-Assessment Report Record
+ */
+export interface FridayReportRecord {
+  id: string;
+  studentId: string;
+  studentProfileId?: string;
+  cohortId?: string;
+  weekNumber: number;
+  studyHoursCivil: number;
+  studyHoursCriminal: number;
+  studyHoursTrade: number;
+  studyHoursProcedure: number;
+  totalHours: number;
+  testsCount: number;
+  weakPoints?: string;
+  strengths?: string;
+  studentNotes?: string;
+  status?: "SUBMITTED" | "APPROVED" | "REJECTED";
+  mentorFeedback?: string;
+  mentorReviewedAt?: Date;
+  supervisorApproval: boolean;
+  supervisorNotes?: string;
+  supervisorApprovedAt?: Date;
+  submittedAt: Date;
+  updatedAt: Date;
+}
+
+export interface DirectChatThreadRecord {
+  id: string;
+  isClosed: boolean;
+  closedById?: string | null;
+  closedAt?: Date | null;
   updatedAt: Date;
 }
 
@@ -311,18 +368,103 @@ export interface EvaluationExamRecord {
 export interface ExamSubmissionRecord {
   id: string;
   examId: string;
-  examTitle: string;
-  studentProfileId: string;
-  studentName: string;
-  scorePercent: number;
-  subjectScores: Record<string, number>;
+  examTitle?: string;
+  studentProfileId?: string;
+  studentId?: string;
+  mentorId?: string;
+  studentName?: string;
+  scorePercent?: number;
+  subjectScores?: Record<string, number>;
   correctCount: number;
-  wrongCount: number;
+  wrongCount?: number;
+  incorrectCount?: number;
   unansweredCount: number;
-  rank: number;
-  deltaFromPrevious: number;
-  deltaFromBaseline: number;
+  rank?: number;
+  deltaFromPrevious?: number;
+  deltaFromBaseline?: number;
+  answers?: Record<string, any>;
+  totalPercentage?: string | number;
+  subjectBreakdown?: SubjectBreakdownItem[];
+  status?: ExamSubmissionStatus;
+  mentorNotes?: string | null;
+  reviewedAt?: Date | null;
+  publishedAt?: Date | null;
   submittedAt: Date;
+}
+
+/**
+ * Production Exam Module Models (Bar Exam Simulation Engine)
+ */
+export type ExamCategory = "MOCK_BAR" | "DIAGNOSTIC" | "SUBJECT_SPECIFIC";
+export type ExamTargetAudience = "ALL" | "COURSE_CODE" | "SPECIFIC_STUDENTS";
+
+export interface ExamOptionItem {
+  id: number;
+  text: string;
+}
+
+export interface ExamRecord {
+  id: string;
+  title: string;
+  courseCode?: string | null;
+  category: ExamCategory;
+  durationMinutes: number;
+  totalQuestions: number;
+  hasNegativeMarking: boolean;
+  isPublished: boolean;
+  targetAudience: ExamTargetAudience;
+  targetCourseCodes: string[];
+  targetStudentIds: string[];
+  startDate?: Date | string | null;
+  expiryDate?: Date | string | null;
+  createdById: string;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface ExamQuestion {
+  id: string;
+  examId: string;
+  questionNumber: number;
+  subject: string;
+  questionText: string;
+  options: ExamOptionItem[];
+  correctOption: number;
+  explanation?: string | null;
+  coefficient: number;
+}
+
+export interface SubjectBreakdownItem {
+  subject: string;
+  correct: number;
+  incorrect: number;
+  unattempted: number;
+  percentage: number;
+}
+
+export type ExamSubmissionStatus =
+  | "IN_PROGRESS"
+  | "AUTO_GRADED_PENDING_MENTOR"
+  | "PUBLISHED_TO_STUDENT";
+
+export interface ExamSubmission {
+  id: string;
+  examId: string;
+  studentId: string;
+  mentorId: string;
+  studentName?: string | null;
+  startedAt: Date;
+  submittedAt?: Date | null;
+  answers: Record<string, number>;
+  correctCount: number;
+  incorrectCount: number;
+  unansweredCount: number;
+  totalPercentage: string | number;
+  subjectBreakdown: SubjectBreakdownItem[];
+  status: ExamSubmissionStatus;
+  mentorNotes?: string | null;
+  reviewedAt?: Date | null;
+  publishedAt?: Date | null;
 }
 
 /**
@@ -373,6 +515,7 @@ export interface ChatConversationRecord {
   creatorName: string;
   memberIds: string[];
   isChannelReadOnlyForStudents: boolean;
+  isGhostMode?: boolean;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -437,7 +580,7 @@ export interface LandingHonorsItem {
   candidateName: string; // e.g. "پذیرفته‌شده آزمون وکالت ۱۴۰۳"
   quote: string;
   finalScore: string; // "معدل نهایی: ۱۹.۴۰"
-  cohortName: string; // "کوهورت طلایی"
+  cohortName: string; // "دوره آموزشی"
 }
 
 export interface LandingGalleryImage {
@@ -478,5 +621,37 @@ export interface LandingContentSettings {
   phoneNumber?: string;
   brandColor?: string;
   accentColor?: string;
+}
+
+/**
+ * 12. Mentor Calling Windows (Reverse AMI Calling)
+ */
+export interface MentorCallingWindowRecord {
+  id: string;
+  mentorId: string;
+  startTime: string; // e.g. "17:00"
+  endTime: string;   // e.g. "20:00"
+  daysOfWeek: number[]; // [0, 1, 2, 3, 4] Shanbeh to Chaharshanbeh
+  dailyDurationHours: number;
+  isActive: boolean;
+  announcement?: string | null;
+  updatedAt: Date;
+}
+
+/**
+ * 13. Garnet LMS Entitled Courses
+ */
+export interface EntitledCourseRecord {
+  id: string;
+  courseCode: string;
+  courseName: string;
+  description?: string | null;
+  priceFormatted: string;
+  garnetPurchaseUrl: string;
+  hasSupport: boolean;
+  supportTier: string;
+  isActive: boolean;
+  createdAt: Date;
+  updatedAt: Date;
 }
 

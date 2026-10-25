@@ -8,54 +8,60 @@ import type { EvaluationExamRecord, ExamSubmissionRecord } from "@/types/models"
 export default async function ExamsPage() {
   const session = await requireAuth();
 
-  const examsRows = await db
-    .select()
-    .from(evaluationExams)
-    .orderBy(desc(evaluationExams.createdAt));
-  const exams = examsRows as unknown as EvaluationExamRecord[];
-
+  let exams: EvaluationExamRecord[] = [];
   let submissions: ExamSubmissionRecord[] = [];
   let studentProfileId = "";
+  let studentsList: { id: string; fullName: string; nationalId: string; phone: string }[] = [];
 
-  if (session.role === "STUDENT") {
-    const [profile] = await db
+  try {
+    const examsRows = await db
       .select()
-      .from(studentProfiles)
-      .where(eq(studentProfiles.userId, session.userId))
-      .limit(1);
+      .from(evaluationExams)
+      .orderBy(desc(evaluationExams.createdAt));
+    exams = examsRows as unknown as EvaluationExamRecord[];
 
-    if (profile) {
-      studentProfileId = profile.id;
+    if (session.role === "STUDENT") {
+      const [profile] = await db
+        .select()
+        .from(studentProfiles)
+        .where(eq(studentProfiles.userId, session.userId))
+        .limit(1);
+
+      if (profile) {
+        studentProfileId = profile.id;
+        const subRows = await db
+          .select()
+          .from(examSubmissions)
+          .where(eq(examSubmissions.studentProfileId, profile.id))
+          .orderBy(desc(examSubmissions.submittedAt));
+        submissions = subRows as unknown as ExamSubmissionRecord[];
+      }
+    } else {
+      // Mentor, Supervisor, or CEO: view all submissions
       const subRows = await db
         .select()
         .from(examSubmissions)
-        .where(eq(examSubmissions.studentProfileId, profile.id))
         .orderBy(desc(examSubmissions.submittedAt));
       submissions = subRows as unknown as ExamSubmissionRecord[];
     }
-  } else {
-    // Mentor, Supervisor, or CEO: view all submissions
-    const subRows = await db
-      .select()
-      .from(examSubmissions)
-      .orderBy(desc(examSubmissions.submittedAt));
-    submissions = subRows as unknown as ExamSubmissionRecord[];
+
+    // Get available candidates for audience targeting
+    const allProfiles = await db.select().from(studentProfiles);
+    const allUsers = await db.select().from(users);
+    const userMap = new Map(allUsers.map((u) => [u.id, u]));
+
+    studentsList = allProfiles.map((st) => {
+      const user = userMap.get(st.userId);
+      return {
+        id: st.id,
+        fullName: user?.fullName || "داوطلب",
+        nationalId: user?.nationalId || "",
+        phone: user?.phoneNumber || "",
+      };
+    });
+  } catch (err) {
+    console.error("[ExamsPage] Data fetch error:", err);
   }
-
-  // Get available candidates for audience targeting
-  const allProfiles = await db.select().from(studentProfiles);
-  const allUsers = await db.select().from(users);
-  const userMap = new Map(allUsers.map((u) => [u.id, u]));
-
-  const studentsList = allProfiles.map((st) => {
-    const user = userMap.get(st.userId);
-    return {
-      id: st.id,
-      fullName: user?.fullName || "داوطلب",
-      nationalId: user?.nationalId || "",
-      phone: user?.phoneNumber || "",
-    };
-  });
 
   return (
     <div className="container mx-auto px-4 py-8 max-w-6xl" dir="rtl">

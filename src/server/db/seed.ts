@@ -1,4 +1,4 @@
-import { db, pgClient } from "./index";
+import { db, pgClient, ensureDatabaseBootstrap } from "./index";
 import {
   users,
   studentProfiles,
@@ -18,6 +18,8 @@ async function main() {
   console.log("🌱 Starting Mashahir Danesh Database Seeder...");
 
   try {
+    await ensureDatabaseBootstrap();
+
     // 1. Seed Users
     console.log(`Inserting ${initialUsers.length} users...`);
     for (const u of initialUsers) {
@@ -25,12 +27,27 @@ async function main() {
         .insert(users)
         .values({
           id: u.id,
+          username: u.username,
           phoneNumber: u.phoneNumber,
           fullName: u.fullName,
           role: u.role,
+          passwordHash: u.passwordHash,
+          sipExtension: u.sipExtension,
           isActive: u.isActive,
         })
-        .onConflictDoNothing();
+        .onConflictDoUpdate({
+          target: users.id,
+          set: {
+            username: u.username,
+            phoneNumber: u.phoneNumber,
+            fullName: u.fullName,
+            role: u.role,
+            passwordHash: u.passwordHash,
+            sipExtension: u.sipExtension,
+            isActive: u.isActive,
+            updatedAt: new Date(),
+          },
+        });
     }
 
     // 2. Seed Student Profiles
@@ -132,6 +149,7 @@ async function main() {
   }
 }
 
-if (process.argv[1]?.includes("seed.ts")) {
-  main();
-}
+main().catch((err) => {
+  console.error("❌ Fatal seed error:", err);
+  process.exit(1);
+});

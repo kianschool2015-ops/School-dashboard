@@ -9,28 +9,63 @@ import {
 } from "../src/server/auth/otp";
 
 describe("Phase 2: Multi-Replica Shared State & Distributed Rate Limiting Proof", () => {
-  let redisA: Redis;
-  let redisB: Redis;
+  let redisA: Redis | null = null;
+  let redisB: Redis | null = null;
+  let isRedisAvailable = false;
   const testPhone = "09129998877";
 
   beforeAll(async () => {
-    // Connect as two distinct client connections representing Replica A and Replica B
-    redisA = new Redis("redis://localhost:6379/0");
-    redisB = new Redis("redis://localhost:6379/0");
+    try {
+      const probe = new Redis("redis://localhost:6379/0", {
+        connectTimeout: 800,
+        maxRetriesPerRequest: 0,
+        retryStrategy: () => null,
+        lazyConnect: true,
+      });
+      // Suppress unhandled error events during probe
+      probe.on("error", () => {});
+      await probe.connect();
+      await probe.ping();
+      await probe.quit();
+      isRedisAvailable = true;
 
-    // Clean test keys
-    await redisA.del(`otp:${testPhone}`);
-    await redisA.del(`ratelimit:otp:phone:${testPhone}`);
+      // Connect as two distinct client connections representing Replica A and Replica B
+      redisA = new Redis("redis://localhost:6379/0", {
+        maxRetriesPerRequest: 1,
+        retryStrategy: () => null,
+      });
+      redisB = new Redis("redis://localhost:6379/0", {
+        maxRetriesPerRequest: 1,
+        retryStrategy: () => null,
+      });
+      redisA.on("error", () => {});
+      redisB.on("error", () => {});
+
+      // Clean test keys
+      await redisA.del(`otp:${testPhone}`);
+      await redisA.del(`ratelimit:otp:phone:${testPhone}`);
+    } catch {
+      isRedisAvailable = false;
+    }
   });
 
   afterAll(async () => {
-    await redisA.del(`otp:${testPhone}`);
-    await redisA.del(`ratelimit:otp:phone:${testPhone}`);
-    await redisA.quit();
-    await redisB.quit();
+    if (redisA && isRedisAvailable) {
+      await redisA.del(`otp:${testPhone}`).catch(() => {});
+      await redisA.del(`ratelimit:otp:phone:${testPhone}`).catch(() => {});
+      await redisA.quit().catch(() => {});
+    }
+    if (redisB && isRedisAvailable) {
+      await redisB.quit().catch(() => {});
+    }
   });
 
-  it("proves OTP generated on Replica A is instantly verifiable on Replica B", async () => {
+  it("proves OTP generated on Replica A is instantly verifiable on Replica B", async (ctx) => {
+    if (!isRedisAvailable || !redisA || !redisB) {
+      ctx.skip();
+      return;
+    }
+
     process.env.REDIS_URL = "redis://localhost:6379/0";
 
     // Replica A generates OTP
@@ -52,7 +87,11 @@ describe("Phase 2: Multi-Replica Shared State & Distributed Rate Limiting Proof"
     expect(afterDelete).toBeNull();
   });
 
-  it("proves rate-limiting counters increment and block across replicas", async () => {
+  it("proves rate-limiting counters increment and block across replicas", async (ctx) => {
+    if (!isRedisAvailable || !redisA || !redisB) {
+      ctx.skip();
+      return;
+    }
     process.env.REDIS_URL = "redis://localhost:6379/0";
     const burstPhone = "09125554433";
     await redisA.del(`ratelimit:otp:phone:${burstPhone}`);

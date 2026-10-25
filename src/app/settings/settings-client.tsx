@@ -33,6 +33,7 @@ import { importStudentWhitelistAction, removeWhitelistRecordAction } from "@/ser
 import { submitEscalationTicketAction } from "@/server/actions/messages";
 import { saveVoipSettingsAction, testVoipConnectionAction } from "@/server/actions/voip";
 import { saveVideoSettingsAction } from "@/server/actions/video";
+import { BulkExcelImport } from "@/components/supervisor/bulk-excel-import";
 import type {
   SmsSettingsRecord,
   SmsLogRecord,
@@ -435,7 +436,7 @@ export function SettingsClient({
         </div>
         <div className="flex items-center gap-2">
           <Badge variant="outline" className="px-3 py-1 font-semibold">
-            نقش فعال: {currentUser.role === "CEO" ? "مدیر ارشد / مدیرعامل" : currentUser.role === "SUPERVISOR" ? "سرپرست کوهورت" : currentUser.role === "MENTOR" ? "پشتیبان آموزشی" : "داوطلب آزمون وکالت"}
+            نقش فعال: {currentUser.role === "CEO" ? "مدیر ارشد / مدیرعامل" : currentUser.role === "SUPERVISOR" ? "سرپرست گروه آموزشی داوطلبان" : currentUser.role === "MENTOR" ? "پشتیبان آموزشی" : "داوطلب آزمون وکالت"}
           </Badge>
         </div>
       </div>
@@ -483,7 +484,7 @@ export function SettingsClient({
             }`}
           >
             <ShieldAlert className="h-4 w-4" />
-            ارجاع به سرپرست کوهورت (اضطراری)
+            ارجاع به سرپرست گروه آموزشی (اضطراری)
           </button>
         )}
 
@@ -655,9 +656,9 @@ export function SettingsClient({
           <div className="p-4 bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800 rounded-lg text-amber-900 dark:text-amber-200 text-xs leading-relaxed">
             <div className="flex items-center gap-2 font-bold text-sm mb-1">
               <ShieldAlert className="h-5 w-5 text-amber-600" />
-              تذکر مهم درباره ارسال تیکت ارجاع به سرپرست کوهورت:
+              تذکر مهم درباره ارسال تیکت ارجاع به سرپرست آموزشی داوطلبان:
             </div>
-            این درگاه نظارتی، مستقیماً توسط سرپرست ارشد کوهورت حقوق و وکالت بررسی می‌شود.
+            این درگاه نظارتی، مستقیماً توسط سرپرست ارشد گروه آموزشی حقوق و وکالت بررسی می‌شود.
             لطفاً توجه فرمایید که ارتباطات روزانه، ارسال برنامه مطالعاتی و گزارش‌ها باید با پشتیبان اختصاصی صورت پذیرد.
             این بخش تنها در موارد اضطراری نظیر عدم پاسخگویی پشتیبان بیش از ۴۸ ساعت، تعارض جدی در برنامه، یا نیاز به ورود سرپرست طراحی شده است.
           </div>
@@ -728,7 +729,7 @@ export function SettingsClient({
                 </div>
 
                 <Button type="submit" disabled={isSubmitting} className="bg-amber-600 hover:bg-amber-700 text-white">
-                  {isSubmitting ? "در حال ثبت و ارسال به سرپرست..." : "ارسال تیکت به سرپرست کوهورت"}
+                  {isSubmitting ? "در حال ثبت و ارسال به سرپرست..." : "ارسال تیکت به سرپرست گروه آموزشی"}
                 </Button>
               </form>
             </CardContent>
@@ -777,12 +778,15 @@ export function SettingsClient({
       {/* TAB 4: WHITELIST & EXCEL IMPORT */}
       {activeTab === "WHITELIST" && isSupervisorOrAbove && (
         <div className="space-y-6">
+          {/* Direct Bulk Excel Upload Card */}
+          <BulkExcelImport mentorsList={mentorsList} />
+
           <Card className="shadow-sm border border-border">
             <CardHeader className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
               <div>
                 <CardTitle className="text-lg font-bold flex items-center gap-2">
                   <FileSpreadsheet className="h-5 w-5 text-primary" />
-                  مدیریت فهرست مجاز داوطلبان (Pre-Approved Whitelist)
+                  مدیریت و ثبت انفرادی داوطلبان (Pre-Approved Whitelist)
                 </CardTitle>
                 <p className="text-xs text-muted-foreground mt-1">
                   طبق سیاست‌های موسسه، دکمه ثبت‌نام برای عموم باز است اما تنها داوطلبانی که نام و کد ملی آن‌ها توسط سرپرست یا مدیر در این لیست ثبت شده باشد مجاز به ایجاد حساب و ورود هستند. پس از ثبت، پیامک دعوت به صورت هوشمند برای داوطلب ارسال می‌گردد.
@@ -796,7 +800,7 @@ export function SettingsClient({
             <CardContent className="space-y-6">
               {/* Manual/Batch Import Form */}
               <div className="space-y-3">
-                <h4 className="text-xs font-bold text-foreground">ورود مشخصات داوطلبان جدید:</h4>
+                <h4 className="text-xs font-bold text-foreground">ورود دستی مشخصات داوطلبان جدید:</h4>
                 <div className="space-y-2">
                   {whitelistRows.map((row, idx) => (
                     <div key={idx} className="grid grid-cols-1 sm:grid-cols-4 gap-2 items-center">
@@ -907,7 +911,7 @@ export function SettingsClient({
                 تنظیمات درگاه پیامک کاوه‌نگار (Kavenegar SMS Gateway)
               </CardTitle>
               <p className="text-xs text-muted-foreground">
-                پیکربندی کلید وب‌سرویس REST API کاوه‌نگار، خط اختصاصی ارسال‌کننده، و سوییچ‌های شلیک پیامک به تفکیک فعالیت‌های سیستم.
+                پیکربندی کلید وب‌سرویس REST API کاوه‌نگار، خط اختصاصی ارسال‌کننده، و سوییچ‌های ارسال پیامک به تفکیک فعالیت‌های سیستم.
               </p>
             </CardHeader>
             <CardContent className="space-y-6">
@@ -1037,7 +1041,7 @@ export function SettingsClient({
                     <thead className="bg-muted/20 border-b border-border">
                       <tr>
                         <th className="p-2 text-start">گیرنده</th>
-                        <th className="p-2 text-start">رویداد شلیک</th>
+                        <th className="p-2 text-start">رویداد ارسال</th>
                         <th className="p-2 text-start">متن ارسالی</th>
                         <th className="p-2 text-start">وضعیت درگاه</th>
                         <th className="p-2 text-start">زمان</th>
@@ -1317,7 +1321,7 @@ export function SettingsClient({
                   پلتفرم آنلاین اختصاصی کلاس‌ها و جلسات هدایت تحصیلی اضطراری
                 </div>
                 <p className="leading-relaxed">
-                  سامانه به بستر وبینار اختصاصی مؤسسه آموزش عالی مشاهیر دانش متصل بوده و امکان ایجاد کلاس‌های رفع اشکال هفتگی، وبینارهای سراسری کوهورت، و اتاق‌های جلسات هدایت تحصیلی و حل موانع با داوطلبان را به صورت بلادرنگ فراهم می‌آورد.
+                  سامانه به بستر وبینار اختصاصی مؤسسه آموزش عالی مشاهیر دانش متصل بوده و امکان ایجاد کلاس‌های رفع اشکال هفتگی، وبینارهای سراسری گروه آموزشی داوطلبان، و اتاق‌های جلسات هدایت تحصیلی و حل موانع با داوطلبان را به صورت بلادرنگ فراهم می‌آورد.
                 </p>
               </div>
 

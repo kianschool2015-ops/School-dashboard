@@ -9,9 +9,10 @@ import {
   scheduleItems,
   users,
 } from "../db/schema";
-import { eq } from "drizzle-orm";
+import { eq, and } from "drizzle-orm";
 import { sendSystemSms } from "../services/sms";
 import { revalidatePath } from "next/cache";
+import { getStudyWeekBoundaries } from "@/lib/jalali";
 import type { WeeklyPlanTemplateRecord, ScheduleItemRecord } from "@/types/models";
 
 /**
@@ -71,6 +72,10 @@ export async function applyTailoredPlanToStudentAction(payload: {
   studentProfileId: string;
   templateId?: string;
   weeklyMainGoal: string;
+  jalaliYear?: number;
+  jalaliWeekNumber?: number;
+  weekStartDate?: string;
+  weekEndDate?: string;
   items: Omit<ScheduleItemRecord, "id" | "scheduleId">[];
 }) {
   const session = await requireRole(["MENTOR", "SUPERVISOR", "CEO", "ADMIN"]);
@@ -96,23 +101,63 @@ export async function applyTailoredPlanToStudentAction(payload: {
     .where(eq(users.id, student.userId))
     .limit(1);
 
-  const scheduleId = `sch_${payload.studentProfileId}_${Date.now()}`;
+  const currentBoundaries = getStudyWeekBoundaries(new Date());
+  const targetYear = payload.jalaliYear || currentBoundaries.jalaliYear;
+  const targetWeek = payload.jalaliWeekNumber || currentBoundaries.jalaliWeekNumber;
+  const targetStartDate = payload.weekStartDate || currentBoundaries.weekStartDate;
+  const targetEndDate = payload.weekEndDate || currentBoundaries.weekEndDate;
 
-  await db.insert(studentSchedules).values({
-    id: scheduleId,
-    studentProfileId: payload.studentProfileId,
-    jalaliYear: 1403,
-    jalaliWeekNumber: 30,
-    weekStartDate: "1403-08-01",
-    weekEndDate: "1403-08-07",
-    weeklyMainGoal: payload.weeklyMainGoal.trim(),
-    isTemplateOverride: true,
-  });
+  // Check if schedule already exists for this student and week (idempotent upsert)
+  const [existingSchedule] = await db
+    .select()
+    .from(studentSchedules)
+    .where(
+      and(
+        eq(studentSchedules.studentProfileId, payload.studentProfileId),
+        eq(studentSchedules.jalaliYear, targetYear),
+        eq(studentSchedules.jalaliWeekNumber, targetWeek)
+      )
+    )
+    .limit(1);
 
+  let activeScheduleId: string;
+
+  if (existingSchedule) {
+    activeScheduleId = existingSchedule.id;
+    // Update existing schedule metadata
+    await db
+      .update(studentSchedules)
+      .set({
+        weeklyMainGoal: payload.weeklyMainGoal.trim(),
+        weekStartDate: targetStartDate,
+        weekEndDate: targetEndDate,
+        isTemplateOverride: true,
+      })
+      .where(eq(studentSchedules.id, existingSchedule.id));
+
+    // Clear old items for this schedule
+    await db
+      .delete(scheduleItems)
+      .where(eq(scheduleItems.scheduleId, existingSchedule.id));
+  } else {
+    activeScheduleId = `sch_${payload.studentProfileId}_${Date.now()}`;
+    await db.insert(studentSchedules).values({
+      id: activeScheduleId,
+      studentProfileId: payload.studentProfileId,
+      jalaliYear: targetYear,
+      jalaliWeekNumber: targetWeek,
+      weekStartDate: targetStartDate,
+      weekEndDate: targetEndDate,
+      weeklyMainGoal: payload.weeklyMainGoal.trim(),
+      isTemplateOverride: true,
+    });
+  }
+
+  // Insert items
   for (const [idx, it] of payload.items.entries()) {
     await db.insert(scheduleItems).values({
       id: `item_${Date.now()}_${idx}`,
-      scheduleId,
+      scheduleId: activeScheduleId,
       dayOfWeek: it.dayOfWeek,
       subject: it.subject,
       activityType: it.activityType || "STUDY",
@@ -138,11 +183,12 @@ export async function applyTailoredPlanToStudentAction(payload: {
 
   revalidatePath("/plans");
   revalidatePath("/student/dashboard");
+  revalidatePath("/student/study-plan");
   revalidatePath(`/mentor/student/${payload.studentProfileId}`);
 
   return {
     success: true,
     message: "برنامه هفتگی شخصی‌سازی‌شده با موفقیت برای داوطلب ثبت گردید و پیامک اطلاع‌رسانی ارسال شد.",
-    scheduleId,
+    scheduleId: activeScheduleId,
   };
 }

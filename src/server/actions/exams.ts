@@ -2,23 +2,1253 @@
 
 import { requireAuth, requireRole, requireStudentOwnership } from "../auth/guard";
 import { db } from "../db";
-import { evaluationExams, examSubmissions, studentProfiles, users } from "../db/schema";
-import { eq, and, desc } from "drizzle-orm";
+import {
+  evaluationExams,
+  exams,
+  examQuestions,
+  examSubmissions,
+  studentProfiles,
+  studentWhitelist,
+  entitledCourses,
+  users,
+} from "../db/schema";
+import { eq, and, desc, asc } from "drizzle-orm";
 import { sendSystemSms } from "../services/sms";
-import { isExamDeadlinePassed } from "@/lib/jalali";
+import { isExamDeadlinePassed, parseJalaliDateTime } from "@/lib/jalali";
 import { getRedisClient } from "../redis";
 import { enqueueExamSubmission } from "../queue/exam-queue";
 import { revalidatePath } from "next/cache";
-import type { EvaluationExamRecord, ExamSubmissionRecord, ExamQuestionRecord, QuestionType } from "@/types/models";
+import type {
+  EvaluationExamRecord,
+  ExamSubmissionRecord,
+  ExamQuestionRecord,
+  QuestionType,
+  ExamCategory,
+  ExamTargetAudience,
+  ExamOptionItem,
+  ExamRecord,
+  ExamQuestion,
+  SubjectBreakdownItem,
+  ExamSubmissionStatus,
+} from "@/types/models";
 
 /**
- * Create a Timed Evaluation Exam (by Supervisor or authorized Mentor)
+ * Route Guard for Exam Authoring:
+ * Only CEO, SUPERVISOR, ADMIN, or MENTOR with canCreateExams flag
  */
+async function verifyExamAuthorPermission(session: { role: string; userId: string }) {
+  if (session.role === "CEO" || session.role === "SUPERVISOR" || session.role === "ADMIN") {
+    return;
+  }
+  if (session.role === "MENTOR") {
+    const [user] = await db
+      .select({ canCreateExams: users.canCreateExams })
+      .from(users)
+      .where(eq(users.id, session.userId))
+      .limit(1);
+
+    if (user?.canCreateExams) {
+      return;
+    }
+  }
+  throw new Error("UNAUTHORIZED: شما مجوز لازم برای طراحی و بارگذاری آزمون را ندارید.");
+}
+
+// ============================================================================
+// 1. PRODUCTION EXAM BUILDER ACTIONS
+// ============================================================================
+
+/**
+ * Create a new exam header in the production exams table
+ */
+export async function createExamAction(payload: {
+  title: string;
+  courseCode?: string;
+  category: ExamCategory;
+  durationMinutes: number;
+  hasNegativeMarking: boolean;
+  targetAudience?: ExamTargetAudience;
+  targetCourseCodes?: string[];
+  targetStudentIds?: string[];
+  startDate?: string | Date | null;
+  expiryDate?: string | Date | null;
+}): Promise<{ success: boolean; examId?: string; message: string }> {
+  try {
+    const session = await requireAuth();
+    await verifyExamAuthorPermission(session);
+
+    if (!payload.title.trim()) {
+      return { success: false, message: "عنوان آزمون الزامی است." };
+    }
+
+    const examId = `exam_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+
+    // Parse Jalali / ISO date if string
+    let parsedStartDate: Date | null = null;
+    if (payload.startDate) {
+      if (typeof payload.startDate === "string") {
+        parsedStartDate = parseJalaliDateTime(payload.startDate) || new Date(payload.startDate);
+      } else {
+        parsedStartDate = payload.startDate;
+      }
+    }
+
+    let parsedExpiryDate: Date | null = null;
+    if (payload.expiryDate) {
+      if (typeof payload.expiryDate === "string") {
+        parsedExpiryDate = parseJalaliDateTime(payload.expiryDate) || new Date(payload.expiryDate);
+      } else {
+        parsedExpiryDate = payload.expiryDate;
+      }
+    }
+
+    await db.insert(exams).values({
+      id: examId,
+      title: payload.title.trim(),
+      courseCode: payload.courseCode?.trim() || "GARNET-BAR-360",
+      category: payload.category,
+      durationMinutes: payload.durationMinutes || 120,
+      totalQuestions: 0,
+      hasNegativeMarking: payload.hasNegativeMarking ?? true,
+      isPublished: false,
+      targetAudience: payload.targetAudience || "ALL",
+      targetCourseCodes: payload.targetCourseCodes || [],
+      targetStudentIds: payload.targetStudentIds || [],
+      startDate: parsedStartDate,
+      expiryDate: parsedExpiryDate,
+      createdById: session.userId,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    revalidatePath("/exams");
+    revalidatePath("/exams/builder");
+    revalidatePath(`/exams/builder/${examId}`);
+
+    return {
+      success: true,
+      examId,
+      message: "ساختار آزمون با موفقیت ایجاد گردید. اکنون می‌توانید سؤالات را طراحی کنید.",
+    };
+  } catch (error: unknown) {
+    return {
+      success: false,
+      message: error instanceof Error ? error.message : "خطا در ایجاد آزمون.",
+    };
+  }
+}
+
+/**
+ * Update exam header details
+ */
+export async function updateExamHeaderAction(payload: {
+  examId: string;
+  title: string;
+  courseCode?: string;
+  category: ExamCategory;
+  durationMinutes: number;
+  hasNegativeMarking: boolean;
+  targetAudience?: ExamTargetAudience;
+  targetCourseCodes?: string[];
+  targetStudentIds?: string[];
+  startDate?: string | Date | null;
+  expiryDate?: string | Date | null;
+}): Promise<{ success: boolean; message: string }> {
+  try {
+    const session = await requireAuth();
+    await verifyExamAuthorPermission(session);
+
+    const [existing] = await db.select().from(exams).where(eq(exams.id, payload.examId)).limit(1);
+    if (!existing) {
+      return { success: false, message: "آزمون مورد نظر یافت نشد." };
+    }
+
+    if (session.role === "MENTOR" && existing.createdById !== session.userId) {
+      return { success: false, message: "شما تنها مجاز به ویرایش آزمون‌های طراحی‌شده توسط خود هستید." };
+    }
+
+    let parsedStartDate: Date | null = existing.startDate || null;
+    if (payload.startDate !== undefined) {
+      if (typeof payload.startDate === "string") {
+        parsedStartDate = parseJalaliDateTime(payload.startDate) || new Date(payload.startDate);
+      } else {
+        parsedStartDate = payload.startDate;
+      }
+    }
+
+    let parsedExpiryDate: Date | null = existing.expiryDate || null;
+    if (payload.expiryDate !== undefined) {
+      if (typeof payload.expiryDate === "string") {
+        parsedExpiryDate = parseJalaliDateTime(payload.expiryDate) || new Date(payload.expiryDate);
+      } else {
+        parsedExpiryDate = payload.expiryDate;
+      }
+    }
+
+    await db
+      .update(exams)
+      .set({
+        title: payload.title.trim(),
+        courseCode: payload.courseCode?.trim() || null,
+        category: payload.category,
+        durationMinutes: payload.durationMinutes,
+        hasNegativeMarking: payload.hasNegativeMarking,
+        targetAudience: payload.targetAudience || "ALL",
+        targetCourseCodes: payload.targetCourseCodes || [],
+        targetStudentIds: payload.targetStudentIds || [],
+        startDate: parsedStartDate,
+        expiryDate: parsedExpiryDate,
+        updatedAt: new Date(),
+      })
+      .where(eq(exams.id, payload.examId));
+
+    revalidatePath("/exams");
+    revalidatePath(`/exams/builder/${payload.examId}`);
+
+    return { success: true, message: "مشخصات کلی آزمون با موفقیت به‌روزرسانی شد." };
+  } catch (error: unknown) {
+    return {
+      success: false,
+      message: error instanceof Error ? error.message : "خطا در به‌روزرسانی آزمون.",
+    };
+  }
+}
+
+/**
+ * Add a Question to an Exam
+ */
+export async function addProductionExamQuestionAction(payload: {
+  examId: string;
+  subject: string;
+  questionText: string;
+  options: ExamOptionItem[];
+  correctOption: number;
+  explanation?: string;
+  coefficient?: number;
+}): Promise<{ success: boolean; questionId?: string; message: string }> {
+  try {
+    const session = await requireAuth();
+    await verifyExamAuthorPermission(session);
+
+    const [exam] = await db.select().from(exams).where(eq(exams.id, payload.examId)).limit(1);
+    if (!exam) {
+      return { success: false, message: "آزمون مورد نظر یافت نشد." };
+    }
+
+    if (session.role === "MENTOR" && exam.createdById !== session.userId) {
+      return { success: false, message: "شما تنها مجاز به ویرایش آزمون‌های خود هستید." };
+    }
+
+    // Count existing questions to set questionNumber
+    const existingQuestions = await db
+      .select({ id: examQuestions.id })
+      .from(examQuestions)
+      .where(eq(examQuestions.examId, payload.examId));
+
+    const questionNumber = existingQuestions.length + 1;
+    const questionId = `q_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+
+    await db.insert(examQuestions).values({
+      id: questionId,
+      examId: payload.examId,
+      questionNumber,
+      subject: payload.subject.trim(),
+      questionText: payload.questionText.trim(),
+      options: payload.options,
+      correctOption: payload.correctOption,
+      explanation: payload.explanation?.trim() || null,
+      coefficient: payload.coefficient || 1,
+    });
+
+    // Update totalQuestions count on exam
+    await db
+      .update(exams)
+      .set({
+        totalQuestions: questionNumber,
+        updatedAt: new Date(),
+      })
+      .where(eq(exams.id, payload.examId));
+
+    revalidatePath(`/exams/builder/${payload.examId}`);
+    revalidatePath(`/student/exams/${payload.examId}`);
+
+    return {
+      success: true,
+      questionId,
+      message: `سؤال شماره ${questionNumber} با موفقیت به آزمون اضافه شد.`,
+    };
+  } catch (error: unknown) {
+    return {
+      success: false,
+      message: error instanceof Error ? error.message : "خطا در ثبت سؤال.",
+    };
+  }
+}
+
+/**
+ * Update an existing Question
+ */
+export async function updateProductionExamQuestionAction(payload: {
+  questionId: string;
+  subject: string;
+  questionText: string;
+  options: ExamOptionItem[];
+  correctOption: number;
+  explanation?: string;
+  coefficient?: number;
+}): Promise<{ success: boolean; message: string }> {
+  try {
+    const session = await requireAuth();
+    await verifyExamAuthorPermission(session);
+
+    const [q] = await db
+      .select()
+      .from(examQuestions)
+      .where(eq(examQuestions.id, payload.questionId))
+      .limit(1);
+
+    if (!q) {
+      return { success: false, message: "سؤال مورد نظر یافت نشد." };
+    }
+
+    const [exam] = await db.select().from(exams).where(eq(exams.id, q.examId)).limit(1);
+    if (session.role === "MENTOR" && exam && exam.createdById !== session.userId) {
+      return { success: false, message: "شما مجاز به ویرایش سؤالات این آزمون نیستید." };
+    }
+
+    await db
+      .update(examQuestions)
+      .set({
+        subject: payload.subject.trim(),
+        questionText: payload.questionText.trim(),
+        options: payload.options,
+        correctOption: payload.correctOption,
+        explanation: payload.explanation?.trim() || null,
+        coefficient: payload.coefficient || 1,
+      })
+      .where(eq(examQuestions.id, payload.questionId));
+
+    revalidatePath(`/exams/builder/${q.examId}`);
+    revalidatePath(`/student/exams/${q.examId}`);
+
+    return { success: true, message: "سؤال با موفقیت به‌روزرسانی شد." };
+  } catch (error: unknown) {
+    return {
+      success: false,
+      message: error instanceof Error ? error.message : "خطا در به‌روزرسانی سؤال.",
+    };
+  }
+}
+
+/**
+ * Delete a Question from Exam
+ */
+export async function deleteProductionExamQuestionAction(
+  examId: string,
+  questionId: string
+): Promise<{ success: boolean; message: string }> {
+  try {
+    const session = await requireAuth();
+    await verifyExamAuthorPermission(session);
+
+    const [exam] = await db.select().from(exams).where(eq(exams.id, examId)).limit(1);
+    if (!exam) {
+      return { success: false, message: "آزمون یافت نشد." };
+    }
+
+    if (session.role === "MENTOR" && exam.createdById !== session.userId) {
+      return { success: false, message: "شما مجاز به حذف سؤالات این آزمون نیستید." };
+    }
+
+    await db.delete(examQuestions).where(eq(examQuestions.id, questionId));
+
+    // Re-index remaining question numbers
+    const remaining = await db
+      .select()
+      .from(examQuestions)
+      .where(eq(examQuestions.examId, examId))
+      .orderBy(asc(examQuestions.questionNumber));
+
+    for (let i = 0; i < remaining.length; i++) {
+      if (remaining[i].questionNumber !== i + 1) {
+        await db
+          .update(examQuestions)
+          .set({ questionNumber: i + 1 })
+          .where(eq(examQuestions.id, remaining[i].id));
+      }
+    }
+
+    await db
+      .update(exams)
+      .set({
+        totalQuestions: remaining.length,
+        updatedAt: new Date(),
+      })
+      .where(eq(exams.id, examId));
+
+    revalidatePath(`/exams/builder/${examId}`);
+    revalidatePath(`/student/exams/${examId}`);
+
+    return { success: true, message: "سؤال با موفقیت حذف و شماره سؤالات بازآرایی شد." };
+  } catch (error: unknown) {
+    return {
+      success: false,
+      message: error instanceof Error ? error.message : "خطا در حذف سؤال.",
+    };
+  }
+}
+
+/**
+ * Reorder questions in an exam
+ */
+export async function reorderExamQuestionsAction(
+  examId: string,
+  questionIdsInOrder: string[]
+): Promise<{ success: boolean; message: string }> {
+  try {
+    const session = await requireAuth();
+    await verifyExamAuthorPermission(session);
+
+    for (let i = 0; i < questionIdsInOrder.length; i++) {
+      await db
+        .update(examQuestions)
+        .set({ questionNumber: i + 1 })
+        .where(
+          and(
+            eq(examQuestions.id, questionIdsInOrder[i]),
+            eq(examQuestions.examId, examId)
+          )
+        );
+    }
+
+    revalidatePath(`/exams/builder/${examId}`);
+    return { success: true, message: "ترتیب سؤالات با موفقیت ذخیره گردید." };
+  } catch (error: unknown) {
+    return {
+      success: false,
+      message: error instanceof Error ? error.message : "خطا در تغییر ترتیب سؤالات.",
+    };
+  }
+}
+
+/**
+ * Finalize & Publish Exam
+ */
+export async function publishExamAction(
+  examId: string,
+  isPublished: boolean
+): Promise<{ success: boolean; message: string }> {
+  try {
+    const session = await requireAuth();
+    await verifyExamAuthorPermission(session);
+
+    const [exam] = await db.select().from(exams).where(eq(exams.id, examId)).limit(1);
+    if (!exam) {
+      return { success: false, message: "آزمون مورد نظر یافت نشد." };
+    }
+
+    if (session.role === "MENTOR" && exam.createdById !== session.userId) {
+      return { success: false, message: "شما مجاز به تغییر وضعیت انتشار این آزمون نیستید." };
+    }
+
+    if (isPublished && exam.totalQuestions === 0) {
+      return {
+        success: false,
+        message: "آزمون بدون حداقل یک سؤال طراحی‌شده قابلیت انتشار در سامانه را ندارد.",
+      };
+    }
+
+    await db
+      .update(exams)
+      .set({
+        isPublished,
+        updatedAt: new Date(),
+      })
+      .where(eq(exams.id, examId));
+
+    revalidatePath("/exams");
+    revalidatePath("/student/exams");
+    revalidatePath(`/exams/builder/${examId}`);
+
+    return {
+      success: true,
+      message: isPublished
+        ? "آزمون با موفقیت نهایی و در کارتابل داوطلبان منتشر گردید."
+        : "آزمون از حالت انتشار خارج و به وضعیت پیش‌نویس تغییر یافت.",
+    };
+  } catch (error: unknown) {
+    return {
+      success: false,
+      message: error instanceof Error ? error.message : "خطا در انتشار آزمون.",
+    };
+  }
+}
+
+/**
+ * Fetch Exam With All Questions
+ */
+export async function getExamWithQuestionsAction(examId: string) {
+  try {
+    const [exam] = await db.select().from(exams).where(eq(exams.id, examId)).limit(1);
+    if (!exam) return null;
+
+    const questions = await db
+      .select()
+      .from(examQuestions)
+      .where(eq(examQuestions.examId, examId))
+      .orderBy(asc(examQuestions.questionNumber));
+
+    return {
+      ...exam,
+      questions: questions.map((q) => ({
+        ...q,
+        options: (q.options as ExamOptionItem[]) || [],
+      })),
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * List all Exams with creation info
+ */
+export async function listAllExamsAction() {
+  try {
+    const rows = await db
+      .select({
+        exam: exams,
+        creatorName: users.fullName,
+      })
+      .from(exams)
+      .leftJoin(users, eq(exams.createdById, users.id))
+      .orderBy(desc(exams.createdAt));
+
+    return rows.map((r) => ({
+      ...r.exam,
+      creatorName: r.creatorName || "نامشخص",
+    }));
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Fetch available Garnet course codes and candidate students for target audience assignment
+ */
+export async function getExamTargetOptionsAction(): Promise<{
+  success: boolean;
+  courses: Array<{ code: string; name: string }>;
+  students: Array<{
+    id: string;
+    fullName: string;
+    phoneNumber: string;
+    nationalId: string;
+    enrolledCourseName?: string | null;
+    enrolledCourseCode?: string | null;
+  }>;
+}> {
+  try {
+    const session = await requireAuth();
+    await verifyExamAuthorPermission(session);
+
+    // 1. Fetch courses from entitledCourses and studentProfiles
+    let allEntitled: (typeof entitledCourses.$inferSelect)[] = [];
+    let profiles: (typeof studentProfiles.$inferSelect)[] = [];
+    let studentUsers: (typeof users.$inferSelect)[] = [];
+
+    try {
+      allEntitled = await db.select().from(entitledCourses);
+    } catch {}
+    try {
+      profiles = await db.select().from(studentProfiles);
+    } catch {}
+    try {
+      studentUsers = await db
+        .select()
+        .from(users)
+        .where(eq(users.role, "STUDENT"));
+    } catch {}
+
+    const courseMap = new Map<string, string>();
+    // Pre-populate core default courses and cohorts
+    courseMap.set("GARNET-BAR-MASTER", "دوره جامع مستر وکالت");
+    courseMap.set("CRASH-BAR", "دوره ضربتی آزمون وکالت");
+    courseMap.set("SAVIOR-FALL-1405", "کلاس نجات پاییز ۱۴۰۵");
+    courseMap.set("GARNET-BAR-360", "دوره جامع آمادگی آزمون وکالت ۳۶۰");
+    courseMap.set("DIAGNOSTIC-1405", "دوره سنجش و تعیین سطح وکالت ۱۴۰۵");
+    courseMap.set("DIAGNOSTIC-1403", "دوره سنجش و تعیین سطح وکالت ۱۴۰۳");
+
+    for (const c of allEntitled) {
+      if (c.courseCode && c.courseName) {
+        courseMap.set(c.courseCode, c.courseName);
+      }
+    }
+
+    for (const p of profiles) {
+      if (p.enrolledCourseCode && p.enrolledCourseName) {
+        courseMap.set(p.enrolledCourseCode, p.enrolledCourseName);
+      } else if (p.enrolledCourseCode && !courseMap.has(p.enrolledCourseCode)) {
+        courseMap.set(p.enrolledCourseCode, p.enrolledCourseCode);
+      }
+    }
+
+    const courses = Array.from(courseMap.entries()).map(([code, name]) => ({ code, name }));
+
+    const profileMap = new Map(profiles.map((p) => [p.userId, p]));
+
+    const students = studentUsers.map((u) => {
+      const prof = profileMap.get(u.id);
+      return {
+        id: u.id,
+        fullName: u.fullName || u.username || "داوطلب مشاهیر",
+        phoneNumber: u.phoneNumber || "---",
+        nationalId: u.nationalId || "---",
+        enrolledCourseName: prof?.enrolledCourseName || null,
+        enrolledCourseCode: prof?.enrolledCourseCode || null,
+      };
+    });
+
+    return { success: true, courses, students };
+  } catch {
+    return {
+      success: false,
+      courses: [
+        { code: "GARNET-BAR-360", name: "دوره جامع آمادگی آزمون وکالت ۳۶۰" },
+        { code: "CRASH-BAR", name: "دوره ضربتی و نکته و تست وکالت" },
+      ],
+      students: [],
+    };
+  }
+}
+
+// ============================================================================
+// 2. STUDENT EXAM ENGINE & AUTOMATED GRADING
+// ============================================================================
+
+/**
+ * Submit an Exam and execute Iranian Bar Exam Grading Engine
+ * Standard 1/3 negative marking penalty formula:
+ * Percentage = ((Correct * 3) - Incorrect) / (TotalQuestions * 3) * 100
+ * Status: AUTO_GRADED_PENDING_MENTOR (Hidden from student until mentor publishes)
+ */
+export async function submitExamAction(payload: {
+  examId: string;
+  answers: Record<string, number>; // { [questionId]: selectedOption (1 to 4) }
+  startedAt?: string;
+}): Promise<{
+  success: boolean;
+  submissionId?: string;
+  totalPercentage?: number;
+  subjectBreakdown?: SubjectBreakdownItem[];
+  status?: ExamSubmissionStatus;
+  message: string;
+}> {
+  try {
+    const session = await requireAuth();
+
+    // 1. Fetch Exam
+    const [exam] = await db.select().from(exams).where(eq(exams.id, payload.examId)).limit(1);
+    if (!exam) {
+      return { success: false, message: "آزمون مورد نظر یافت نشد." };
+    }
+
+    // 2. Fetch Questions
+    const questions = await db
+      .select()
+      .from(examQuestions)
+      .where(eq(examQuestions.examId, payload.examId))
+      .orderBy(asc(examQuestions.questionNumber));
+
+    if (questions.length === 0) {
+      return { success: false, message: "این آزمون فاقد سؤال است." };
+    }
+
+    // 3. Prevent duplicate submission if already submitted
+    const [existingSub] = await db
+      .select()
+      .from(examSubmissions)
+      .where(
+        and(
+          eq(examSubmissions.examId, payload.examId),
+          eq(examSubmissions.studentId, session.userId)
+        )
+      )
+      .limit(1);
+
+    if (existingSub && existingSub.status !== "IN_PROGRESS") {
+      return {
+        success: false,
+        message: "پاسخنامه شما قبلاً در سامانه ثبت شده است و امکان ارسال مجدد وجود ندارد.",
+      };
+    }
+
+    // 4. Identify Assigned Mentor & Reliably Resolve Candidate Full Name
+    const [studentProfile] = await db
+      .select({ id: studentProfiles.id, mentorId: studentProfiles.mentorId })
+      .from(studentProfiles)
+      .where(eq(studentProfiles.userId, session.userId))
+      .limit(1);
+
+    const mentorId = studentProfile?.mentorId || exam.createdById;
+
+    const [candidateUser] = await db
+      .select()
+      .from(users)
+      .where(eq(users.id, session.userId))
+      .limit(1);
+
+    let whitelistRecord: (typeof studentWhitelist.$inferSelect) | null = null;
+    if (candidateUser?.phoneNumber || candidateUser?.nationalId) {
+      try {
+        const [wl] = await db
+          .select()
+          .from(studentWhitelist)
+          .where(
+            candidateUser.nationalId
+              ? eq(studentWhitelist.nationalId, candidateUser.nationalId)
+              : eq(studentWhitelist.phoneNumber, candidateUser.phoneNumber)
+          )
+          .limit(1);
+        whitelistRecord = wl || null;
+      } catch {}
+    }
+
+    const studentName =
+      candidateUser?.fullName ||
+      (candidateUser as { name?: string })?.name ||
+      whitelistRecord?.fullName ||
+      session.fullName ||
+      candidateUser?.username ||
+      candidateUser?.phoneNumber ||
+      "داوطلب مشاهیر دانش";
+
+    // 5. Grading Engine - Iranian Bar Exam 1/3 Negative Marking Formula
+    let totalCorrect = 0;
+    let totalIncorrect = 0;
+    let totalUnanswered = 0;
+
+    // Group questions by legal subject
+    const subjectMap: Record<
+      string,
+      {
+        total: number;
+        correct: number;
+        incorrect: number;
+        unattempted: number;
+      }
+    > = {};
+
+    for (const q of questions) {
+      const subj = q.subject || "عمومی";
+      if (!subjectMap[subj]) {
+        subjectMap[subj] = { total: 0, correct: 0, incorrect: 0, unattempted: 0 };
+      }
+      subjectMap[subj].total += 1;
+
+      const selected = payload.answers[q.id];
+      if (selected === undefined || selected === null || selected === 0) {
+        totalUnanswered += 1;
+        subjectMap[subj].unattempted += 1;
+      } else if (selected === q.correctOption) {
+        totalCorrect += 1;
+        subjectMap[subj].correct += 1;
+      } else {
+        totalIncorrect += 1;
+        subjectMap[subj].incorrect += 1;
+      }
+    }
+
+    // Build subject breakdown
+    const subjectBreakdown: SubjectBreakdownItem[] = Object.entries(subjectMap).map(
+      ([subject, counts]) => {
+        let percentage = 0;
+        if (counts.total > 0) {
+          if (exam.hasNegativeMarking) {
+            percentage =
+              ((counts.correct * 3 - counts.incorrect) / (counts.total * 3)) * 100;
+          } else {
+            percentage = (counts.correct / counts.total) * 100;
+          }
+        }
+        return {
+          subject,
+          correct: counts.correct,
+          incorrect: counts.incorrect,
+          unattempted: counts.unattempted,
+          percentage: Number(percentage.toFixed(2)),
+        };
+      }
+    );
+
+    // Calculate overall total percentage
+    let totalPercentage = 0;
+    const totalQCount = questions.length;
+    if (totalQCount > 0) {
+      if (exam.hasNegativeMarking) {
+        totalPercentage =
+          ((totalCorrect * 3 - totalIncorrect) / (totalQCount * 3)) * 100;
+      } else {
+        totalPercentage = (totalCorrect / totalQCount) * 100;
+      }
+    }
+    const finalPercentageNum = Number(totalPercentage.toFixed(2));
+
+    const subjectScoresPayload = subjectBreakdown.reduce<Record<string, number>>((acc, curr) => {
+      acc[curr.subject] = curr.percentage;
+      return acc;
+    }, {});
+
+    const submissionId = existingSub?.id || `sub_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+    const startedAtDate = payload.startedAt ? new Date(payload.startedAt) : new Date(Date.now() - exam.durationMinutes * 60 * 1000);
+
+    if (existingSub) {
+      await db
+        .update(examSubmissions)
+        .set({
+          submittedAt: new Date(),
+          studentName,
+          answers: payload.answers,
+          correctCount: totalCorrect,
+          incorrectCount: totalIncorrect,
+          unansweredCount: totalUnanswered,
+          totalPercentage: finalPercentageNum.toFixed(2),
+          subjectBreakdown,
+          subjectScores: subjectScoresPayload,
+          status: "AUTO_GRADED_PENDING_MENTOR",
+          scorePercent: Math.round(finalPercentageNum),
+        })
+        .where(eq(examSubmissions.id, existingSub.id));
+    } else {
+      await db.insert(examSubmissions).values({
+        id: submissionId,
+        examId: exam.id,
+        studentId: session.userId,
+        studentName,
+        mentorId,
+        studentProfileId: studentProfile?.id || null,
+        examTitle: exam.title,
+        startedAt: startedAtDate,
+        submittedAt: new Date(),
+        answers: payload.answers,
+        correctCount: totalCorrect,
+        incorrectCount: totalIncorrect,
+        unansweredCount: totalUnanswered,
+        totalPercentage: finalPercentageNum.toFixed(2),
+        subjectBreakdown,
+        subjectScores: subjectScoresPayload,
+        status: "AUTO_GRADED_PENDING_MENTOR",
+        scorePercent: Math.round(finalPercentageNum),
+      });
+    }
+
+    revalidatePath("/student/exams");
+    revalidatePath(`/student/exams/${exam.id}`);
+    revalidatePath("/mentor/students");
+
+    return {
+      success: true,
+      submissionId,
+      totalPercentage: finalPercentageNum,
+      subjectBreakdown,
+      status: "AUTO_GRADED_PENDING_MENTOR",
+      message: "پاسخنامه شما با موفقیت ثبت و تصحیح سیستمی شد. کارنامه تحلیلی پس از بررسی و تایید پشتیبان منتشر خواهد شد.",
+    };
+  } catch (error: unknown) {
+    return {
+      success: false,
+      message: error instanceof Error ? error.message : "خطا در ثبت پاسخنامه.",
+    };
+  }
+}
+
+// ============================================================================
+// 3. MENTOR AUDIT, COACHING NOTES & TWO-STAGE PUBLISHING
+// ============================================================================
+
+/**
+ * Get detailed submission for Mentor Review & Audit
+ */
+export async function getSubmissionForReviewAction(submissionId: string) {
+  try {
+    const session = await requireRole(["MENTOR", "SUPERVISOR", "CEO", "ADMIN"]);
+
+    const [sub] = await db
+      .select({
+        submission: examSubmissions,
+        student: users,
+        exam: exams,
+      })
+      .from(examSubmissions)
+      .innerJoin(users, eq(examSubmissions.studentId, users.id))
+      .innerJoin(exams, eq(examSubmissions.examId, exams.id))
+      .where(eq(examSubmissions.id, submissionId))
+      .limit(1);
+
+    if (!sub) return null;
+
+    // Fetch Questions
+    const questions = await db
+      .select()
+      .from(examQuestions)
+      .where(eq(examQuestions.examId, sub.exam.id))
+      .orderBy(asc(examQuestions.questionNumber));
+
+    return {
+      submission: {
+        ...sub.submission,
+        answers: (sub.submission.answers as Record<string, number>) || {},
+        subjectBreakdown: (sub.submission.subjectBreakdown as SubjectBreakdownItem[]) || [],
+      },
+      student: {
+        id: sub.student.id,
+        fullName: sub.student.fullName,
+        phoneNumber: sub.student.phoneNumber,
+      },
+      exam: sub.exam,
+      questions: questions.map((q) => ({
+        ...q,
+        options: (q.options as ExamOptionItem[]) || [],
+      })),
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Publish Exam Result To Student (Stage 2 Publishing)
+ */
+export async function publishExamResultToStudentAction(
+  submissionId: string,
+  mentorNotes: string
+): Promise<{ success: boolean; message: string }> {
+  try {
+    const session = await requireRole(["MENTOR", "SUPERVISOR", "CEO", "ADMIN"]);
+
+    const [sub] = await db
+      .select()
+      .from(examSubmissions)
+      .where(eq(examSubmissions.id, submissionId))
+      .limit(1);
+
+    if (!sub) {
+      return { success: false, message: "پاسخنامه مورد نظر یافت نشد." };
+    }
+
+    if (session.role === "MENTOR" && sub.mentorId !== session.userId) {
+      return { success: false, message: "شما پشتیبان مستقیم این داوطلب نیستید." };
+    }
+
+    const now = new Date();
+
+    await db
+      .update(examSubmissions)
+      .set({
+        status: "PUBLISHED_TO_STUDENT",
+        mentorNotes: mentorNotes.trim(),
+        reviewedAt: now,
+        publishedAt: now,
+      })
+      .where(eq(examSubmissions.id, submissionId));
+
+    revalidatePath("/student/exams");
+    revalidatePath(`/student/exams/${sub.examId}`);
+    revalidatePath("/mentor/students");
+    revalidatePath(`/mentor/exams/review/${submissionId}`);
+
+    return {
+      success: true,
+      message: "کارنامه و تحلیل راهبردی با موفقیت نهایی و برای داوطلب منتشر گردید.",
+    };
+  } catch (error: unknown) {
+    return {
+      success: false,
+      message: error instanceof Error ? error.message : "خطا در انتشار کارنامه.",
+    };
+  }
+}
+
+/**
+ * Get List of Submissions Requiring Mentor Review
+ */
+export async function getPendingMentorReviewsAction() {
+  try {
+    const session = await requireRole(["MENTOR", "SUPERVISOR", "CEO", "ADMIN"]);
+
+    let query = db
+      .select({
+        submission: examSubmissions,
+        studentName: users.fullName,
+        studentPhone: users.phoneNumber,
+        examTitle: exams.title,
+      })
+      .from(examSubmissions)
+      .innerJoin(users, eq(examSubmissions.studentId, users.id))
+      .innerJoin(exams, eq(examSubmissions.examId, exams.id))
+      .where(eq(examSubmissions.status, "AUTO_GRADED_PENDING_MENTOR"))
+      .orderBy(desc(examSubmissions.submittedAt));
+
+    const rows = await query;
+    if (session.role === "MENTOR") {
+      return rows.filter((r) => r.submission.mentorId === session.userId);
+    }
+    return rows;
+  } catch {
+    return [];
+  }
+}
+
+// ============================================================================
+// 4. STUDENT RESULTS & LONGITUDINAL TRAJECTORY
+// ============================================================================
+
+/**
+ * Get Student Exam Result (Protected: Only reveals if PUBLISHED_TO_STUDENT)
+ */
+export async function getStudentExamResultAction(examId: string) {
+  try {
+    const session = await requireAuth();
+
+    const [sub] = await db
+      .select({
+        submission: examSubmissions,
+        exam: exams,
+      })
+      .from(examSubmissions)
+      .innerJoin(exams, eq(examSubmissions.examId, exams.id))
+      .where(
+        and(
+          eq(examSubmissions.examId, examId),
+          eq(examSubmissions.studentId, session.userId)
+        )
+      )
+      .limit(1);
+
+    if (!sub) return null;
+
+    const isPublished = sub.submission.status === "PUBLISHED_TO_STUDENT";
+
+    // If pending mentor review, return status without detailed questions/answers
+    if (!isPublished) {
+      return {
+        status: sub.submission.status,
+        isPublished: false,
+        submittedAt: sub.submission.submittedAt,
+        examTitle: sub.exam.title,
+        message: "پاسخنامه شما در انتظار تحلیل و تایید نهایی پشتیبان آموزشی است.",
+      };
+    }
+
+    // When published, load questions with correct answers and explanations
+    const questions = await db
+      .select()
+      .from(examQuestions)
+      .where(eq(examQuestions.examId, examId))
+      .orderBy(asc(examQuestions.questionNumber));
+
+    return {
+      status: sub.submission.status,
+      isPublished: true,
+      submission: {
+        ...sub.submission,
+        answers: (sub.submission.answers as Record<string, number>) || {},
+        subjectBreakdown: (sub.submission.subjectBreakdown as SubjectBreakdownItem[]) || [],
+      },
+      exam: sub.exam,
+      questions: questions.map((q) => ({
+        ...q,
+        options: (q.options as ExamOptionItem[]) || [],
+      })),
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Get Longitudinal Exam History for a Student with Trajectory Deltas
+ */
+export async function getStudentLongitudinalHistoryAction(studentId?: string) {
+  try {
+    const session = await requireAuth();
+    const targetUserId =
+      session.role === "STUDENT" ? session.userId : studentId || session.userId;
+
+    const history = await db
+      .select({
+        submission: examSubmissions,
+        examTitle: exams.title,
+        examCategory: exams.category,
+      })
+      .from(examSubmissions)
+      .innerJoin(exams, eq(examSubmissions.examId, exams.id))
+      .where(
+        and(
+          eq(examSubmissions.studentId, targetUserId),
+          eq(examSubmissions.status, "PUBLISHED_TO_STUDENT")
+        )
+      )
+      .orderBy(asc(examSubmissions.submittedAt));
+
+    if (history.length === 0) return [];
+
+    const baselineScore = Number(history[0].submission.totalPercentage || 0);
+
+    return history.map((item, index) => {
+      const currentScore = Number(item.submission.totalPercentage || 0);
+      const prevScore =
+        index > 0 ? Number(history[index - 1].submission.totalPercentage || 0) : currentScore;
+
+      const deltaFromBaseline = Number((currentScore - baselineScore).toFixed(2));
+      const deltaFromPrevious = Number((currentScore - prevScore).toFixed(2));
+
+      return {
+        submissionId: item.submission.id,
+        examId: item.submission.examId,
+        examTitle: item.examTitle,
+        examCategory: item.examCategory,
+        submittedAt: item.submission.submittedAt,
+        publishedAt: item.submission.publishedAt,
+        totalPercentage: currentScore,
+        deltaFromBaseline,
+        deltaFromPrevious,
+        subjectBreakdown: (item.submission.subjectBreakdown as SubjectBreakdownItem[]) || [],
+        mentorNotes: item.submission.mentorNotes,
+      };
+    });
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Get Student Exams Dashboard Overview
+ * Fetches all published exams, candidate submissions, longitudinal trajectory, and mentor details
+ */
+export async function getStudentExamsOverviewAction() {
+  try {
+    const session = await requireAuth();
+
+    // 1. Fetch student profile and assigned mentor
+    const [profile] = await db
+      .select({
+        profile: studentProfiles,
+        mentor: users,
+      })
+      .from(studentProfiles)
+      .leftJoin(users, eq(studentProfiles.mentorId, users.id))
+      .where(eq(studentProfiles.userId, session.userId))
+      .limit(1);
+
+    // 2. Fetch all published exams and filter by target audience
+    const publishedExams = await db
+      .select()
+      .from(exams)
+      .where(eq(exams.isPublished, true))
+      .orderBy(desc(exams.createdAt));
+
+    const studentCourseCode = profile?.profile?.enrolledCourseCode || null;
+
+    const visiblePublishedExams = publishedExams.filter((exam) => {
+      if (!exam.targetAudience || exam.targetAudience === "ALL") {
+        return true;
+      }
+
+      if (exam.targetAudience === "COURSE_CODE") {
+        const targetCodes = Array.isArray(exam.targetCourseCodes)
+          ? (exam.targetCourseCodes as string[])
+          : [];
+        if (studentCourseCode && targetCodes.includes(studentCourseCode)) {
+          return true;
+        }
+        return false;
+      }
+
+      if (exam.targetAudience === "SPECIFIC_STUDENTS") {
+        const targetIds = Array.isArray(exam.targetStudentIds)
+          ? (exam.targetStudentIds as string[])
+          : [];
+        if (targetIds.includes(session.userId)) {
+          return true;
+        }
+        return false;
+      }
+
+      return true;
+    });
+
+    // 3. Fetch all student submissions
+    const studentSubmissions = await db
+      .select()
+      .from(examSubmissions)
+      .where(eq(examSubmissions.studentId, session.userId));
+
+    const subMap = new Map(studentSubmissions.map((s) => [s.examId, s]));
+
+    // 4. Map exams with submission status
+    const examList = visiblePublishedExams.map((exam) => {
+      const sub = subMap.get(exam.id);
+      if (!sub) {
+        return {
+          exam,
+          status: "NOT_STARTED" as const,
+          submission: null,
+        };
+      }
+
+      const isPublished = sub.status === "PUBLISHED_TO_STUDENT";
+
+      return {
+        exam,
+        status: sub.status,
+        submission: {
+          id: sub.id,
+          status: sub.status,
+          submittedAt: sub.submittedAt,
+          publishedAt: sub.publishedAt,
+          scoreHidden: !isPublished,
+          totalPercentage: isPublished ? Number(sub.totalPercentage || 0) : null,
+          correctCount: isPublished ? sub.correctCount : null,
+          incorrectCount: isPublished ? sub.incorrectCount : null,
+          unansweredCount: isPublished ? sub.unansweredCount : null,
+          subjectBreakdown: isPublished
+            ? ((sub.subjectBreakdown as SubjectBreakdownItem[]) || [])
+            : [],
+          mentorNotes: isPublished ? sub.mentorNotes : null,
+        },
+      };
+    });
+
+    // 5. Fetch longitudinal history
+    const history = await getStudentLongitudinalHistoryAction(session.userId);
+
+    return {
+      success: true,
+      mentorName: profile?.mentor?.fullName || "پشتیبان تخصصی حقوقی مشاهیر",
+      exams: examList,
+      longitudinalHistory: history,
+    };
+  } catch (error: unknown) {
+    return {
+      success: false,
+      mentorName: "پشتیبان تخصصی مشاهیر",
+      exams: [],
+      longitudinalHistory: [],
+      message: error instanceof Error ? error.message : "خطا در دریافت اطلاعات آزمون‌ها.",
+    };
+  }
+}
+
+// ============================================================================
+// 5. BACKWARD-COMPATIBLE EVALUATION EXAMS (LEGACY ADAPTERS)
+// ============================================================================
+
 export async function createEvaluationExamAction(payload: {
   title: string;
   description: string;
-  startTime: string; // "1403-08-01 08:00"
-  endTime: string;   // "1403-08-05 22:00"
+  startTime: string;
+  endTime: string;
   durationMinutes: number;
   totalQuestions: number;
   subjectsWeight: Record<string, number>;
@@ -65,7 +1295,6 @@ export async function createEvaluationExamAction(payload: {
     questions: [],
   });
 
-  // Send SMS Notification to students in cohort
   const studentsToNotify = await db
     .select({
       phone: users.phoneNumber,
@@ -97,14 +1326,6 @@ export async function createEvaluationExamAction(payload: {
   };
 }
 
-/**
- * Submit Evaluation Exam Responses & Score Calculation
- * Hardened against IDOR, Tampering, Expired Deadlines, and Thundering Herd
- * Track 3: Zero revalidatePath calls on submission execution path
- * Track 3: Atomic idempotency lock in Redis (`SET submission:lock:{examId}:{studentId} 1 EX 86400 NX`)
- * Track 3: Returns HTTP 202 Accepted with trackingId in under 10ms
- * Track 4: Never trusts client-supplied studentProfileId for STUDENT role
- */
 export async function submitEvaluationExamAction(payload: {
   examId: string;
   studentProfileId: string;
@@ -115,7 +1336,6 @@ export async function submitEvaluationExamAction(payload: {
 }) {
   const session = await requireAuth();
 
-  // Track 4: Zero-Trust Ownership Check (prevents IDOR)
   let targetStudentId = payload.studentProfileId;
   if (session.role === "STUDENT") {
     if (session.studentProfileId) {
@@ -135,7 +1355,6 @@ export async function submitEvaluationExamAction(payload: {
 
   await requireStudentOwnership(targetStudentId);
 
-  // Fetch exam from PostgreSQL
   const [exam] = await db
     .select()
     .from(evaluationExams)
@@ -146,12 +1365,10 @@ export async function submitEvaluationExamAction(payload: {
     return { success: false, message: "آزمون مورد نظر یافت نشد." };
   }
 
-  // Verify Exam Deadline (Timezone-safe Jalali conversion with 5-minute network grace period)
   if (isExamDeadlinePassed(exam.endTime, 5)) {
     return { success: false, message: "مهلت رسمی شرکت در این آزمون پایان یافته است." };
   }
 
-  // Track 3: Enforce atomic idempotency lock in Redis (O(1) thundering herd protection)
   const redis = getRedisClient();
   const lockKey = `submission:lock:${exam.id}:${targetStudentId}`;
   if (redis) {
@@ -167,7 +1384,6 @@ export async function submitEvaluationExamAction(payload: {
     } catch {}
   }
 
-  // Check previous submissions from PostgreSQL
   const previousSubmissions = await db
     .select()
     .from(examSubmissions)
@@ -183,7 +1399,6 @@ export async function submitEvaluationExamAction(payload: {
     };
   }
 
-  // Calculate weighted average score
   let totalScore = 0;
   let totalWeight = 0;
   const subjectsWeight = (exam.subjectsWeight as Record<string, number>) || {};
@@ -194,21 +1409,19 @@ export async function submitEvaluationExamAction(payload: {
   }
   const scorePercent = Math.round(totalScore / (totalWeight || 1));
 
-  // Calculate Delta from previous exams
   const lastSub = previousSubmissions[0];
   let deltaFromPrevious = 0;
   let deltaFromBaseline = 0;
 
   if (lastSub) {
-    deltaFromPrevious = scorePercent - lastSub.scorePercent;
+    deltaFromPrevious = scorePercent - (lastSub.scorePercent || 0);
   }
   if (previousSubmissions.length > 0) {
-    deltaFromBaseline = scorePercent - previousSubmissions[previousSubmissions.length - 1].scorePercent;
+    deltaFromBaseline = scorePercent - (previousSubmissions[previousSubmissions.length - 1].scorePercent || 0);
   }
 
   const submissionId = `sub_${Date.now()}`;
 
-  // Track 3: Fast asynchronous ingestion buffer queue
   try {
     await enqueueExamSubmission({
       submissionId,
@@ -225,28 +1438,27 @@ export async function submitEvaluationExamAction(payload: {
     });
   } catch {}
 
-  // Direct persistence to PostgreSQL via Drizzle ORM
   await db
     .insert(examSubmissions)
     .values({
       id: submissionId,
       examId: exam.id,
+      studentId: session.userId,
+      mentorId: exam.creatorId,
       examTitle: exam.title,
       studentProfileId: targetStudentId,
-      studentName: session.fullName,
       scorePercent,
       subjectScores: payload.subjectScores,
       correctCount: payload.correctCount,
-      wrongCount: payload.wrongCount,
+      incorrectCount: payload.wrongCount,
       unansweredCount: payload.unansweredCount,
       rank: Math.floor(Math.random() * 200) + 15,
       deltaFromPrevious,
       deltaFromBaseline,
       answers: payload.subjectScores,
+      status: "PUBLISHED_TO_STUDENT",
     })
     .onConflictDoNothing();
-
-  // NOTE: revalidatePath IS INTENTIONALLY OMITTED per Track 3 specification to prevent event loop starvation
 
   return {
     success: true,
@@ -259,9 +1471,6 @@ export async function submitEvaluationExamAction(payload: {
   };
 }
 
-/**
- * Add a Question to an Evaluation Exam
- */
 export async function addExamQuestionAction(payload: {
   examId: string;
   type: QuestionType;
@@ -324,9 +1533,6 @@ export async function addExamQuestionAction(payload: {
   };
 }
 
-/**
- * Delete a Question from an Evaluation Exam
- */
 export async function deleteExamQuestionAction(examId: string, questionId: string) {
   const session = await requireRole(["SUPERVISOR", "MENTOR", "CEO", "ADMIN"]);
 
@@ -364,9 +1570,6 @@ export async function deleteExamQuestionAction(examId: string, questionId: strin
   };
 }
 
-/**
- * Update Exam Audience Assignment (All students or specific candidate IDs)
- */
 export async function updateExamAudienceAction(examId: string, assignedStudentIds: string[]) {
   const session = await requireRole(["SUPERVISOR", "MENTOR", "CEO", "ADMIN"]);
 

@@ -2,8 +2,14 @@
 
 import { requireAuth } from "../auth/guard";
 import { db } from "../db";
-import { directMessages, escalationTickets, users, studentProfiles } from "../db/schema";
-import { eq } from "drizzle-orm";
+import {
+  directMessages,
+  directChatThreads,
+  escalationTickets,
+  users,
+  studentProfiles,
+} from "../db/schema";
+import { eq, and, or, asc } from "drizzle-orm";
 import { sendSystemSms } from "../services/sms";
 import { revalidatePath } from "next/cache";
 import type { DirectMessageRecord, EscalationTicketRecord } from "@/types/models";
@@ -36,8 +42,36 @@ export async function sendDirectMessageAction(payload: {
     return { success: false, message: "گیرنده پیام یافت نشد." };
   }
 
-  // Hierarchy validation
-  if (session.role === "STUDENT") {
+  // Strict Downward Hierarchy Validation (Requirement 5):
+  // Students and mentors cannot initiate direct messages to supervisors/executives unless replying to an existing thread
+  const isLeadership =
+    receiver.role === "SUPERVISOR" ||
+    receiver.role === "CEO" ||
+    receiver.role === "ADMIN";
+
+  if (isLeadership && (session.role === "STUDENT" || session.role === "MENTOR")) {
+    const incomingMessages = await db
+      .select()
+      .from(directMessages)
+      .where(
+        and(
+          eq(directMessages.senderId, receiver.id),
+          eq(directMessages.receiverId, session.userId)
+        )
+      )
+      .limit(1);
+
+    if (incomingMessages.length === 0) {
+      return {
+        success: false,
+        message:
+          session.role === "STUDENT"
+            ? "داوطلب امکان شروع گفتگوی مستقیم جدید با مدیران و سرپرستان را ندارد مگر در پاسخ به پیام ارسالی از سوی ایشان (برای موارد فوری از تیکت ارجاع استفاده نمایید)."
+            : "پشتیبان امکان شروع گفتگوی مستقیم جدید با سرپرستان یا مدیران را ندارد مگر در پاسخ به پیام ارسالی از سوی ایشان.",
+      };
+    }
+  } else if (session.role === "STUDENT") {
+    // If not messaging leadership, student can ONLY message their assigned mentor
     const [studentProfile] = await db
       .select()
       .from(studentProfiles)
@@ -74,6 +108,34 @@ export async function sendDirectMessageAction(payload: {
       success: false,
       message: "حجم فایل پیوست نباید بیشتر از ۱۰ مگابایت باشد.",
     };
+  }
+
+  // Supervisor Chat Closure Check (Requirement 4.2):
+  const canonicalThreadId = [session.userId, receiver.id].sort().join("_");
+  const [threadRecord] = await db
+    .select()
+    .from(directChatThreads)
+    .where(eq(directChatThreads.id, canonicalThreadId))
+    .limit(1);
+
+  if (threadRecord && threadRecord.isClosed) {
+    if (session.role === "STUDENT") {
+      return {
+        success: false,
+        message: "این گفت‌وگو توسط سرپرست آموزشی مختومه اعلام شده است و امکان ارسال پیام جدید وجود ندارد.",
+      };
+    } else if (session.role === "SUPERVISOR" || session.role === "CEO" || session.role === "ADMIN") {
+      // If the Supervisor/Admin sends a new message later, the thread automatically re-opens.
+      await db
+        .update(directChatThreads)
+        .set({
+          isClosed: false,
+          closedById: null,
+          closedAt: null,
+          updatedAt: new Date(),
+        })
+        .where(eq(directChatThreads.id, canonicalThreadId));
+    }
   }
 
   const threadId = `${session.userId}_${receiver.id}`;
@@ -132,6 +194,132 @@ export async function sendDirectMessageAction(payload: {
     message: "پیام شما با موفقیت ارسال گردید.",
     messageRecord: newMsg,
   };
+}
+
+/**
+ * Get closure status for a direct chat thread
+ */
+export async function getThreadClosureStatusAction(otherUserId: string): Promise<{
+  isClosed: boolean;
+  closedById?: string | null;
+  closedAt?: Date | null;
+}> {
+  const session = await requireAuth();
+  const canonicalThreadId = [session.userId, otherUserId].sort().join("_");
+
+  const [threadRecord] = await db
+    .select()
+    .from(directChatThreads)
+    .where(eq(directChatThreads.id, canonicalThreadId))
+    .limit(1);
+
+  if (!threadRecord) {
+    return { isClosed: false };
+  }
+
+  return {
+    isClosed: threadRecord.isClosed,
+    closedById: threadRecord.closedById,
+    closedAt: threadRecord.closedAt,
+  };
+}
+
+/**
+ * Supervisor or Admin closes or re-opens a direct chat thread with a student
+ */
+export async function toggleThreadClosureAction(
+  otherUserId: string,
+  close: boolean
+): Promise<{ success: boolean; message: string; isClosed: boolean }> {
+  try {
+    const session = await requireAuth();
+
+    if (session.role !== "SUPERVISOR" && session.role !== "CEO" && session.role !== "ADMIN") {
+      return {
+        success: false,
+        message: "تنها سرپرستان و مدیران ارشد مجاز به بستن یا بازگشایی گفت‌وگو هستند.",
+        isClosed: false,
+      };
+    }
+
+    const canonicalThreadId = [session.userId, otherUserId].sort().join("_");
+
+    const [existing] = await db
+      .select()
+      .from(directChatThreads)
+      .where(eq(directChatThreads.id, canonicalThreadId))
+      .limit(1);
+
+    if (existing) {
+      await db
+        .update(directChatThreads)
+        .set({
+          isClosed: close,
+          closedById: close ? session.userId : null,
+          closedAt: close ? new Date() : null,
+          updatedAt: new Date(),
+        })
+        .where(eq(directChatThreads.id, canonicalThreadId));
+    } else {
+      await db.insert(directChatThreads).values({
+        id: canonicalThreadId,
+        isClosed: close,
+        closedById: close ? session.userId : null,
+        closedAt: close ? new Date() : null,
+        updatedAt: new Date(),
+      });
+    }
+
+    revalidatePath("/messages");
+
+    return {
+      success: true,
+      message: close
+        ? "گفت‌وگو به عنوان مختومه (اتمام رسیدگی) علامت‌گذاری شد."
+        : "گفت‌وگو مجدداً بازگشایی شد.",
+      isClosed: close,
+    };
+  } catch (error: unknown) {
+    const msg = error instanceof Error ? error.message : "خطا در تغییر وضعیت گفت‌وگو";
+    return { success: false, message: msg, isClosed: false };
+  }
+}
+
+/**
+ * Poll messages and thread status for real-time synchronization (every 3-4s)
+ */
+export async function pollDirectMessagesAction(activeContactId?: string): Promise<{
+  messages: DirectMessageRecord[];
+  isThreadClosed?: boolean;
+}> {
+  const session = await requireAuth();
+
+  const msgs = (await db
+    .select()
+    .from(directMessages)
+    .where(
+      or(
+        eq(directMessages.senderId, session.userId),
+        eq(directMessages.receiverId, session.userId)
+      )
+    )
+    .orderBy(asc(directMessages.createdAt))) as unknown as DirectMessageRecord[];
+
+  let isThreadClosed = false;
+  if (activeContactId) {
+    const canonicalThreadId = [session.userId, activeContactId].sort().join("_");
+    const [threadRecord] = await db
+      .select()
+      .from(directChatThreads)
+      .where(eq(directChatThreads.id, canonicalThreadId))
+      .limit(1);
+
+    if (threadRecord) {
+      isThreadClosed = threadRecord.isClosed;
+    }
+  }
+
+  return { messages: msgs, isThreadClosed };
 }
 
 /**
@@ -207,7 +395,7 @@ export async function submitEscalationTicketAction(payload: {
 
   return {
     success: true,
-    message: "تیکت اضطراری با موفقیت به سرپرست کوهورت ارجاع داده شد.",
+    message: "تیکت اضطراری با موفقیت به سرپرست گروه آموزشی ارجاع داده شد.",
     ticket: newTicket,
   };
 }

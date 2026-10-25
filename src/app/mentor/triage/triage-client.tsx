@@ -172,7 +172,7 @@ export function MentorTriageClient({
         {filteredCases.length === 0 ? (
           <div className="text-center py-12 bg-card rounded-xl border border-border space-y-2">
             <CheckCircle className="h-8 w-8 text-emerald-600 dark:text-emerald-400 mx-auto" />
-            <h3 className="text-sm font-bold text-foreground">صف پایش بحران‌های مطالعاتی خالی است!</h3>
+            <h3 className="text-sm font-bold text-foreground">صف رفع مشکلات علمی خالی است!</h3>
             <p className="text-xs text-muted-foreground">
               هیچ داوطلبی در این سطح اولویت دارای هشدار فعال و حل‌نشده نیست.
             </p>

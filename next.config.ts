@@ -2,7 +2,7 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   output: "standalone",
-  serverExternalPackages: ["postgres"],
+  serverExternalPackages: ["postgres", "bullmq", "@valkey/valkey-glide", "ioredis"],
   reactStrictMode: true,
   experimental: {
     serverActions: {

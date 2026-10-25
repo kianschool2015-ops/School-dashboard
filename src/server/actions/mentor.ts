@@ -2,9 +2,10 @@
 
 import { requireRole } from "../auth/guard";
 import { db } from "../db";
-import { triageCases, studentProfiles } from "../db/schema";
-import { eq, and } from "drizzle-orm";
+import { triageCases, studentProfiles, voipCalls, users } from "../db/schema";
+import { eq, and, desc } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
+import { maskPhoneNumber } from "../services/voip";
 
 /**
  * Resolve a Triage Case by Mentor or Supervisor
@@ -88,12 +89,15 @@ export async function resolveTriageCaseAction(payload: {
 }
 
 /**
- * Log phone coaching contact with student
+ * Log phone coaching contact with student & persist conversation notes into VoIP call history
  * Enforces Zero-Trust Mentor-to-Candidate Isolation (Track 4)
  */
 export async function logMentorContactAction(payload: {
   studentProfileId: string;
   notes: string;
+  durationMinutes?: number;
+  callStatus?: string;
+  topic?: string;
 }) {
   const session = await requireRole(["MENTOR", "SUPERVISOR", "ADMIN", "CEO"]);
 
@@ -115,7 +119,43 @@ export async function logMentorContactAction(payload: {
     };
   }
 
-  // Update last contact timestamp
+  // Get student user record for student full name and masked phone
+  const [studentUser] = await db
+    .select()
+    .from(users)
+    .where(eq(users.id, student.userId))
+    .limit(1);
+
+  const studentName = studentUser?.fullName || "داوطلب آزمون وکالت";
+  const maskedPhone = maskPhoneNumber(studentUser?.phoneNumber || "09120000000");
+
+  const durationSec = Math.max(1, (payload.durationMinutes || 10) * 60);
+  const callId = `call_${Date.now()}`;
+  const formattedNotes = payload.topic
+    ? `[موضوع: ${payload.topic.trim()}]\n${payload.notes.trim()}`
+    : payload.notes.trim();
+
+  // Persist conversation note into voip_calls
+  try {
+    await db.insert(voipCalls).values({
+      id: callId,
+      mentorId: session.userId,
+      mentorName: session.fullName,
+      mentorExtension: "101",
+      studentProfileId: student.id,
+      studentName,
+      maskedPhone,
+      status: payload.callStatus || "COMPLETED",
+      durationSeconds: durationSec,
+      callUniqueId: `manual_${Date.now()}`,
+      initiatedAt: new Date(),
+      notes: formattedNotes,
+    });
+  } catch (err) {
+    console.warn("⚠️ [VoIP Note] Failed to insert into voip_calls table:", err);
+  }
+
+  // Update last contact timestamp on student profile
   await db
     .update(studentProfiles)
     .set({
@@ -162,12 +202,91 @@ export async function logMentorContactAction(payload: {
       .where(eq(studentProfiles.id, payload.studentProfileId));
   }
 
+  revalidatePath("/mentor/students");
   revalidatePath(`/mentor/student/${payload.studentProfileId}`);
   revalidatePath("/mentor/triage");
+  revalidatePath("/plans");
   revalidatePath("/executive");
 
   return {
     success: true,
-    message: "تماس تلفنی و نکات مشاوره با موفقیت در پرونده ۳۶۰ درجه ثبت شد و هشدار A08 رفع گردید.",
+    message: "یادداشت مشاوره و گزارش مکالمه با موفقیت ثبت شد و در سوابق داوطلب ذخیره گردید.",
+    callId,
+  };
+}
+
+/**
+ * Retrieve consultation notes & call history for a specific candidate
+ * Enforces Zero-Trust Mentor Ownership (Track 4)
+ */
+export async function getStudentConsultationNotesAction(studentProfileId: string) {
+  const session = await requireRole(["MENTOR", "SUPERVISOR", "ADMIN", "CEO"]);
+
+  const [student] = await db
+    .select()
+    .from(studentProfiles)
+    .where(eq(studentProfiles.id, studentProfileId))
+    .limit(1);
+
+  if (!student) {
+    return { success: false, message: "داوطلب یافت نشد.", calls: [] };
+  }
+
+  if (session.role === "MENTOR" && student.mentorId !== session.userId) {
+    return {
+      success: false,
+      message: "عدم دسترسی: شما تنها مجاز به مشاهده سوابق داوطلبان اختصاصی خود هستید.",
+      calls: [],
+    };
+  }
+
+  const calls = await db
+    .select()
+    .from(voipCalls)
+    .where(eq(voipCalls.studentProfileId, studentProfileId))
+    .orderBy(desc(voipCalls.initiatedAt));
+
+  return {
+    success: true,
+    calls,
+  };
+}
+
+/**
+ * Update an existing consultation note or add follow-up notes
+ */
+export async function updateConsultationNoteAction(payload: {
+  callId: string;
+  notes: string;
+}) {
+  const session = await requireRole(["MENTOR", "SUPERVISOR", "ADMIN", "CEO"]);
+
+  const [callRecord] = await db
+    .select()
+    .from(voipCalls)
+    .where(eq(voipCalls.id, payload.callId))
+    .limit(1);
+
+  if (!callRecord) {
+    return { success: false, message: "رکورد تماس یافت نشد." };
+  }
+
+  if (session.role === "MENTOR" && callRecord.mentorId !== session.userId) {
+    return { success: false, message: "شما مجاز به ویرایش این یادداشت نیستید." };
+  }
+
+  await db
+    .update(voipCalls)
+    .set({
+      notes: payload.notes.trim(),
+    })
+    .where(eq(voipCalls.id, payload.callId));
+
+  revalidatePath("/mentor/students");
+  revalidatePath(`/mentor/student/${callRecord.studentProfileId}`);
+
+  return {
+    success: true,
+    message: "یادداشت مشاوره با موفقیت به‌روزرسانی شد.",
   };
 }

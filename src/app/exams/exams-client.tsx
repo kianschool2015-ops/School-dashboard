@@ -93,7 +93,7 @@ export function ExamsClient({
   const [startTime, setStartTime] = useState("1403-08-01 08:00");
   const [endTime, setEndTime] = useState("1403-08-10 22:00");
   const [durationMinutes, setDurationMinutes] = useState(120);
-  const [cohort, setCohort] = useState("کوهورت جامع وکالت ۱۴۰۳");
+  const [cohort, setCohort] = useState("دوره جامع آزمون وکالت ۳۶۰");
   const [newExamAudienceType, setNewExamAudienceType] = useState<"ALL" | "SPECIFIC">("ALL");
   const [newExamSelectedStudents, setNewExamSelectedStudents] = useState<string[]>([]);
 
@@ -385,7 +385,7 @@ export function ExamsClient({
             </div>
             {latestSub && (
               <Badge variant="outline" className="border-emerald-300 bg-emerald-50 text-emerald-800 text-xs px-3 py-1">
-                رتبه تقریبی در کوهورت: {latestSub.rank}
+                رتبه تقریبی در دوره آموزشی: {latestSub.rank}
               </Badge>
             )}
           </CardHeader>
@@ -451,7 +451,7 @@ export function ExamsClient({
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-semibold mb-1">کوهورت هدف:</label>
+                  <label className="block text-xs font-semibold mb-1">دوره آموزشی هدف:</label>
                   <input
                     type="text"
                     value={cohort}
@@ -522,7 +522,7 @@ export function ExamsClient({
                       onChange={() => setNewExamAudienceType("ALL")}
                       className="accent-[#004071]"
                     />
-                    <span>همه داوطلبان کوهورت (عمومی)</span>
+                    <span>همه داوطلبان دوره آموزشی (عمومی)</span>
                   </label>
                   <label className="flex items-center gap-2 text-xs cursor-pointer">
                     <input
@@ -1081,7 +1081,7 @@ export function ExamsClient({
                     onChange={() => setAudienceMode("ALL")}
                     className="accent-[#004071]"
                   />
-                  <span>همه داوطلبان کوهورت مجاز به شرکت هستند (عمومی)</span>
+                  <span>همه داوطلبان دوره آموزشی مجاز به شرکت هستند (عمومی)</span>
                 </label>
 
                 <label className="flex items-center gap-2 text-xs font-semibold cursor-pointer">

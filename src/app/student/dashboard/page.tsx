@@ -1,8 +1,15 @@
 import React from "react";
+import Link from "next/link";
 import { getSession } from "@/server/auth/guard";
 import { redirect } from "next/navigation";
-import { db } from "@/server/db";
-import { studentProfiles, scheduleItems, mockExams as mockExamsTable, studentSchedules } from "@/server/db/schema";
+import { db, ensureDatabaseBootstrap } from "@/server/db";
+import {
+  studentProfiles,
+  scheduleItems,
+  mockExams as mockExamsTable,
+  studentSchedules,
+  examSubmissions,
+} from "@/server/db/schema";
 import { eq, desc } from "drizzle-orm";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -12,22 +19,20 @@ import {
   Calendar,
   CheckCircle2,
   Clock,
-  Zap,
   TrendingUp,
-  AlertTriangle,
   Award,
-  BookOpen,
-  Layers,
   Flame,
+  Scale,
+  ArrowLeft,
 } from "lucide-react";
 import {
   PERSIAN_WEEKDAYS,
   getStudyWeekBoundaries,
-  formatJalaliHuman,
   toPersianDigits,
   getPersianDayOfWeek,
 } from "@/lib/jalali";
 import { StudentDashboardClient } from "./dashboard-client";
+import { StudentCallCoachWidget } from "@/components/student/student-call-coach-widget";
 import { MultiHorizonGantt } from "@/components/analytics/gantt-chart";
 
 export default async function StudentDashboardPage() {
@@ -38,33 +43,108 @@ export default async function StudentDashboardPage() {
     redirect("/auth/login");
   }
 
-  const studentProfileId = session.studentProfileId || "profile_stu_1";
-  const [student] = await db
-    .select()
-    .from(studentProfiles)
-    .where(eq(studentProfiles.id, studentProfileId))
-    .limit(1);
+  let studentProfileId = session.studentProfileId;
+  let student: typeof studentProfiles.$inferSelect | null = null;
+  let items: (typeof scheduleItems.$inferSelect)[] = [];
+  let mockExams: (typeof mockExamsTable.$inferSelect)[] = [];
 
-  const [studentSchedule] = await db
-    .select({ id: studentSchedules.id })
-    .from(studentSchedules)
-    .where(eq(studentSchedules.studentProfileId, studentProfileId))
-    .limit(1);
+  try {
+    await ensureDatabaseBootstrap().catch(() => {});
 
-  const items = studentSchedule
-    ? await db
+    if (studentProfileId) {
+      const [found] = await db
         .select()
-        .from(scheduleItems)
-        .where(eq(scheduleItems.scheduleId, studentSchedule.id))
-    : [];
+        .from(studentProfiles)
+        .where(eq(studentProfiles.id, studentProfileId))
+        .limit(1);
+      student = found || null;
+    }
 
-  const mockExams = await db
-    .select()
-    .from(mockExamsTable)
-    .where(eq(mockExamsTable.studentProfileId, studentProfileId))
-    .orderBy(desc(mockExamsTable.createdAt));
+    if (!student) {
+      // Find by user id
+      const [foundByUser] = await db
+        .select()
+        .from(studentProfiles)
+        .where(eq(studentProfiles.userId, session.userId))
+        .limit(1);
+      student = foundByUser || null;
+      if (student) {
+        studentProfileId = student.id;
+      }
+    }
 
-  const { weekStartDate, weekEndDate, jalaliWeekNumber, jalaliYear } = getStudyWeekBoundaries();
+    // If still no student profile exists in PostgreSQL, self-heal and insert one
+    if (!student) {
+      const newProfileId = `profile_${session.userId}`;
+      const [created] = await db
+        .insert(studentProfiles)
+        .values({
+          id: newProfileId,
+          userId: session.userId,
+          mentorId: "usr_mentor1",
+          employmentStatus: "UNEMPLOYED",
+          isStudent: false,
+          maritalStatus: "SINGLE",
+          hasChildren: false,
+          childrenCount: 0,
+          hasFamilyCareDuty: false,
+          workdayStudyHoursCap: 8,
+          holidayStudyHoursCap: 12,
+          bestStudyTime: "MORNING",
+          previousBarExamAttempts: 0,
+          currentDailyStudyHours: 6,
+          masterclassGoal: "قبولی در آزمون وکالت کانون وکلای دادگستری",
+          riskStatus: "GREEN",
+          riskReason: "داوطلب فعال سامانه مشاهیر دانش",
+          hasActiveSupport: true,
+          enrolledCourseCode: "GARNET-BAR-360",
+          enrolledCourseName: "دوره جامع آمادگی آزمون وکالت",
+          lastContactAt: new Date(),
+        })
+        .returning();
+      student = created;
+      studentProfileId = newProfileId;
+    }
+
+    if (studentProfileId) {
+      const [studentSchedule] = await db
+        .select({ id: studentSchedules.id })
+        .from(studentSchedules)
+        .where(eq(studentSchedules.studentProfileId, studentProfileId))
+        .limit(1);
+
+      if (studentSchedule) {
+        items = await db
+          .select()
+          .from(scheduleItems)
+          .where(eq(scheduleItems.scheduleId, studentSchedule.id));
+      }
+
+      mockExams = await db
+        .select()
+        .from(mockExamsTable)
+        .where(eq(mockExamsTable.studentProfileId, studentProfileId))
+        .orderBy(desc(mockExamsTable.createdAt));
+    }
+  } catch (err) {
+    console.warn("[StudentDashboard] DB query error:", err);
+  }
+
+  // Fetch latest exam submission for two-stage publishing check
+  let latestSubmission: (typeof examSubmissions.$inferSelect) | null = null;
+  try {
+    const [foundSub] = await db
+      .select()
+      .from(examSubmissions)
+      .where(eq(examSubmissions.studentId, session.userId))
+      .orderBy(desc(examSubmissions.submittedAt))
+      .limit(1);
+    latestSubmission = foundSub || null;
+  } catch (err) {
+    console.warn("[StudentDashboard] examSubmissions query error:", err);
+  }
+
+  const { weekStartDate, weekEndDate, jalaliWeekNumber } = getStudyWeekBoundaries();
   const currentDayIndex = getPersianDayOfWeek(new Date());
 
   // Metrics
@@ -87,7 +167,15 @@ export default async function StudentDashboardPage() {
             <h1 className="text-xl font-bold text-foreground tracking-tight">
               سلام، {session.fullName} 👋
             </h1>
-            <Badge variant={student?.riskStatus === "RED" ? "red" : student?.riskStatus === "YELLOW" ? "yellow" : "green"}>
+            <Badge
+              variant={
+                student?.riskStatus === "RED"
+                  ? "red"
+                  : student?.riskStatus === "YELLOW"
+                  ? "yellow"
+                  : "green"
+              }
+            >
               {student?.riskStatus === "RED"
                 ? "نیازمند مداخله و پیگیری"
                 : student?.riskStatus === "YELLOW"
@@ -96,16 +184,19 @@ export default async function StudentDashboardPage() {
             </Badge>
           </div>
           <p className="text-xs text-muted-foreground mt-1">
-            هفته مطالعاتی {toPersianDigits(jalaliWeekNumber)} ({weekStartDate} تا {weekEndDate}) • هدف: {student?.masterclassGoal}
+            هفته مطالعاتی {toPersianDigits(jalaliWeekNumber)} ({weekStartDate} تا {weekEndDate}) • هدف:{" "}
+            {student?.masterclassGoal || "قبولی در آزمون وکالت کانون و مرکز وکلا"}
           </p>
         </div>
 
         {/* Client Interactive Trigger: Daily Check-in Button */}
-        <StudentDashboardClient
-          studentProfileId={studentProfileId}
-          items={items}
-        />
+        {studentProfileId && (
+          <StudentDashboardClient studentProfileId={studentProfileId} items={items} />
+        )}
       </div>
+
+      {/* Coach Calling Hours & Reverse AMI Calling Widget */}
+      <StudentCallCoachWidget />
 
       {/* KPI Stat Tiles */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
@@ -126,7 +217,8 @@ export default async function StudentDashboardPage() {
             <Flame className="h-4 w-4 text-amber-500" />
           </div>
           <div className="text-2xl font-bold text-foreground persian-nums">
-            {toPersianDigits(6)} <span className="text-xs font-normal text-muted-foreground">روز متوالی</span>
+            {toPersianDigits(6)}{" "}
+            <span className="text-xs font-normal text-muted-foreground">روز متوالی</span>
           </div>
           <p className="text-[10px] text-muted-foreground mt-1">۱ روز تا ثبت رکورد هفته کامل</p>
         </Card>
@@ -137,28 +229,78 @@ export default async function StudentDashboardPage() {
             <Clock className="h-4 w-4 text-indigo-500" />
           </div>
           <div className="text-2xl font-bold text-foreground persian-nums">
-            {toPersianDigits(student?.currentDailyStudyHours || 5)} <span className="text-xs font-normal text-muted-foreground">ساعت</span>
+            {toPersianDigits(student?.currentDailyStudyHours || 5)}{" "}
+            <span className="text-xs font-normal text-muted-foreground">ساعت</span>
           </div>
-          <p className="text-[10px] text-muted-foreground mt-1">سقف مجاز: {toPersianDigits(student?.workdayStudyHoursCap || 6)} ساعت</p>
+          <p className="text-[10px] text-muted-foreground mt-1">
+            سقف مجاز: {toPersianDigits(student?.workdayStudyHoursCap || 6)} ساعت
+          </p>
         </Card>
 
         <Card className="p-4">
           <div className="flex items-center justify-between text-muted-foreground mb-1">
-            <span className="text-xs">آخرین تراز آزمون جامع</span>
+            <span className="text-xs">آخرین تراز آزمون وکالت</span>
             <Award className="h-4 w-4 text-indigo-500" />
           </div>
-          <div className="text-2xl font-bold text-foreground persian-nums">
-            %{toPersianDigits(mockExams[0]?.overallScorePercent || 68)}
-          </div>
-          <p className="text-[10px] text-emerald-600 dark:text-emerald-400 mt-1 font-medium">+۴٪ نسبت به آزمون قبلی</p>
+          {latestSubmission?.status === "PUBLISHED_TO_STUDENT" ? (
+            <>
+              <div className="text-2xl font-bold text-emerald-500 persian-nums">
+                %{toPersianDigits(Number(latestSubmission.totalPercentage || 0).toFixed(1))}
+              </div>
+              <p className="text-[10px] text-emerald-600 dark:text-emerald-400 mt-1 font-medium">
+                تایید شده توسط پشتیبان علمی
+              </p>
+            </>
+          ) : latestSubmission?.status === "AUTO_GRADED_PENDING_MENTOR" ? (
+            <>
+              <div className="text-base font-bold text-amber-500 mt-1">
+                در انتظار تایید
+              </div>
+              <p className="text-[10px] text-amber-600 dark:text-amber-400 mt-1">
+                پاسخنامه در دست تحلیل پشتیبان است
+              </p>
+            </>
+          ) : (
+            <>
+              <div className="text-2xl font-bold text-foreground persian-nums">
+                %{toPersianDigits(mockExams[0]?.overallScorePercent || 68)}
+              </div>
+              <p className="text-[10px] text-muted-foreground mt-1 font-medium">
+                تراز استاندارد کشوری
+              </p>
+            </>
+          )}
         </Card>
       </div>
 
+      {/* Online Exam & Longitudinal Scorecard Banner */}
+      <Card className="border-border bg-gradient-to-r from-[#004071]/10 via-card to-card p-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-[#004071] text-white flex items-center justify-center shrink-0">
+              <Scale className="h-5 w-5" />
+            </div>
+            <div>
+              <h3 className="text-sm font-bold text-foreground">
+                مرکز آزمون‌های شبیه‌ساز وکالت و پایش رشد طولی
+              </h3>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                شرکت در آزمون‌های زمان‌دار استاندارد کانون وکلا با نمره منفی ۱/۳ و مشاهده کارنامه تحلیلی پشتیبان
+              </p>
+            </div>
+          </div>
+
+          <Link href="/student/exams">
+            <Button size="sm" className="text-xs bg-[#004071] hover:bg-[#00335c] text-white flex items-center gap-1.5 shrink-0">
+              <span>ورود به کارتابل آزمون‌ها</span>
+              <ArrowLeft className="h-3.5 w-3.5" />
+            </Button>
+          </Link>
+        </div>
+      </Card>
+
       {/* Multi-Horizon 5-Level Progress Gantt Chart */}
-      <MultiHorizonGantt
-        entityType="STUDENT"
-        entityName={session.fullName}
-      />
+      <MultiHorizonGantt entityType="STUDENT" entityName={session.fullName} />
 
       {/* Persian 7-Day Study Week Schedule (Saturday to Friday) */}
       <Card>
@@ -194,9 +336,7 @@ export default async function StudentDashboardPage() {
                   <div className="flex items-center space-x-2 space-x-reverse">
                     <span
                       className={`text-xs font-bold px-2.5 py-1 rounded-md ${
-                        isToday
-                          ? "bg-indigo-600 text-white"
-                          : "bg-muted text-muted-foreground"
+                        isToday ? "bg-indigo-600 text-white" : "bg-muted text-muted-foreground"
                       }`}
                     >
                       {dayName}

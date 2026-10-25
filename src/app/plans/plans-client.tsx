@@ -49,6 +49,7 @@ interface PlansClientProps {
   };
   templates: WeeklyPlanTemplateRecord[];
   students: StudentItem[];
+  initialStudentId?: string;
 }
 
 const DAY_NAMES = ["شنبه", "یکشنبه", "دوشنبه", "سه‌شنبه", "چهارشنبه", "پنج‌شنبه", "جمعه"];
@@ -61,7 +62,7 @@ const LEGAL_SUBJECTS = [
   "اصول و متون فقه",
 ];
 
-export function PlansClient({ currentUser, templates: initialTemplates, students }: PlansClientProps) {
+export function PlansClient({ currentUser, templates: initialTemplates, students, initialStudentId }: PlansClientProps) {
   const [activeTab, setActiveTab] = useState<"TEMPLATES" | "STUDENT_TAILOR">("STUDENT_TAILOR");
   const [feedback, setFeedback] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -69,7 +70,7 @@ export function PlansClient({ currentUser, templates: initialTemplates, students
   // Template creation state (Supervisor/CEO)
   const [isCreatingTemplate, setIsCreatingTemplate] = useState(false);
   const [templateTitle, setTemplateTitle] = useState("");
-  const [templateCohort, setTemplateCohort] = useState("کوهورت جامع کانون وکلا ۱۴۰۳");
+  const [templateCohort, setTemplateCohort] = useState("دوره جامع کانون وکلا ۱۴۰۳");
   const [templateGoal, setTemplateGoal] = useState("");
   const [templateItems, setTemplateItems] = useState<Array<Omit<ScheduleItemRecord, "id" | "scheduleId">>>([
     {
@@ -94,11 +95,17 @@ export function PlansClient({ currentUser, templates: initialTemplates, students
     },
   ]);
 
+  // Determine initial student based on initialStudentId
+  const foundInitialStudent = initialStudentId
+    ? students.find((s) => s.id === initialStudentId)
+    : null;
+  const activeInitialStudent = foundInitialStudent || students[0] || null;
+
   // Student Tailoring State (Mentor/Supervisor/CEO)
-  const [selectedStudent, setSelectedStudent] = useState<StudentItem | null>(students[0] || null);
+  const [selectedStudent, setSelectedStudent] = useState<StudentItem | null>(activeInitialStudent);
   const [tailoredGoal, setTailoredGoal] = useState("برنامه شخصی‌سازی شده با اولویت تقویت مباحث ضعف");
   const [tailoredItems, setTailoredItems] = useState<Array<Omit<ScheduleItemRecord, "id" | "scheduleId">>>(
-    students[0]?.scheduleItems.map((it) => ({
+    activeInitialStudent?.scheduleItems.map((it) => ({
       dayOfWeek: it.dayOfWeek,
       subject: it.subject,
       activityType: it.activityType as ScheduleItemRecord["activityType"],
@@ -245,16 +252,16 @@ export function PlansClient({ currentUser, templates: initialTemplates, students
           <h1 className="text-2xl font-black text-foreground">موتور طراحی و شخصی‌سازی برنامه‌های هفتگی</h1>
           <p className="text-sm text-muted-foreground mt-1">
             {currentUser.role === "CEO"
-              ? "نظارت عالیه و بازرسی مستقیم بر برنامه‌های هفتگی کل کوهورت و داوطلبان"
+              ? "نظارت و ارزیابی برنامه‌های هفتگی داوطلبین"
               : currentUser.role === "SUPERVISOR"
-              ? "طراحی تمپلیت‌های استاندارد هفتگی برای کل کوهورت و پایش شخصی‌سازی پشتیبانان"
+              ? "طراحی تمپلیت‌های استاندارد هفتگی برای دوره آموزشی داوطلبان و پایش شخصی‌سازی پشتیبانان"
               : "شخصی‌سازی و تنظیم تمپلیت‌های سرپرستی متناسب با محدودیت‌ها و نقاط ضعف هر داوطلب"}
           </p>
         </div>
 
         <div className="flex items-center gap-2">
           <Badge variant="outline" className="px-3 py-1 font-semibold">
-            {currentUser.role === "CEO" ? "دسترسی عالیه مدیرعامل" : currentUser.role === "SUPERVISOR" ? "دسترسی سرپرست کوهورت" : "دسترسی پشتیبان آموزشی"}
+            {currentUser.role === "CEO" ? "دسترسی عالیه مدیرعامل" : currentUser.role === "SUPERVISOR" ? "دسترسی سرپرست گروه آموزشی" : "دسترسی پشتیبان آموزشی"}
           </Badge>
         </div>
       </div>
@@ -291,7 +298,7 @@ export function PlansClient({ currentUser, templates: initialTemplates, students
           }`}
         >
           <Layers className="h-4 w-4" />
-          تمپلیت‌های کوهورت سرپرستی ({initialTemplates.length})
+          تمپلیت‌های دوره‌های آموزشی سرپرستی ({initialTemplates.length})
         </button>
       </div>
 
@@ -510,7 +517,7 @@ export function PlansClient({ currentUser, templates: initialTemplates, students
       {activeTab === "TEMPLATES" && (
         <div className="space-y-6">
           <div className="flex items-center justify-between">
-            <h3 className="text-sm font-bold text-foreground">فهرست تمپلیت‌های کوهورت سرپرستی</h3>
+            <h3 className="text-sm font-bold text-foreground">فهرست تمپلیت‌های دوره‌های آموزشی سرپرستی</h3>
             {isSupervisorOrAbove && (
               <Button size="sm" onClick={() => setIsCreatingTemplate(!isCreatingTemplate)}>
                 <Plus className="h-4 w-4 ms-1" />
@@ -525,7 +532,7 @@ export function PlansClient({ currentUser, templates: initialTemplates, students
               <CardHeader>
                 <CardTitle className="text-sm font-bold text-primary flex items-center gap-2">
                   <Plus className="h-4 w-4" />
-                  ایجاد تمپلیت هفتگی جدید برای کل کوهورت
+                  ایجاد تمپلیت هفتگی جدید برای دوره آموزشی
                 </CardTitle>
               </CardHeader>
               <CardContent>
@@ -543,7 +550,7 @@ export function PlansClient({ currentUser, templates: initialTemplates, students
                       />
                     </div>
                     <div>
-                      <label className="block text-xs font-semibold mb-1">کوهورت هدف</label>
+                      <label className="block text-xs font-semibold mb-1">دوره آموزشی هدف</label>
                       <input
                         type="text"
                         value={templateCohort}
@@ -580,7 +587,7 @@ export function PlansClient({ currentUser, templates: initialTemplates, students
               <Card key={t.id} className="border border-border">
                 <CardHeader className="p-4 bg-muted/20 border-b border-border">
                   <CardTitle className="text-sm font-bold text-foreground">{t.title}</CardTitle>
-                  <p className="text-xs text-muted-foreground mt-1">طراح: {t.authorName} | کوهورت: {t.targetCohort}</p>
+                  <p className="text-xs text-muted-foreground mt-1">طراح: {t.authorName} | دوره آموزشی: {t.targetCohort}</p>
                 </CardHeader>
                 <CardContent className="p-4 space-y-2 text-xs">
                   <p className="text-muted-foreground font-medium">هدف اصلی: {t.weeklyMainGoal}</p>

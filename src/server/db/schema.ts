@@ -3,6 +3,7 @@ import {
   text,
   varchar,
   integer,
+  numeric,
   boolean,
   timestamp,
   jsonb,
@@ -79,6 +80,9 @@ export const users = pgTable("users", {
   role: userRoleEnum("role").default("STUDENT").notNull(),
   passwordHash: text("password_hash"),
   mustChangePassword: boolean("must_change_password").default(false).notNull(),
+  garnetUserId: text("garnet_user_id"),
+  garnetUsername: text("garnet_username"),
+  canCreateExams: boolean("can_create_exams").default(false).notNull(),
   isActive: boolean("is_active").default(true).notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
@@ -107,6 +111,9 @@ export const studentProfiles = pgTable("student_profiles", {
   riskStatus: riskStatusEnum("risk_status").default("GREEN").notNull(),
   riskReason: text("risk_reason"),
   lastContactAt: timestamp("last_contact_at"),
+  enrolledCourseCode: text("enrolled_course_code"),
+  enrolledCourseName: text("enrolled_course_name"),
+  hasActiveSupport: boolean("has_active_support").default(true).notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
@@ -185,6 +192,8 @@ export const dailyCheckins = pgTable(
     studentProfileId: text("student_profile_id").references(() => studentProfiles.id).notNull(),
     checkinDate: text("checkin_date").notNull(), // "1403-07-21"
     calculatedExecutionPercent: integer("calculated_execution_percent").notNull(),
+    plannedHours: integer("planned_hours").default(6),
+    actualHours: integer("actual_hours").default(0),
     rootFailureCause: text("root_failure_cause"),
     helpRequested: boolean("help_requested").default(false).notNull(),
     studentNotes: text("student_notes"),
@@ -311,7 +320,10 @@ export const studentWhitelist = pgTable(
     nationalId: varchar("national_id", { length: 20 }).notNull(),
     phoneNumber: varchar("phone_number", { length: 20 }).notNull(),
     fullName: text("full_name").notNull(),
+    enrolledCourseName: text("enrolled_course_name"),
+    enrolledCourseCode: varchar("enrolled_course_code", { length: 100 }),
     assignedMentorId: text("assigned_mentor_id").references(() => users.id),
+    assignedMentorName: text("assigned_mentor_name"),
     status: varchar("status", { length: 20 }).default("PENDING").notNull(), // PENDING | REGISTERED
     invitedAt: timestamp("invited_at"),
     registeredAt: timestamp("registered_at"),
@@ -367,9 +379,15 @@ export const hierarchyTasks = pgTable(
     title: text("title").notNull(),
     description: text("description").notNull(),
     priority: varchar("priority", { length: 20 }).notNull(), // LOW, MEDIUM, HIGH, CRITICAL
-    status: varchar("status", { length: 20 }).default("PENDING").notNull(), // PENDING, IN_PROGRESS, COMPLETED
+    status: varchar("status", { length: 30 }).default("PENDING").notNull(), // PENDING, IN_PROGRESS, COMPLETED_BY_MENTOR, APPROVED, REJECTED, COMPLETED
     dueDate: varchar("due_date", { length: 30 }).notNull(),
     resolutionNotes: text("resolution_notes"),
+    seenAt: timestamp("seen_at"),
+    reviewedBy: text("reviewed_by").references(() => users.id),
+    reviewedByName: text("reviewed_by_name"),
+    reviewNotes: text("review_notes"),
+    reviewedAt: timestamp("reviewed_at"),
+    completedAt: timestamp("completed_at"),
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at").defaultNow().notNull(),
   },
@@ -404,6 +422,18 @@ export const directMessages = pgTable(
     directSenderIdx: index("direct_sender_idx").on(table.senderId),
     directReceiverIdx: index("direct_receiver_idx").on(table.receiverId),
   })
+);
+
+// 18.1. Direct Chat Thread State (for supervisor chat closure & reopening)
+export const directChatThreads = pgTable(
+  "direct_chat_threads",
+  {
+    id: text("id").primaryKey(), // canonical pair: [userA, userB].sort().join("_")
+    isClosed: boolean("is_closed").default(false).notNull(),
+    closedById: text("closed_by_id").references(() => users.id),
+    closedAt: timestamp("closed_at"),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  }
 );
 
 // 19. Escalation Tickets
@@ -473,29 +503,93 @@ export const evaluationExams = pgTable(
   })
 );
 
-// 22. Exam Submissions
+// 22. Production Exams Engine (New Specification)
+export const exams = pgTable(
+  "exams",
+  {
+    id: text("id").primaryKey(), // "exam_{nanoid}"
+    title: text("title").notNull(), // e.g. "آزمون شبیه‌ساز جامع وکالت - مرحله سوم"
+    courseCode: text("course_code"), // Linkable to enrolled course (e.g. "GARNET-BAR-360")
+    category: varchar("category", { length: 50 }).notNull(), // "MOCK_BAR", "DIAGNOSTIC", "SUBJECT_SPECIFIC"
+    durationMinutes: integer("duration_minutes").default(120).notNull(),
+    totalQuestions: integer("total_questions").default(0).notNull(),
+    hasNegativeMarking: boolean("has_negative_marking").default(true).notNull(), // 1/3 penalty standard for Iranian Bar Exam
+    isPublished: boolean("is_published").default(false).notNull(),
+    targetAudience: varchar("target_audience", { length: 30 }).default("ALL").notNull(), // "ALL" | "COURSE_CODE" | "SPECIFIC_STUDENTS"
+    targetCourseCodes: jsonb("target_course_codes").default([]).notNull(), // e.g. ["GARNET-BAR-360", "CRASH-BAR"]
+    targetStudentIds: jsonb("target_student_ids").default([]).notNull(), // Array of user IDs: ["usr_student1"]
+    startDate: timestamp("start_date"),
+    expiryDate: timestamp("expiry_date"),
+    createdById: text("created_by_id").references(() => users.id).notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    examCreatedByIdx: index("exams_created_by_idx").on(table.createdById),
+    examCategoryIdx: index("exams_category_idx").on(table.category),
+    examPublishedIdx: index("exams_published_idx").on(table.isPublished),
+    examAudienceIdx: index("exams_target_audience_idx").on(table.targetAudience),
+  })
+);
+
+// 22b. Exam Questions Table
+export const examQuestions = pgTable(
+  "exam_questions",
+  {
+    id: text("id").primaryKey(), // "q_{nanoid}"
+    examId: text("exam_id").references(() => exams.id, { onDelete: "cascade" }).notNull(),
+    questionNumber: integer("question_number").notNull(),
+    subject: varchar("subject", { length: 100 }).notNull(), // "حقوق مدنی", "آیین دادرسی مدنی", "حقوق تجارت", "حقوق جزا", "آیین دادرسی کیفری", "حقوق اساسی"
+    questionText: text("question_text").notNull(),
+    options: jsonb("options").notNull(), // Array of 4 options: [{ id: 1, text: "گزینه ۱" }, { id: 2, text: "گزینه ۲" }, { id: 3, text: "گزینه ۳" }, { id: 4, text: "گزینه ۴" }]
+    correctOption: integer("correct_option").notNull(), // 1, 2, 3, or 4
+    explanation: text("explanation"), // Rationale and legal article references
+    coefficient: integer("coefficient").default(1).notNull(),
+  },
+  (table) => ({
+    examQuestionExamIdx: index("exam_questions_exam_id_idx").on(table.examId),
+    examQuestionNumIdx: index("exam_questions_num_idx").on(table.examId, table.questionNumber),
+  })
+);
+
+// 22c. Exam Submissions Table (Production Grade)
 export const examSubmissions = pgTable(
   "exam_submissions",
   {
-    id: text("id").primaryKey(),
-    examId: text("exam_id").references(() => evaluationExams.id).notNull(),
-    examTitle: text("exam_title").notNull(),
-    studentProfileId: text("student_profile_id").references(() => studentProfiles.id).notNull(),
-    studentName: text("student_name").notNull(),
-    scorePercent: integer("score_percent").notNull(),
-    subjectScores: jsonb("subject_scores").notNull(),
+    id: text("id").primaryKey(), // "sub_{nanoid}"
+    examId: text("exam_id").references(() => exams.id).notNull(),
+    studentId: text("student_id").references(() => users.id).notNull(),
+    mentorId: text("mentor_id").references(() => users.id).notNull(),
+    startedAt: timestamp("started_at").defaultNow().notNull(),
+    submittedAt: timestamp("submitted_at"),
+    answers: jsonb("answers").default({}).notNull(), // { [questionId]: selectedOptionNumber }
     correctCount: integer("correct_count").default(0).notNull(),
-    wrongCount: integer("wrong_count").default(0).notNull(),
+    incorrectCount: integer("incorrect_count").default(0).notNull(),
     unansweredCount: integer("unanswered_count").default(0).notNull(),
+    totalPercentage: numeric("total_percentage", { precision: 5, scale: 2 }).default("0.00").notNull(),
+    subjectBreakdown: jsonb("subject_breakdown").default([]).notNull(),
+    // Array of: { subject: string, correct: number, incorrect: number, unattempted: number, percentage: number }
+    status: varchar("status", { length: 40 }).default("AUTO_GRADED_PENDING_MENTOR").notNull(),
+    // "IN_PROGRESS" | "AUTO_GRADED_PENDING_MENTOR" | "PUBLISHED_TO_STUDENT"
+    mentorNotes: text("mentor_notes"),
+    reviewedAt: timestamp("reviewed_at"),
+    publishedAt: timestamp("published_at"),
+
+    // Optional compatibility fields for legacy views
+    studentProfileId: text("student_profile_id"),
+    studentName: text("student_name").default("داوطلب مشاهیر دانش"),
+    examTitle: text("exam_title"),
+    scorePercent: integer("score_percent"),
+    subjectScores: jsonb("subject_scores").default({}).$type<Record<string, number>>(),
     rank: integer("rank"),
-    deltaFromPrevious: integer("delta_from_previous").default(0).notNull(),
-    deltaFromBaseline: integer("delta_from_baseline").default(0).notNull(),
-    answers: jsonb("answers"),
-    submittedAt: timestamp("submitted_at").defaultNow().notNull(),
+    deltaFromPrevious: integer("delta_from_previous").default(0),
+    deltaFromBaseline: integer("delta_from_baseline").default(0),
   },
   (table) => ({
-    examSubmissionIdx: uniqueIndex("exam_submission_student_idx").on(table.examId, table.studentProfileId),
-    examSubStudentIdx: index("exam_sub_student_idx").on(table.studentProfileId),
+    examSubExamStudentIdx: index("exam_sub_exam_student_idx").on(table.examId, table.studentId),
+    examSubStudentIdx: index("exam_sub_student_idx").on(table.studentId),
+    examSubMentorIdx: index("exam_sub_mentor_idx").on(table.mentorId),
+    examSubStatusIdx: index("exam_sub_status_idx").on(table.status),
   })
 );
 
@@ -549,6 +643,7 @@ export const chatConversations = pgTable("chat_conversations", {
   creatorName: text("creator_name").notNull(),
   memberIds: jsonb("member_ids").notNull(), // string[]
   isChannelReadOnlyForStudents: boolean("is_channel_read_only_for_students").default(false).notNull(),
+  isGhostMode: boolean("is_ghost_mode").default(false).notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
@@ -608,3 +703,64 @@ export const landingContent = pgTable("landing_content", {
   content: jsonb("content").notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
+
+// 30. Mentor Calling Windows (Daily 2-3 hours availability for Student-to-Coach AMI Calls)
+export const mentorCallingWindows = pgTable("mentor_calling_windows", {
+  id: text("id").primaryKey(),
+  mentorId: text("mentor_id").references(() => users.id).notNull().unique(),
+  startTime: varchar("start_time", { length: 10 }).default("17:00").notNull(), // "17:00"
+  endTime: varchar("end_time", { length: 10 }).default("20:00").notNull(),   // "20:00"
+  daysOfWeek: jsonb("days_of_week").default([0, 1, 2, 3, 4]).notNull(), // [0, 1, 2, 3, 4] Shanbeh to Chaharshanbeh
+  dailyDurationHours: integer("daily_duration_hours").default(3).notNull(),
+  isActive: boolean("is_active").default(true).notNull(),
+  announcement: text("announcement"),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+// 31. Garnet LMS Entitled Courses (Courses that include 360 Coaching/Support)
+export const entitledCourses = pgTable("entitled_courses", {
+  id: text("id").primaryKey(),
+  courseCode: varchar("course_code", { length: 100 }).unique().notNull(), // e.g. "GARNET-BAR-360"
+  courseName: text("course_name").notNull(), // e.g. "دوره طلایی جامع آمادگی آزمون وکالت کانون و مرکز وکلا"
+  description: text("description"),
+  priceFormatted: varchar("price_formatted", { length: 50 }).default("۵,۸۰۰,۰۰۰ تومان"),
+  garnetPurchaseUrl: text("garnet_purchase_url").notNull(),
+  hasSupport: boolean("has_support").default(true).notNull(),
+  supportTier: varchar("support_tier", { length: 50 }).default("GOLD").notNull(),
+  isActive: boolean("is_active").default(true).notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+// 32. Friday Self-Assessment Reports
+export const fridayReports = pgTable(
+  "friday_reports",
+  {
+    id: text("id").primaryKey(),
+    studentId: text("student_id").references(() => users.id).notNull(),
+    studentProfileId: text("student_profile_id").references(() => studentProfiles.id),
+    cohortId: text("cohort_id"),
+    weekNumber: integer("week_number").notNull(),
+    studyHoursCivil: integer("study_hours_civil").default(0).notNull(),
+    studyHoursCriminal: integer("study_hours_criminal").default(0).notNull(),
+    studyHoursTrade: integer("study_hours_trade").default(0).notNull(),
+    studyHoursProcedure: integer("study_hours_procedure").default(0).notNull(),
+    totalHours: integer("total_hours").default(0).notNull(),
+    testsCount: integer("tests_count").default(0).notNull(),
+    weakPoints: text("weak_points"),
+    strengths: text("strengths"),
+    studentNotes: text("student_notes"),
+    status: varchar("status", { length: 30 }).default("SUBMITTED").notNull(), // 'SUBMITTED' | 'APPROVED' | 'REJECTED'
+    mentorFeedback: text("mentor_feedback"),
+    mentorReviewedAt: timestamp("mentor_reviewed_at"),
+    supervisorApproval: boolean("supervisor_approval").default(false).notNull(),
+    supervisorNotes: text("supervisor_notes"),
+    supervisorApprovedAt: timestamp("supervisor_approved_at"),
+    submittedAt: timestamp("submitted_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    fridayReportStudentIdx: index("friday_report_student_idx").on(table.studentId, table.weekNumber),
+    fridayReportWeekIdx: index("friday_report_week_idx").on(table.weekNumber),
+  })
+);

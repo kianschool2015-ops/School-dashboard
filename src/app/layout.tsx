@@ -3,6 +3,7 @@ import { Vazirmatn } from "next/font/google";
 import "./globals.css";
 import { Navbar } from "@/components/navbar";
 import { getSession } from "@/server/auth/guard";
+import { getNavbarNotificationCounts } from "@/server/actions/notifications";
 
 const vazirmatn = Vazirmatn({
   subsets: ["arabic", "latin"],
@@ -32,6 +33,9 @@ export default async function RootLayout({
   children: React.ReactNode;
 }>) {
   const session = await getSession();
+  const notificationCounts = session
+    ? await getNavbarNotificationCounts()
+    : { unreadMessagesCount: 0, pendingTasksCount: 0, pendingReportsCount: 0 };
 
   return (
     <html lang="fa" dir="rtl" className={vazirmatn.variable} suppressHydrationWarning>
@@ -60,6 +64,9 @@ export default async function RootLayout({
           userRole={session?.role || "STUDENT"}
           userName={session?.fullName}
           phoneNumber={session?.phoneNumber}
+          unreadMessagesCount={notificationCounts.unreadMessagesCount}
+          pendingTasksCount={notificationCounts.pendingTasksCount}
+          pendingReportsCount={notificationCounts.pendingReportsCount}
         />
         <main className="container py-6 min-h-[calc(100vh-8rem)]">
           {children}

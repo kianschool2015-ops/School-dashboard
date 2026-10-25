@@ -1,4 +1,4 @@
-import { db } from "../db";
+import { db, isDbOnline } from "../db";
 import { smsSettings, smsLogs } from "../db/schema";
 import { eq } from "drizzle-orm";
 import type { SmsTriggerEvent, SmsTriggerConfig, SmsLogRecord, SmsSettingsRecord } from "@/types/models";
@@ -149,26 +149,28 @@ export async function sendSystemSms(options: SendSmsOptions): Promise<{
   const { event, recipientPhone, recipientName, customText, variables, token, template } = options;
 
   let settings = defaultSmsSettings;
-  try {
-    const [row] = await db
-      .select()
-      .from(smsSettings)
-      .where(eq(smsSettings.id, "sms_conf_default"))
-      .limit(1);
+  if (isDbOnline) {
+    try {
+      const [row] = await db
+        .select()
+        .from(smsSettings)
+        .where(eq(smsSettings.id, "sms_conf_default"))
+        .limit(1);
 
-    if (row) {
-      settings = {
-        id: row.id,
-        provider: row.provider as "KAVENEGAR" | "FARAZ" | "MOCK",
-        apiKey: row.apiKey,
-        senderNumber: row.senderNumber,
-        senderLine: row.senderLine,
-        isActive: row.isActive,
-        updatedAt: new Date(),
-        triggers: (row.triggers as unknown as Record<SmsTriggerEvent, SmsTriggerConfig>) || defaultSmsSettings.triggers,
-      };
-    }
-  } catch {}
+      if (row) {
+        settings = {
+          id: row.id,
+          provider: row.provider as "KAVENEGAR" | "FARAZ" | "MOCK",
+          apiKey: row.apiKey,
+          senderNumber: row.senderNumber,
+          senderLine: row.senderLine,
+          isActive: row.isActive,
+          updatedAt: new Date(),
+          triggers: (row.triggers as unknown as Record<SmsTriggerEvent, SmsTriggerConfig>) || defaultSmsSettings.triggers,
+        };
+      }
+    } catch {}
+  }
 
   if (!settings.isActive) {
     return {
@@ -287,17 +289,19 @@ export async function sendSystemSms(options: SendSmsOptions): Promise<{
 
   // Record into SMS Audit Log in PostgreSQL via Drizzle ORM
   const logId = `sms_log_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
-  try {
-    await db.insert(smsLogs).values({
-      id: logId,
-      recipientPhone,
-      recipientName,
-      event,
-      messageText,
-      status: status === "FAILED" ? "FAILED" : "SENT",
-      providerResponse: statusMessage,
-    });
-  } catch {}
+  if (isDbOnline) {
+    try {
+      await db.insert(smsLogs).values({
+        id: logId,
+        recipientPhone,
+        recipientName,
+        event,
+        messageText,
+        status: status === "FAILED" ? "FAILED" : "SENT",
+        providerResponse: statusMessage,
+      });
+    } catch {}
+  }
 
   return {
     success: status !== "FAILED",

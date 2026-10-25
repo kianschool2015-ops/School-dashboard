@@ -1,5 +1,3 @@
-version: "3.8"
-
 services:
   web:
     build:
@@ -15,8 +13,10 @@ services:
       - HOSTNAME=0.0.0.0
       - JWT_SECRET=${JWT_SECRET:-mashahir_dev_jwt_secret_key_at_least_32_characters}
       - DATABASE_URL=postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres_password_change_me}@postgres:5432/${POSTGRES_DB:-mashahir_support_db}
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379}
     depends_on:
       - postgres
+      - redis
 
   postgres:
     image: postgres:16-alpine
@@ -27,10 +27,21 @@ services:
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-postgres_password_change_me}
       - POSTGRES_DB=${POSTGRES_DB:-mashahir_support_db}
     ports:
-      - "5432:5432"
+      - "${POSTGRES_PORT:-5433}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
 
+  redis:
+    image: redis:7-alpine
+    container_name: mashahir_staging_redis
+    restart: always
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+
 volumes:
   pgdata:
+    driver: local
+  redis_data:
     driver: local
