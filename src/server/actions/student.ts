@@ -4,12 +4,13 @@ import { requireRole, requireStudentOwnership } from "../auth/guard";
 import { db } from "../db";
 import {
   studentProfiles,
+  studentSchedules,
   scheduleItems,
   dailyCheckins,
   triageCases,
   mockExams,
 } from "../db/schema";
-import { eq, and, desc } from "drizzle-orm";
+import { eq, and, desc, inArray } from "drizzle-orm";
 import {
   calculateProgramExecutionPercent,
   evaluateStudentRisk,
@@ -17,6 +18,7 @@ import {
   TRIGGER_DEFINITIONS,
 } from "../services/alert-engine";
 import { formatJalaliDate } from "@/lib/jalali";
+import { sanitizeTextContent } from "@/lib/sanitize";
 import { revalidatePath } from "next/cache";
 
 export interface CheckinItemInput {
@@ -61,19 +63,39 @@ export async function submitDailyCheckinAction(payload: CheckinPayload) {
   await requireStudentOwnership(studentProfileId);
 
   const { items, rootFailureCause, helpRequested, studentNotes } = payload;
+  const cleanRootFailureCause = rootFailureCause ? sanitizeTextContent(rootFailureCause) : null;
+  const cleanStudentNotes = studentNotes ? sanitizeTextContent(studentNotes) : null;
 
-  // 2. Update task item statuses in PostgreSQL via Drizzle ORM
+  // 2. Enforce schedule item ownership (H-06 IDOR protection)
   let doneCount = 0;
   let partialCount = 0;
 
-  for (const item of items) {
-    await db
-      .update(scheduleItems)
-      .set({ status: item.status })
-      .where(eq(scheduleItems.id, item.id));
+  const itemIds = items.map((i) => i.id).filter(Boolean);
+  if (itemIds.length > 0) {
+    const validItems = await db
+      .select({ id: scheduleItems.id })
+      .from(scheduleItems)
+      .innerJoin(studentSchedules, eq(scheduleItems.scheduleId, studentSchedules.id))
+      .where(
+        and(
+          eq(studentSchedules.studentProfileId, studentProfileId),
+          inArray(scheduleItems.id, itemIds)
+        )
+      );
 
-    if (item.status === "DONE") doneCount++;
-    else if (item.status === "PARTIAL") partialCount++;
+    const validIdSet = new Set(validItems.map((v) => v.id));
+
+    for (const item of items) {
+      if (!validIdSet.has(item.id)) continue;
+
+      await db
+        .update(scheduleItems)
+        .set({ status: item.status })
+        .where(eq(scheduleItems.id, item.id));
+
+      if (item.status === "DONE") doneCount++;
+      else if (item.status === "PARTIAL") partialCount++;
+    }
   }
 
   // 3. Compute execution percent
@@ -90,9 +112,9 @@ export async function submitDailyCheckinAction(payload: CheckinPayload) {
       studentProfileId,
       checkinDate,
       calculatedExecutionPercent: executionPercent,
-      rootFailureCause: rootFailureCause || null,
+      rootFailureCause: cleanRootFailureCause,
       helpRequested,
-      studentNotes: studentNotes || null,
+      studentNotes: cleanStudentNotes,
     })
     .onConflictDoNothing();
 

@@ -1,39 +1,52 @@
-import { SignJWT, jwtVerify } from "jose";
+/**
+ * Mashahir Danesh Law School Platform - Session JWT Layer (Server / Node Runtime)
+ * Extends Edge-safe JWT service from @/lib/jwt with Redis-backed distributed revocation
+ */
+export * from "@/lib/jwt";
+import {
+  verifySessionToken as verifyBaseToken,
+  revokeSessionToken as revokeInMemory,
+  isSessionRevoked as isRevokedInMemory,
+  type SessionPayload,
+} from "@/lib/jwt";
+import { getRedisClient } from "../redis";
 
-const JWT_SECRET_STRING =
-  process.env.JWT_SECRET ||
-  "super_secret_jwt_key_at_least_32_chars_mashahir_danesh_2026_law_school";
-const SECRET_KEY = new TextEncoder().encode(JWT_SECRET_STRING);
-
-export type UserRole = "STUDENT" | "MENTOR" | "SUPERVISOR" | "CEO" | "ADMIN";
-
-export interface SessionPayload {
-  userId: string;
-  phoneNumber: string;
-  fullName: string;
-  role: UserRole;
-  studentProfileId?: string; // Present if user is a student
-  mentorId?: string; // If user is student, their mentor's userId
-}
-
-export async function createSessionToken(
-  payload: SessionPayload,
-  expiresIn: string = "7d"
-): Promise<string> {
-  return new SignJWT({ ...payload })
-    .setProtectedHeader({ alg: "HS256" })
-    .setIssuedAt()
-    .setExpirationTime(expiresIn)
-    .sign(SECRET_KEY);
-}
-
-export async function verifySessionToken(
-  token: string
-): Promise<SessionPayload | null> {
+export async function revokeSessionToken(sessionId: string, ttlSeconds = 8 * 3600): Promise<void> {
+  if (!sessionId) return;
+  await revokeInMemory(sessionId);
   try {
-    const { payload } = await jwtVerify(token, SECRET_KEY);
-    return payload as unknown as SessionPayload;
-  } catch {
-    return null;
+    const redis = getRedisClient();
+    if (redis) {
+      await redis.set(`revoked_session:${sessionId}`, "1", "EX", ttlSeconds);
+    }
+  } catch {}
+}
+
+export const revokeSession = revokeSessionToken;
+
+export async function isSessionRevoked(sessionId: string): Promise<boolean> {
+  if (!sessionId) return false;
+  if (await isRevokedInMemory(sessionId)) return true;
+
+  try {
+    const redis = getRedisClient();
+    if (redis) {
+      const exists = await redis.get(`revoked_session:${sessionId}`);
+      return Boolean(exists);
+    }
+  } catch {}
+
+  return false;
+}
+
+export async function verifySessionToken(token: string): Promise<SessionPayload | null> {
+  const session = await verifyBaseToken(token);
+  if (!session) return null;
+
+  if (session.sessionId) {
+    const revoked = await isSessionRevoked(session.sessionId);
+    if (revoked) return null;
   }
+
+  return session;
 }

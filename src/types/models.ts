@@ -429,7 +429,7 @@ export interface ExamQuestion {
   subject: string;
   questionText: string;
   options: ExamOptionItem[];
-  correctOption: number;
+  correctOption?: number;
   explanation?: string | null;
   coefficient: number;
 }

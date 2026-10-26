@@ -34,6 +34,8 @@ import {
 import { StudentDashboardClient } from "./dashboard-client";
 import { StudentCallCoachWidget } from "@/components/student/student-call-coach-widget";
 import { MultiHorizonGantt } from "@/components/analytics/gantt-chart";
+import { LongitudinalScoreChart } from "@/components/analytics/longitudinal-score-chart";
+import { getStudentLongitudinalHistoryAction } from "@/server/actions/exams";
 
 export default async function StudentDashboardPage() {
   const session = await getSession();
@@ -142,6 +144,14 @@ export default async function StudentDashboardPage() {
     latestSubmission = foundSub || null;
   } catch (err) {
     console.warn("[StudentDashboard] examSubmissions query error:", err);
+  }
+
+  // Fetch longitudinal history for score trajectory chart (M-15)
+  let longitudinalHistory: Awaited<ReturnType<typeof getStudentLongitudinalHistoryAction>> = [];
+  try {
+    longitudinalHistory = await getStudentLongitudinalHistoryAction(session.userId);
+  } catch (err) {
+    console.warn("[StudentDashboard] longitudinalHistory query error:", err);
   }
 
   const { weekStartDate, weekEndDate, jalaliWeekNumber } = getStudyWeekBoundaries();
@@ -298,6 +308,25 @@ export default async function StudentDashboardPage() {
           </Link>
         </div>
       </Card>
+
+      {/* Visual Longitudinal SVG Score Growth Chart (M-15) */}
+      {longitudinalHistory.length > 0 && (
+        <LongitudinalScoreChart
+          data={longitudinalHistory.map((item) => ({
+            id: item.submissionId,
+            title: item.examTitle,
+            category: item.examCategory,
+            scorePercent: item.totalPercentage,
+            deltaFromPrevious: item.deltaFromPrevious,
+            deltaFromBaseline: item.deltaFromBaseline,
+            date: item.publishedAt || item.submittedAt,
+            mentorNotes: item.mentorNotes,
+          }))}
+          passingScore={50}
+          title="پایش رشد طولی تراز داوطلب در شبیه‌سازهای وکالت"
+          subtitle="روند پیشرفت و ارتقای معدل تراز شما در آزمون‌های آزمایشی استاندارد"
+        />
+      )}
 
       {/* Multi-Horizon 5-Level Progress Gantt Chart */}
       <MultiHorizonGantt entityType="STUDENT" entityName={session.fullName} />

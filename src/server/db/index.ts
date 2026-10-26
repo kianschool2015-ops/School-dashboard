@@ -4,6 +4,7 @@ import * as schema from "./schema";
 import fs from "node:fs";
 import path from "node:path";
 import { runDatabaseBootstrap } from "./bootstrap";
+import { hashPassword } from "@/lib/password";
 
 /**
  * Mashahir Danesh Law School Platform - Database Layer (Track 1)
@@ -39,9 +40,9 @@ const isVitest = Boolean(process.env.VITEST);
 
 export const pgClient = postgres(connectionString, {
   prepare: false, // CRITICAL: disables prepared statements for PgBouncer / transaction mode
-  connect_timeout: isVitest ? 1 : 5, // Timeout in seconds (never hang indefinitely)
-  idle_timeout: 10,
-  max: 10,
+  connect_timeout: isVitest ? 1 : 10, // Timeout in seconds (C-10)
+  idle_timeout: 20,
+  max: parseInt(process.env.DB_POOL_MAX || "35", 10),
   onnotice: () => {}, // Suppress notices
 });
 
@@ -69,17 +70,25 @@ export async function ensureDatabaseBootstrap(): Promise<void> {
           // 1. Run Comprehensive Programmatic DDL Bootstrap (creates all tables, enums, indexes, and column migrations)
           await runDatabaseBootstrap(pgClient);
 
-          // 2. Seed initial pilot records automatically if missing
+          // 2. Seed initial pilot records automatically if missing (with scrypt$ hashes)
+          const adminHash = hashPassword("Admin@123456");
+          const supervisorHash = hashPassword("Supervisor@123456");
+          const mentorHash = hashPassword("Mentor@123456");
+          const studentHash = hashPassword("Student@123456");
+
           await pgClient.unsafe(`
         INSERT INTO users (id, username, phone_number, full_name, role, password_hash, can_create_exams, is_active)
         VALUES
-          ('usr_admin', 'admin', '09120000001', 'مدیریت عالی مشاهیر دانش', 'CEO', 'Admin@123456', true, true),
-          ('usr_adminsupervisor', 'supervisor', '09120000002', 'دکتر مریم رضایی (سرپرست آموزشی)', 'SUPERVISOR', 'Supervisor@123456', true, true),
-          ('usr_mentor1', 'mentor', '09121000001', 'استاد علی کاظمی (پشتیبان علمی)', 'MENTOR', 'Mentor@123456', true, true),
-          ('usr_student1', 'student', '09121000005', 'سارا احمدی (داوطلب کانون وکلا)', 'STUDENT', 'Student@123456', false, true)
+          ('usr_admin', 'admin', '09120000001', 'مدیریت عالی مشاهیر دانش', 'CEO', '${adminHash}', true, true),
+          ('usr_adminsupervisor', 'supervisor', '09120000002', 'دکتر مریم رضایی (سرپرست آموزشی)', 'SUPERVISOR', '${supervisorHash}', true, true),
+          ('usr_mentor1', 'mentor', '09121000001', 'استاد علی کاظمی (پشتیبان علمی)', 'MENTOR', '${mentorHash}', true, true),
+          ('usr_student1', 'student', '09121000005', 'سارا احمدی (داوطلب کانون وکلا)', 'STUDENT', '${studentHash}', false, true)
         ON CONFLICT (id) DO UPDATE SET
           username = EXCLUDED.username,
-          password_hash = EXCLUDED.password_hash,
+          password_hash = CASE
+            WHEN users.password_hash LIKE 'scrypt$%' THEN users.password_hash
+            ELSE EXCLUDED.password_hash
+          END,
           can_create_exams = EXCLUDED.can_create_exams;
 
         INSERT INTO student_profiles (

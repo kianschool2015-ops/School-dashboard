@@ -10,23 +10,30 @@ import Redis from "ioredis";
 import { db } from "../db";
 import { examSubmissions } from "../db/schema";
 
-// Redis Connection Singleton (Fallback safe for builds / environments without live Redis)
+// Redis Connection Configuration (Dedicated connections for Queue & Worker - M-11)
 const redisUrl = process.env.REDIS_URL || "redis://localhost:6379/0";
 
-export const redisConnection = new Redis(redisUrl, {
-  maxRetriesPerRequest: null,
-  enableReadyCheck: false,
-  lazyConnect: true,
-  connectTimeout: 2000,
-  enableOfflineQueue: false,
-  retryStrategy(times) {
-    if (times > 2) return null; // Cease reconnect loop to suppress log storm
-    return Math.min(times * 200, 1000);
-  },
-});
+function createRedisClient(label: string) {
+  const client = new Redis(redisUrl, {
+    maxRetriesPerRequest: null,
+    enableReadyCheck: false,
+    lazyConnect: true,
+    connectTimeout: 2000,
+    enableOfflineQueue: false,
+    retryStrategy(times) {
+      if (times > 3) return null; // Cease reconnect loop to suppress log storm
+      return Math.min(times * 200, 1000);
+    },
+  });
+  client.on("error", () => {}); // Suppress unhandled connection errors
+  return client;
+}
 
-// Suppress unhandled connection errors to prevent node process crash & ECONNREFUSED flood
-redisConnection.on("error", () => {});
+export const queueRedisConnection = createRedisClient("queue");
+export const workerRedisConnection = createRedisClient("worker");
+
+// Backward compatibility export
+export const redisConnection = queueRedisConnection;
 
 export interface ExamSubmissionJobData {
   submissionId: string;
@@ -162,66 +169,54 @@ export async function enqueueExamSubmission(
 }
 
 /**
- * Dedicated Background Worker Consumer with micro-batching (up to 500 items)
- * Drains submissions at controlled rate and bulk-inserts to Postgres via PgBouncer on port 6432
+ * Dedicated Background Worker Consumer (C-08, H-18, M-11)
+ * Drains submissions with concurrency = 10 and transactional persistence to PostgreSQL.
+ * Guarantees zero data loss: BullMQ only acks job after DB write succeeds.
  */
-export function createExamSubmissionWorker(batchSize = 500) {
-  let submissionBatch: ExamSubmissionJobData[] = [];
-  let flushTimeout: NodeJS.Timeout | null = null;
-
-  async function flushBatch() {
-    if (submissionBatch.length === 0) return;
-    const currentBatch = [...submissionBatch];
-    submissionBatch = [];
-
-    try {
-      const recordsToInsert = currentBatch.map((sub) => ({
-        id: sub.submissionId,
-        examId: sub.examId,
-        examTitle: sub.examTitle || "آزمون ارزیابی",
-        studentId: sub.studentId || sub.studentProfileId,
-        studentName: sub.studentName || "داوطلب مشاهیر دانش",
-        mentorId: sub.mentorId || "usr_mentor1",
-        studentProfileId: sub.studentProfileId,
-        scorePercent: sub.overallScorePercent || 0,
-        correctCount: sub.correctCount,
-        incorrectCount: sub.wrongCount,
-        unansweredCount: sub.unansweredCount,
-        totalPercentage: (sub.overallScorePercent || 0).toFixed(2),
-        subjectBreakdown: [],
-        status: "AUTO_GRADED_PENDING_MENTOR",
-        subjectScores: sub.subjectScores,
-        deltaFromPrevious: sub.deltaFromPrevious || 0,
-        deltaFromBaseline: sub.deltaFromBaseline || 0,
-        answers: (sub.answers as Record<string, number>) || {},
-        submittedAt: new Date(sub.submittedAt || Date.now()),
-      }));
-
-      // Bulk INSERT ... ON CONFLICT DO NOTHING
-      await db
-        .insert(examSubmissions)
-        .values(recordsToInsert)
-        .onConflictDoNothing();
-    } catch (err: unknown) {
-      console.error("[Exam Worker] Bulk insert batch error:", err instanceof Error ? err.message : String(err));
-    }
-  }
-
+export function createExamSubmissionWorker() {
   const worker = new Worker<ExamSubmissionJobData>(
     EXAM_SUBMISSION_QUEUE_NAME,
     async (job: Job<ExamSubmissionJobData>) => {
-      submissionBatch.push(job.data);
+      const sub = job.data;
 
-      if (submissionBatch.length >= batchSize) {
-        if (flushTimeout) clearTimeout(flushTimeout);
-        flushTimeout = null;
-        await flushBatch();
-      } else if (!flushTimeout) {
-        flushTimeout = setTimeout(async () => {
-          flushTimeout = null;
-          await flushBatch();
-        }, 100); // Flush within 100ms
-      }
+      // Reliable, atomic PostgreSQL persistence (C-08, L-04, L-05)
+      await db
+        .insert(examSubmissions)
+        .values({
+          id: sub.submissionId,
+          examId: sub.examId,
+          examTitle: sub.examTitle || "آزمون ارزیابی",
+          studentId: sub.studentId || sub.studentProfileId,
+          studentName: sub.studentName || "داوطلب مشاهیر دانش",
+          mentorId: sub.mentorId || "usr_mentor1",
+          studentProfileId: sub.studentProfileId,
+          scorePercent: sub.overallScorePercent || 0,
+          correctCount: sub.correctCount,
+          incorrectCount: sub.wrongCount,
+          unansweredCount: sub.unansweredCount,
+          totalPercentage: (sub.overallScorePercent || 0).toFixed(2),
+          subjectBreakdown: [],
+          status: "AUTO_GRADED_PENDING_MENTOR",
+          subjectScores: sub.subjectScores,
+          deltaFromPrevious: sub.deltaFromPrevious || 0,
+          deltaFromBaseline: sub.deltaFromBaseline || 0,
+          answers: (sub.answers as Record<string, number>) || {},
+          submittedAt: new Date(sub.submittedAt || Date.now()),
+        })
+        .onConflictDoUpdate({
+          target: examSubmissions.id,
+          set: {
+            scorePercent: sub.overallScorePercent || 0,
+            correctCount: sub.correctCount,
+            incorrectCount: sub.wrongCount,
+            unansweredCount: sub.unansweredCount,
+            totalPercentage: (sub.overallScorePercent || 0).toFixed(2),
+            status: "AUTO_GRADED_PENDING_MENTOR",
+            subjectScores: sub.subjectScores,
+            answers: (sub.answers as Record<string, number>) || {},
+            submittedAt: new Date(sub.submittedAt || Date.now()),
+          },
+        });
 
       return {
         processed: true,
@@ -231,8 +226,8 @@ export function createExamSubmissionWorker(batchSize = 500) {
       };
     },
     {
-      connection: redisConnection,
-      concurrency: 50,
+      connection: workerRedisConnection,
+      concurrency: 10, // Tuned for DB connection headroom (H-18)
       limiter: {
         max: 2000,
         duration: 1000,

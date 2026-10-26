@@ -3,8 +3,9 @@
 import { requireAuth, requireRole } from "../auth/guard";
 import { db } from "../db";
 import { chatConversations, chatMessages, studentProfiles } from "../db/schema";
-import { eq, asc, or } from "drizzle-orm";
+import { eq, asc, desc, or, and, gt } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
+import { isValidAttachmentUrl, sanitizeTextContent } from "@/lib/sanitize";
 import type {
   ChatConversationRecord,
   ChatMessageRecord,
@@ -92,8 +93,13 @@ export async function createConversationAction(payload: {
 
 /**
  * Get messages for a specific conversation via Drizzle ORM
+ * Implements H-20: Paginated to latest 50 messages
  */
-export async function getMessagesAction(conversationId: string): Promise<ChatMessageRecord[]> {
+export async function getMessagesAction(
+  conversationId: string,
+  limit = 50,
+  afterTimestamp?: string | Date
+): Promise<ChatMessageRecord[]> {
   const session = await requireAuth();
 
   const [conv] = await db
@@ -114,13 +120,19 @@ export async function getMessagesAction(conversationId: string): Promise<ChatMes
     }
   }
 
+  const conditions = [eq(chatMessages.conversationId, conversationId)];
+  if (afterTimestamp) {
+    conditions.push(gt(chatMessages.createdAt, new Date(afterTimestamp)));
+  }
+
   const messages = await db
     .select()
     .from(chatMessages)
-    .where(eq(chatMessages.conversationId, conversationId))
-    .orderBy(asc(chatMessages.createdAt));
+    .where(and(...conditions))
+    .orderBy(desc(chatMessages.createdAt))
+    .limit(limit);
 
-  return messages as unknown as ChatMessageRecord[];
+  return (messages as unknown as ChatMessageRecord[]).reverse();
 }
 
 /**
@@ -174,6 +186,16 @@ export async function sendMessageAction(payload: {
     };
   }
 
+  // Validate attachment URL scheme (H-10)
+  if (payload.attachmentUrl && !isValidAttachmentUrl(payload.attachmentUrl)) {
+    return {
+      success: false,
+      message: "فرمت آدرس فایل پیوست غیرمجاز است.",
+    };
+  }
+
+  const cleanMessage = sanitizeTextContent(payload.message);
+
   const msgId = `cmsg_${Date.now()}`;
   const newMsg: ChatMessageRecord = {
     id: msgId,
@@ -181,7 +203,7 @@ export async function sendMessageAction(payload: {
     senderId: session.userId,
     senderName: session.fullName,
     senderRole: session.role,
-    message: payload.message.trim(),
+    message: cleanMessage,
     attachmentUrl: payload.attachmentUrl,
     attachmentName: payload.attachmentName,
     attachmentSize: payload.attachmentSize,
@@ -195,7 +217,7 @@ export async function sendMessageAction(payload: {
     senderId: session.userId,
     senderName: session.fullName,
     senderRole: session.role,
-    message: payload.message.trim(),
+    message: cleanMessage,
     attachmentUrl: payload.attachmentUrl || null,
     attachmentName: payload.attachmentName || null,
     attachmentSize: payload.attachmentSize || null,

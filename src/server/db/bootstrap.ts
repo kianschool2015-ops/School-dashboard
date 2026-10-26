@@ -1,4 +1,5 @@
 import postgres from "postgres";
+import { hashPassword } from "@/lib/password";
 
 /**
  * Mashahir Danesh Law School Platform - Comprehensive Programmatic DDL Bootstrap
@@ -416,10 +417,10 @@ export async function runDatabaseBootstrap(client: postgres.Sql): Promise<void> 
     -- 24. Exam Submissions (Production Grade)
     CREATE TABLE IF NOT EXISTS exam_submissions (
       id text PRIMARY KEY,
-      exam_id text REFERENCES exams(id),
-      student_id text REFERENCES users(id),
+      exam_id text REFERENCES exams(id) ON DELETE CASCADE NOT NULL,
+      student_id text REFERENCES users(id) ON DELETE CASCADE NOT NULL,
       student_name text DEFAULT 'داوطلب مشاهیر دانش',
-      mentor_id text REFERENCES users(id),
+      mentor_id text REFERENCES users(id) ON DELETE SET NULL,
       started_at timestamp DEFAULT now() NOT NULL,
       submitted_at timestamp,
       answers jsonb DEFAULT '{}'::jsonb NOT NULL,
@@ -510,7 +511,7 @@ export async function runDatabaseBootstrap(client: postgres.Sql): Promise<void> 
       platform_name text NOT NULL,
       server_url text NOT NULL,
       api_key text NOT NULL,
-      isEnabled boolean DEFAULT true NOT NULL
+      is_enabled boolean DEFAULT true NOT NULL
     );
 
     -- 30. Video Sessions
@@ -601,56 +602,8 @@ export async function runDatabaseBootstrap(client: postgres.Sql): Promise<void> 
       updated_at timestamp DEFAULT now() NOT NULL
     );
 
-    -- Compatibility / Alias Tables for runtime safety
-    CREATE TABLE IF NOT EXISTS tasks (
-      id text PRIMARY KEY,
-      sender_id text,
-      receiver_id text,
-      title text NOT NULL,
-      description text,
-      priority varchar(20) DEFAULT 'MEDIUM',
-      status varchar(30) DEFAULT 'PENDING',
-      due_date varchar(30),
-      created_at timestamp DEFAULT now(),
-      updated_at timestamp DEFAULT now()
-    );
-
-    CREATE TABLE IF NOT EXISTS mentor_call_notes (
-      id text PRIMARY KEY,
-      mentor_id text,
-      student_id text,
-      notes text,
-      created_at timestamp DEFAULT now()
-    );
-
-    CREATE TABLE IF NOT EXISTS triage_cases (
-      id text PRIMARY KEY,
-      student_profile_id text,
-      mentor_id text,
-      trigger_code varchar(10),
-      priority_tier integer,
-      description text,
-      is_resolved boolean DEFAULT false,
-      created_at timestamp DEFAULT now()
-    );
-
-    CREATE TABLE IF NOT EXISTS friday_assessment_reports (
-      id text PRIMARY KEY,
-      student_id text,
-      week_number integer,
-      data jsonb,
-      created_at timestamp DEFAULT now()
-    );
-
-    CREATE TABLE IF NOT EXISTS internal_tickets (
-      id text PRIMARY KEY,
-      sender_id text,
-      receiver_id text,
-      subject text,
-      description text,
-      status varchar(20) DEFAULT 'OPEN',
-      created_at timestamp DEFAULT now()
-    );
+    -- Clean up legacy shadow tables (M-08)
+    DROP TABLE IF EXISTS tasks, mentor_call_notes, triage_cases, friday_assessment_reports, internal_tickets CASCADE;
   `);
 
   // 3. Self-healing Column Migrations
@@ -721,14 +674,19 @@ export async function runDatabaseBootstrap(client: postgres.Sql): Promise<void> 
     ALTER TABLE exam_submissions ADD COLUMN IF NOT EXISTS delta_from_previous integer DEFAULT 0;
     ALTER TABLE exam_submissions ADD COLUMN IF NOT EXISTS delta_from_baseline integer DEFAULT 0;
     ALTER TABLE friday_reports ADD COLUMN IF NOT EXISTS status varchar(30) DEFAULT 'SUBMITTED';
+    ALTER TABLE video_settings ADD COLUMN IF NOT EXISTS is_enabled boolean DEFAULT true NOT NULL;
   `);
 
   // 4. Create Indexes Idempotently
   await client.unsafe(`
-    CREATE INDEX IF NOT EXISTS student_week_idx ON student_schedules (student_profile_id, jalali_year, jalali_week_number);
+    CREATE UNIQUE INDEX IF NOT EXISTS student_week_idx ON student_schedules (student_profile_id, jalali_year, jalali_week_number);
     CREATE INDEX IF NOT EXISTS jalali_week_idx ON student_schedules (jalali_year, jalali_week_number);
-    CREATE INDEX IF NOT EXISTS student_checkin_date_idx ON daily_checkins (student_profile_id, checkin_date);
-    CREATE INDEX IF NOT EXISTS student_mission_idx ON student_mission_logs (mission_id, student_profile_id);
+    CREATE UNIQUE INDEX IF NOT EXISTS student_checkin_date_idx ON daily_checkins (student_profile_id, checkin_date);
+    CREATE UNIQUE INDEX IF NOT EXISTS student_mission_idx ON student_mission_logs (mission_id, student_profile_id);
+    CREATE UNIQUE INDEX IF NOT EXISTS student_profiles_user_id_idx ON student_profiles (user_id);
+    CREATE INDEX IF NOT EXISTS student_profiles_mentor_id_idx ON student_profiles (mentor_id);
+    CREATE INDEX IF NOT EXISTS student_profiles_course_code_idx ON student_profiles (enrolled_course_code);
+    CREATE INDEX IF NOT EXISTS schedule_items_schedule_id_idx ON schedule_items (schedule_id);
     CREATE INDEX IF NOT EXISTS mentor_triage_idx ON mentor_triage_cases (mentor_id, is_resolved, priority_tier);
     CREATE INDEX IF NOT EXISTS whitelist_phone_idx ON student_whitelist (phone_number);
     CREATE INDEX IF NOT EXISTS whitelist_national_id_idx ON student_whitelist (national_id);
@@ -747,12 +705,14 @@ export async function runDatabaseBootstrap(client: postgres.Sql): Promise<void> 
     CREATE INDEX IF NOT EXISTS exams_category_idx ON exams (category);
     CREATE INDEX IF NOT EXISTS exams_published_idx ON exams (is_published);
     CREATE INDEX IF NOT EXISTS exams_target_audience_idx ON exams (target_audience);
+    CREATE INDEX IF NOT EXISTS exams_course_code_idx ON exams (course_code);
     CREATE INDEX IF NOT EXISTS exam_questions_exam_id_idx ON exam_questions (exam_id);
     CREATE INDEX IF NOT EXISTS exam_questions_num_idx ON exam_questions (exam_id, question_number);
     CREATE INDEX IF NOT EXISTS exam_sub_exam_student_idx ON exam_submissions (exam_id, student_id);
     CREATE INDEX IF NOT EXISTS exam_sub_student_idx ON exam_submissions (student_id);
     CREATE INDEX IF NOT EXISTS exam_sub_mentor_idx ON exam_submissions (mentor_id);
     CREATE INDEX IF NOT EXISTS exam_sub_status_idx ON exam_submissions (status);
+    CREATE INDEX IF NOT EXISTS exam_submissions_status_submitted_idx ON exam_submissions (status, submitted_at);
 
     -- VoIP & Communication Indexes
     CREATE INDEX IF NOT EXISTS voip_call_mentor_idx ON voip_calls (mentor_id);
@@ -761,6 +721,25 @@ export async function runDatabaseBootstrap(client: postgres.Sql): Promise<void> 
     CREATE INDEX IF NOT EXISTS friday_report_student_idx ON friday_reports (student_id, week_number);
     CREATE INDEX IF NOT EXISTS friday_report_week_idx ON friday_reports (week_number);
   `);
+
+  // 5. One-time Plaintext Password Migration to scrypt$ (C-02, C-03)
+  try {
+    const legacyUsers = await client`
+      SELECT id, password_hash FROM users
+      WHERE password_hash IS NOT NULL
+        AND password_hash != ''
+        AND password_hash NOT LIKE 'scrypt$%'
+        AND password_hash NOT LIKE '$2%'
+    `;
+    for (const u of legacyUsers) {
+      if (u.password_hash) {
+        const hashed = hashPassword(u.password_hash);
+        await client`UPDATE users SET password_hash = ${hashed} WHERE id = ${u.id}`;
+      }
+    }
+  } catch (migErr) {
+    console.warn("[Database] One-time password migration notice:", migErr);
+  }
 
   console.log("✅ [Database] All tables (including exams, questions, submissions, and calling windows) verified/created successfully.");
 }

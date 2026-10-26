@@ -5,6 +5,7 @@ import { db } from "../db";
 import { videoSettings, videoSessions, studentProfiles } from "../db/schema";
 import { eq, desc } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
+import { sanitizeTextContent } from "@/lib/sanitize";
 import type { VideoConferenceSettings, VideoSessionRecord, UserRole } from "@/types/models";
 
 const defaultVideoSettings: VideoConferenceSettings = {
@@ -174,19 +175,24 @@ export async function createVideoSessionAction(payload: {
 export async function launchInstantTriageRoomAction(studentProfileId: string, studentName: string) {
   const session = await requireRole(["MENTOR", "SUPERVISOR", "CEO", "ADMIN"]);
 
-  if (session.role === "MENTOR") {
-    const [profile] = await db
-      .select()
-      .from(studentProfiles)
-      .where(eq(studentProfiles.id, studentProfileId))
-      .limit(1);
+  const [profile] = await db
+    .select()
+    .from(studentProfiles)
+    .where(eq(studentProfiles.id, studentProfileId))
+    .limit(1);
 
-    if (!profile || profile.mentorId !== session.userId) {
-      return {
-        success: false,
-        message: "شما تنها مجاز به ایجاد جلسه برای داوطلبان تحت نظارت مستقیم خود هستید.",
-      };
-    }
+  if (!profile) {
+    return {
+      success: false,
+      message: "پروفایل داوطلب مورد نظر یافت نشد.",
+    };
+  }
+
+  if (session.role === "MENTOR" && profile.mentorId !== session.userId) {
+    return {
+      success: false,
+      message: "شما تنها مجاز به ایجاد جلسه برای داوطلبان تحت نظارت مستقیم خود هستید.",
+    };
   }
 
   const [row] = await db
@@ -209,6 +215,8 @@ export async function launchInstantTriageRoomAction(studentProfileId: string, st
   const joinUrl = `${currentVideoSettings.serverUrl}/join/${roomCode}?token=urgent_${Date.now()}`;
 
   const sessionId = `vsession_${Date.now()}`;
+  const participants = Array.from(new Set([session.userId, studentProfileId, profile.userId]));
+
   const newSession: VideoSessionRecord = {
     id: sessionId,
     title: `جلسه هدایت تحصیلی و مشاوره آنلاین فوری با داوطلب ${studentName}`,
@@ -219,7 +227,7 @@ export async function launchInstantTriageRoomAction(studentProfileId: string, st
     sessionType: "TRIAGE_URGENT",
     targetCohort: "مشاوره اضطراری",
     allowedRoles: ["CEO", "ADMIN", "SUPERVISOR", "MENTOR", "STUDENT"],
-    participantIds: [session.userId, studentProfileId],
+    participantIds: participants,
     scheduledStart: "هم‌اکنون (جلسه فوری)",
     durationMinutes: 45,
     status: "LIVE",
@@ -237,7 +245,7 @@ export async function launchInstantTriageRoomAction(studentProfileId: string, st
     sessionType: "TRIAGE_URGENT",
     targetCohort: "مشاوره اضطراری",
     allowedRoles: ["CEO", "ADMIN", "SUPERVISOR", "MENTOR", "STUDENT"],
-    participantIds: [session.userId, studentProfileId],
+    participantIds: participants,
     scheduledStart: "هم‌اکنون (جلسه فوری)",
     durationMinutes: 45,
     status: "LIVE",
@@ -248,5 +256,48 @@ export async function launchInstantTriageRoomAction(studentProfileId: string, st
     success: true,
     message: "جلسه مشاوره تصویری فوری آغاز شد.",
     joinUrl,
+  };
+}
+
+/**
+ * Check and verify video room access before joining (H-07 IDOR protection)
+ */
+export async function getVideoSessionAccessAction(sessionId: string): Promise<{
+  allowed: boolean;
+  joinUrl?: string;
+  message?: string;
+}> {
+  const session = await requireAuth();
+
+  const [video] = await db
+    .select()
+    .from(videoSessions)
+    .where(eq(videoSessions.id, sessionId))
+    .limit(1);
+
+  if (!video) {
+    return { allowed: false, message: "جلسه تصویری یافت نشد." };
+  }
+
+  const isPrivileged = session.role === "CEO" || session.role === "ADMIN";
+  const roles = (video.allowedRoles as string[]) || [];
+  const participants = (video.participantIds as string[]) || [];
+
+  const isAllowed =
+    isPrivileged ||
+    roles.includes(session.role) ||
+    participants.includes(session.userId) ||
+    (session.studentProfileId && participants.includes(session.studentProfileId));
+
+  if (!isAllowed) {
+    return {
+      allowed: false,
+      message: "شما دسترسی لازم برای ورود به این اتاق ویدئوکنفرانس را ندارید.",
+    };
+  }
+
+  return {
+    allowed: true,
+    joinUrl: video.joinUrl,
   };
 }

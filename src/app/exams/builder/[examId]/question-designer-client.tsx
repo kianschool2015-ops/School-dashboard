@@ -174,7 +174,7 @@ export function QuestionDesignerClient({
     setOption2(q.options[1]?.text || "");
     setOption3(q.options[2]?.text || "");
     setOption4(q.options[3]?.text || "");
-    setCorrectOption(q.correctOption);
+    setCorrectOption(q.correctOption ?? 1);
     setExplanation(q.explanation || "");
     setCoefficient(q.coefficient || 1);
 

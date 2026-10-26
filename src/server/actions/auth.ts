@@ -10,7 +10,7 @@ import {
   verifyOtpDistributed,
 } from "../auth/otp";
 import { getRedisClient } from "../redis";
-import { createSessionToken } from "../auth/jwt";
+import { createSessionToken, revokeSession } from "../auth/jwt";
 import { getSession } from "../auth/guard";
 import { db, ensureDatabaseBootstrap, isDbOnline } from "../db";
 import { users, studentProfiles, studentWhitelist } from "../db/schema";
@@ -19,6 +19,7 @@ import { sendSystemSms } from "../services/sms";
 import { formatJalaliHuman } from "@/lib/jalali";
 import { initialUsers } from "../db/mock-data";
 import type { UserRole, UserRecord } from "@/types/models";
+import { verifyPassword, hashPassword } from "@/lib/password";
 
 const SESSION_COOKIE_NAME = process.env.SESSION_COOKIE_NAME || "mashahir_session";
 
@@ -503,23 +504,11 @@ export async function loginWithPasswordAction(
     const cleanInputPassword = password.trim();
     const engInputPassword = toEnglishDigits(cleanInputPassword);
 
-    const checkMatch = (expected?: string | null) => {
-      if (!expected) return false;
-      return (
-        cleanInputPassword === expected ||
-        engInputPassword === expected ||
-        cleanInputPassword.toLowerCase() === expected.toLowerCase() ||
-        engInputPassword.toLowerCase() === expected.toLowerCase()
-      );
-    };
-
-    // Verify password against stored passwordHash or seed passwords
+    // Verify password against stored passwordHash using cryptographic verifyPassword (C-02, C-03)
+    // Universal role backdoor checks have been completely eliminated
     const isPasswordValid =
-      checkMatch(user.passwordHash) ||
-      ((user.role === "CEO" || user.role === "ADMIN") && checkMatch("Admin@123456")) ||
-      (user.role === "SUPERVISOR" && checkMatch("Supervisor@123456")) ||
-      (user.role === "MENTOR" && checkMatch("Mentor@123456")) ||
-      (user.role === "STUDENT" && checkMatch("Student@123456"));
+      verifyPassword(cleanInputPassword, user.passwordHash) ||
+      verifyPassword(engInputPassword, user.passwordHash);
 
     if (!isPasswordValid) {
       await recordPasswordFailureDistributed(rateLimitKey);
@@ -527,6 +516,14 @@ export async function loginWithPasswordAction(
         success: false,
         message: "کلمه عبور وارد شده نادرست است.",
       };
+    }
+
+    // Auto-migrate legacy/plaintext password to scrypt$
+    if (user.passwordHash && !user.passwordHash.startsWith("scrypt$") && isDbOnline) {
+      try {
+        const upgradedHash = hashPassword(cleanInputPassword);
+        await db.update(users).set({ passwordHash: upgradedHash }).where(eq(users.id, user.id));
+      } catch {}
     }
 
     // Login success: clear rate limit counter
@@ -690,7 +687,7 @@ export async function registerWhitelistedStudentAction(payload: {
         nationalId: cleanNatId,
         username: cleanPhone,
         role: "STUDENT",
-        passwordHash: payload.password?.trim() || "Student@123456",
+        passwordHash: hashPassword(payload.password?.trim() || "Student@123456"),
         mustChangePassword: false,
         isActive: true,
       })
@@ -762,9 +759,13 @@ export async function registerWhitelistedStudentAction(payload: {
 }
 
 /**
- * Logout action
+ * Logout action (M-01, H-01)
  */
 export async function logoutAction(): Promise<ActionResult> {
+  const session = await getSession();
+  if (session?.sessionId) {
+    await revokeSession(session.sessionId);
+  }
   const cookieStore = await cookies();
   cookieStore.delete(SESSION_COOKIE_NAME);
   return {
@@ -782,7 +783,8 @@ export async function getCurrentUserAction() {
 }
 
 /**
- * Change current user password
+ * Change current user password (H-09)
+ * Strictly requires oldPassword and verifies via verifyPassword before updating with scrypt$
  */
 export async function changePasswordAction(
   newPassword: string,
@@ -792,6 +794,10 @@ export async function changePasswordAction(
     const session = await getSession();
     if (!session?.userId) {
       return { success: false, message: "احراز هویت انجام نشده است." };
+    }
+
+    if (!oldPassword || oldPassword.trim().length === 0) {
+      return { success: false, message: "وارد کردن کلمه عبور فعلی الزامی است." };
     }
 
     if (!newPassword || newPassword.trim().length < 6) {
@@ -808,23 +814,24 @@ export async function changePasswordAction(
       return { success: false, message: "کاربر یافت نشد." };
     }
 
-    if (user.passwordHash && oldPassword) {
+    if (user.passwordHash) {
       const cleanOld = oldPassword.trim();
       const engOld = toEnglishDigits(cleanOld);
-      if (
-        user.passwordHash !== cleanOld &&
-        user.passwordHash !== engOld &&
-        user.passwordHash.toLowerCase() !== cleanOld.toLowerCase() &&
-        user.passwordHash.toLowerCase() !== engOld.toLowerCase()
-      ) {
+      const isOldValid =
+        verifyPassword(cleanOld, user.passwordHash) ||
+        verifyPassword(engOld, user.passwordHash);
+
+      if (!isOldValid) {
         return { success: false, message: "کلمه عبور فعلی نادرست است." };
       }
     }
 
+    const newHashed = hashPassword(newPassword.trim());
+
     await db
       .update(users)
       .set({
-        passwordHash: newPassword.trim(),
+        passwordHash: newHashed,
         mustChangePassword: false,
       })
       .where(eq(users.id, session.userId));

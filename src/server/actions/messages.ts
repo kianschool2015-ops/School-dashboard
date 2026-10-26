@@ -9,9 +9,10 @@ import {
   users,
   studentProfiles,
 } from "../db/schema";
-import { eq, and, or, asc } from "drizzle-orm";
+import { eq, and, or, asc, desc, gt } from "drizzle-orm";
 import { sendSystemSms } from "../services/sms";
 import { revalidatePath } from "next/cache";
+import { isValidAttachmentUrl, sanitizeTextContent } from "@/lib/sanitize";
 import type { DirectMessageRecord, EscalationTicketRecord } from "@/types/models";
 
 const MAX_ATTACHMENT_SIZE = 10 * 1024 * 1024; // 10MB
@@ -110,6 +111,16 @@ export async function sendDirectMessageAction(payload: {
     };
   }
 
+  // Validate attachment URL scheme (H-10)
+  if (payload.attachmentUrl && !isValidAttachmentUrl(payload.attachmentUrl)) {
+    return {
+      success: false,
+      message: "فرمت آدرس فایل پیوست غیرمجاز است.",
+    };
+  }
+
+  const cleanMessage = sanitizeTextContent(payload.message);
+
   // Supervisor Chat Closure Check (Requirement 4.2):
   const canonicalThreadId = [session.userId, receiver.id].sort().join("_");
   const [threadRecord] = await db
@@ -150,7 +161,7 @@ export async function sendDirectMessageAction(payload: {
     receiverId: receiver.id,
     receiverName: receiver.fullName,
     receiverRole: receiver.role,
-    message: payload.message.trim(),
+    message: cleanMessage,
     attachmentUrl: payload.attachmentUrl,
     attachmentName: payload.attachmentName,
     attachmentSize: payload.attachmentSize,
@@ -168,7 +179,7 @@ export async function sendDirectMessageAction(payload: {
     receiverId: receiver.id,
     receiverName: receiver.fullName,
     receiverRole: receiver.role,
-    message: payload.message.trim(),
+    message: cleanMessage,
     attachmentUrl: payload.attachmentUrl || null,
     attachmentName: payload.attachmentName || null,
     attachmentSize: payload.attachmentSize || null,
@@ -176,15 +187,15 @@ export async function sendDirectMessageAction(payload: {
     isRead: false,
   });
 
-  // Send SMS notification to receiver
-  await sendSystemSms({
+  // Send SMS notification to receiver asynchronously (M-14)
+  sendSystemSms({
     event: "MESSAGE_RECEIVED",
     recipientPhone: receiver.phoneNumber,
     recipientName: receiver.fullName,
     variables: {
       sender: session.fullName,
     },
-  });
+  }).catch((err) => console.error("[SMS] Failed to send message received notification:", err));
 
   revalidatePath("/messages");
   revalidatePath("/student/messages");
@@ -287,23 +298,37 @@ export async function toggleThreadClosureAction(
 
 /**
  * Poll messages and thread status for real-time synchronization (every 3-4s)
+ * Implements H-19: Paginated to latest 50 messages with optional afterTimestamp
  */
-export async function pollDirectMessagesAction(activeContactId?: string): Promise<{
+export async function pollDirectMessagesAction(
+  activeContactId?: string,
+  limit = 50,
+  afterTimestamp?: string | Date
+): Promise<{
   messages: DirectMessageRecord[];
   isThreadClosed?: boolean;
 }> {
   const session = await requireAuth();
 
-  const msgs = (await db
+  const conditions = [
+    or(
+      eq(directMessages.senderId, session.userId),
+      eq(directMessages.receiverId, session.userId)
+    ),
+  ];
+
+  if (afterTimestamp) {
+    conditions.push(gt(directMessages.createdAt, new Date(afterTimestamp)));
+  }
+
+  const rawMsgs = await db
     .select()
     .from(directMessages)
-    .where(
-      or(
-        eq(directMessages.senderId, session.userId),
-        eq(directMessages.receiverId, session.userId)
-      )
-    )
-    .orderBy(asc(directMessages.createdAt))) as unknown as DirectMessageRecord[];
+    .where(and(...conditions))
+    .orderBy(desc(directMessages.createdAt))
+    .limit(limit);
+
+  const msgs = (rawMsgs as unknown as DirectMessageRecord[]).reverse();
 
   let isThreadClosed = false;
   if (activeContactId) {
@@ -338,6 +363,23 @@ export async function submitEscalationTicketAction(payload: {
     return { success: false, message: "ارسال تیکت ارجاع به سرپرست مختص داوطلبان است." };
   }
 
+  if (payload.attachmentUrl && !isValidAttachmentUrl(payload.attachmentUrl)) {
+    return {
+      success: false,
+      message: "فرمت آدرس فایل پیوست غیرمجاز است.",
+    };
+  }
+
+  const cleanSubject = sanitizeTextContent(payload.subject);
+  const cleanDescription = sanitizeTextContent(payload.description);
+
+  const [studentUser] = await db
+    .select({ phoneNumber: users.phoneNumber })
+    .from(users)
+    .where(eq(users.id, session.userId))
+    .limit(1);
+  const studentPhone = studentUser?.phoneNumber || "";
+
   const [studentProfile] = await db
     .select()
     .from(studentProfiles)
@@ -361,13 +403,13 @@ export async function submitEscalationTicketAction(payload: {
     id: ticketId,
     studentId: session.userId,
     studentName: session.fullName,
-    studentPhone: session.phoneNumber,
+    studentPhone,
     mentorId,
     mentorName: mentorUser ? mentorUser.fullName : "پشتیبان اختصاصی",
     supervisorId: "usr_adminsupervisor",
-    subject: payload.subject.trim(),
+    subject: cleanSubject,
     reasonCategory: payload.reasonCategory,
-    description: payload.description.trim(),
+    description: cleanDescription,
     attachmentUrl: payload.attachmentUrl,
     attachmentName: payload.attachmentName,
     status: "OPEN",
@@ -378,13 +420,13 @@ export async function submitEscalationTicketAction(payload: {
     id: ticketId,
     studentId: session.userId,
     studentName: session.fullName,
-    studentPhone: session.phoneNumber,
+    studentPhone,
     mentorId,
     mentorName: mentorUser ? mentorUser.fullName : "پشتیبان اختصاصی",
     supervisorId: "usr_adminsupervisor",
-    subject: payload.subject.trim(),
+    subject: cleanSubject,
     reasonCategory: payload.reasonCategory,
-    description: payload.description.trim(),
+    description: cleanDescription,
     attachmentUrl: payload.attachmentUrl || null,
     attachmentName: payload.attachmentName || null,
     status: "OPEN",

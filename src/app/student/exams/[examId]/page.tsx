@@ -51,12 +51,57 @@ export default async function StudentExamSessionPage({ params }: PageProps) {
         .limit(1);
       existingSub = sub;
 
+      // Auto-start exam attempt if not already recorded (H-22)
+      if (!existingSub) {
+        try {
+          const [profile] = await db
+            .select({ id: studentProfiles.id, mentorId: studentProfiles.mentorId })
+            .from(studentProfiles)
+            .where(eq(studentProfiles.userId, session.userId))
+            .limit(1);
+
+          const mentorId = profile?.mentorId || examRow.createdById;
+          const newSubId = `sub_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+          const now = new Date();
+
+          await db.insert(examSubmissions).values({
+            id: newSubId,
+            examId: examRow.id,
+            studentId: session.userId,
+            studentName: session.fullName || "داوطلب مشاهیر دانش",
+            mentorId,
+            studentProfileId: profile?.id || null,
+            examTitle: examRow.title,
+            startedAt: now,
+            submittedAt: null,
+            answers: {},
+            correctCount: 0,
+            incorrectCount: 0,
+            unansweredCount: examRow.totalQuestions,
+            totalPercentage: "0.00",
+            subjectBreakdown: [],
+            subjectScores: {},
+            status: "IN_PROGRESS",
+            scorePercent: 0,
+          });
+
+          existingSub = {
+            id: newSubId,
+            startedAt: now,
+            status: "IN_PROGRESS",
+          };
+        } catch (subErr) {
+          console.error("[StudentExamSessionPage] Failed to initialize in-progress attempt:", subErr);
+        }
+      }
+
       const questionsRows = await db
         .select()
         .from(examQuestions)
         .where(eq(examQuestions.examId, examId))
         .orderBy(asc(examQuestions.questionNumber));
 
+      // Strip correctOption and explanation to protect exam answer keys (C-04)
       questions = questionsRows.map((q) => ({
         id: q.id,
         examId: q.examId,
@@ -64,8 +109,6 @@ export default async function StudentExamSessionPage({ params }: PageProps) {
         subject: q.subject,
         questionText: q.questionText,
         options: (q.options as ExamOptionItem[]) || [],
-        correctOption: q.correctOption,
-        explanation: q.explanation,
         coefficient: q.coefficient,
       }));
     }
@@ -221,6 +264,7 @@ export default async function StudentExamSessionPage({ params }: PageProps) {
         exam={exam}
         questions={questions}
         userId={session.userId}
+        initialStartedAt={existingSub?.startedAt ? new Date(existingSub.startedAt).toISOString() : undefined}
       />
     </div>
   );

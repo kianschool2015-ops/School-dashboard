@@ -6,6 +6,7 @@ import { hierarchyTasks, users } from "../db/schema";
 import { eq } from "drizzle-orm";
 import { sendSystemSms } from "../services/sms";
 import { revalidatePath } from "next/cache";
+import { sanitizeTextContent } from "@/lib/sanitize";
 import type { TaskPriority, TaskStatus, HierarchyTaskRecord } from "@/types/models";
 
 /**
@@ -36,6 +37,9 @@ export async function assignHierarchyTaskAction(payload: {
       continue;
     }
 
+    const cleanTitle = sanitizeTextContent(payload.title);
+    const cleanDescription = sanitizeTextContent(payload.description);
+
     const taskId = `task_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
     const newTask: HierarchyTaskRecord = {
       id: taskId,
@@ -45,8 +49,8 @@ export async function assignHierarchyTaskAction(payload: {
       receiverId: receiver.id,
       receiverRole: receiver.role,
       receiverName: receiver.fullName,
-      title: payload.title.trim(),
-      description: payload.description.trim(),
+      title: cleanTitle,
+      description: cleanDescription,
       priority: payload.priority,
       status: "PENDING",
       dueDate: payload.dueDate,
@@ -62,8 +66,8 @@ export async function assignHierarchyTaskAction(payload: {
       receiverId: receiver.id,
       receiverRole: receiver.role,
       receiverName: receiver.fullName,
-      title: payload.title.trim(),
-      description: payload.description.trim(),
+      title: cleanTitle,
+      description: cleanDescription,
       priority: payload.priority,
       status: "PENDING",
       dueDate: payload.dueDate,
@@ -71,8 +75,8 @@ export async function assignHierarchyTaskAction(payload: {
 
     createdTasks.push(newTask);
 
-    // Send SMS Notification
-    await sendSystemSms({
+    // Send SMS Notification asynchronously (M-14)
+    sendSystemSms({
       event: "TASK_ASSIGNED",
       recipientPhone: receiver.phoneNumber,
       recipientName: receiver.fullName,
@@ -80,7 +84,7 @@ export async function assignHierarchyTaskAction(payload: {
         priority: payload.priority === "CRITICAL" ? "فوری" : payload.priority === "HIGH" ? "بالا" : "عادی",
         sender: session.fullName,
       },
-    });
+    }).catch((err) => console.error("[SMS] Failed to send task assigned notification:", err));
   }
 
   revalidatePath("/tasks");
@@ -97,6 +101,7 @@ export async function assignHierarchyTaskAction(payload: {
 /**
  * Mark a task as seen by recipient or supervisor/admin
  * Transitions PENDING -> SEEN_IN_PROGRESS with timestamp (Requirement 5.3)
+ * Enforces Zero-Trust Access Control (M-05 IDOR protection)
  */
 export async function markTaskSeenAction(taskId: string) {
   const session = await requireAuth();
@@ -109,6 +114,11 @@ export async function markTaskSeenAction(taskId: string) {
 
   if (!task) {
     return { success: false, message: "وظیفه مورد نظر یافت نشد." };
+  }
+
+  const isPrivileged = session.role === "CEO" || session.role === "ADMIN";
+  if (!isPrivileged && task.receiverId !== session.userId && task.senderId !== session.userId) {
+    return { success: false, message: "شما مجاز به مشاهده یا تغییر وضعیت این وظیفه نیستید." };
   }
 
   // Only transition if currently PENDING
@@ -140,6 +150,7 @@ export async function markTaskSeenAction(taskId: string) {
 
 /**
  * Update Hierarchy Task Status via Drizzle ORM
+ * Enforces IDOR check and input sanitization (M-04, M-05)
  */
 export async function updateHierarchyTaskStatusAction(payload: {
   taskId: string;
@@ -158,10 +169,13 @@ export async function updateHierarchyTaskStatusAction(payload: {
     return { success: false, message: "وظیفه مورد نظر یافت نشد." };
   }
 
-  // Check permission: receiver, sender, or CEO
-  if (task.receiverId !== session.userId && task.senderId !== session.userId && session.role !== "CEO") {
+  // Check permission: receiver, sender, or CEO/ADMIN
+  const isPrivileged = session.role === "CEO" || session.role === "ADMIN";
+  if (!isPrivileged && task.receiverId !== session.userId && task.senderId !== session.userId) {
     return { success: false, message: "شما مجاز به تغییر وضعیت این وظیفه نیستید." };
   }
+
+  const cleanNotes = payload.resolutionNotes ? sanitizeTextContent(payload.resolutionNotes) : null;
 
   const updateData: {
     status: TaskStatus;
@@ -170,7 +184,7 @@ export async function updateHierarchyTaskStatusAction(payload: {
     seenAt?: Date;
   } = {
     status: payload.status,
-    resolutionNotes: payload.resolutionNotes?.trim() || null,
+    resolutionNotes: cleanNotes,
     updatedAt: new Date(),
   };
 
@@ -213,15 +227,18 @@ export async function completeHierarchyTaskByMentorAction(payload: {
     return { success: false, message: "وظیفه مورد نظر یافت نشد." };
   }
 
-  if (task.receiverId !== session.userId && task.senderId !== session.userId && session.role !== "CEO" && session.role !== "ADMIN") {
+  const isPrivileged = session.role === "CEO" || session.role === "ADMIN";
+  if (!isPrivileged && task.receiverId !== session.userId && task.senderId !== session.userId) {
     return { success: false, message: "شما مجاز به ثبت انجام این وظیفه نیستید." };
   }
+
+  const cleanNotes = sanitizeTextContent(payload.resolutionNotes);
 
   await db
     .update(hierarchyTasks)
     .set({
       status: "COMPLETED_BY_MENTOR",
-      resolutionNotes: payload.resolutionNotes.trim(),
+      resolutionNotes: cleanNotes,
       completedAt: new Date(),
       updatedAt: new Date(),
     })
@@ -257,6 +274,7 @@ export async function reviewHierarchyTaskAction(payload: {
     return { success: false, message: "وظیفه مورد نظر یافت نشد." };
   }
 
+  const cleanReviewNotes = payload.reviewNotes ? sanitizeTextContent(payload.reviewNotes) : null;
   const finalStatus: TaskStatus = payload.decision === "APPROVED" ? "APPROVED" : "REJECTED";
 
   await db
@@ -265,7 +283,7 @@ export async function reviewHierarchyTaskAction(payload: {
       status: finalStatus,
       reviewedBy: session.userId,
       reviewedByName: session.fullName,
-      reviewNotes: payload.reviewNotes?.trim() || null,
+      reviewNotes: cleanReviewNotes,
       reviewedAt: new Date(),
       updatedAt: new Date(),
     })

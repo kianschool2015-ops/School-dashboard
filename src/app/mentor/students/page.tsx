@@ -12,9 +12,10 @@ import {
   scheduleItems,
   examSubmissions,
 } from "@/server/db/schema";
-import { eq, desc } from "drizzle-orm";
+import { eq, desc, inArray } from "drizzle-orm";
 import { MentorStudentsClient } from "./mentor-students-client";
 import { maskPhoneNumber } from "@/server/services/voip";
+import { maskNationalId } from "@/lib/sanitize";
 import type {
   StudentProfileRecord,
   UserRecord,
@@ -96,8 +97,15 @@ export default async function MentorStudentsPage() {
       rawProfiles = rows as unknown as StudentProfileRecord[];
     }
 
-    // 2. Fetch Supporting Reference Tables
-    allUsers = await db.select().from(users);
+    // 2. Fetch Supporting Reference Tables (Optimized with targeted IDs - H-21)
+    const studentUserIds = rawProfiles.map((p) => p.userId).filter(Boolean);
+    const mentorUserIds = rawProfiles.map((p) => p.mentorId).filter(Boolean) as string[];
+    const relevantUserIds = Array.from(new Set([...studentUserIds, ...mentorUserIds]));
+
+    allUsers =
+      relevantUserIds.length > 0
+        ? await db.select().from(users).where(inArray(users.id, relevantUserIds))
+        : [];
     allCalls = await db
       .select()
       .from(voipCalls)
@@ -131,6 +139,7 @@ export default async function MentorStudentsPage() {
 
   const userMap = new Map(allUsers.map((u) => [u.id, u as unknown as UserRecord]));
   const schedMap = new Map(allSchedules.map((s) => [s.studentProfileId, s.id]));
+  const isPrivileged = session.role === "CEO" || session.role === "ADMIN";
 
   // 3. Assemble Rich Candidate Roster
   const rosterItems: CandidateRosterItem[] = rawProfiles.map((profile) => {
@@ -163,7 +172,11 @@ export default async function MentorStudentsPage() {
       id: profile.id,
       userId: profile.userId,
       fullName: studentUser?.fullName || "داوطلب آزمون وکالت",
-      nationalId: studentUser?.nationalId || "---",
+      nationalId: isPrivileged
+        ? studentUser?.nationalId || "---"
+        : studentUser?.nationalId
+        ? maskNationalId(studentUser.nationalId)
+        : "---",
       maskedPhone: studentUser?.phoneNumber
         ? maskPhoneNumber(studentUser.phoneNumber)
         : "۰۹۱۲***۰۰۰۰",

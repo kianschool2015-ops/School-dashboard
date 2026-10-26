@@ -28,8 +28,9 @@ import {
 import { toPersianDigits, formatJalaliHuman } from "@/lib/jalali";
 import { getStudentExamResultAction } from "@/server/actions/exams";
 import type { ExamRecord, SubjectBreakdownItem } from "@/types/models";
+import { LongitudinalScoreChart } from "@/components/analytics/longitudinal-score-chart";
 
-interface ExamItem {
+export interface ExamItem {
   exam: ExamRecord;
   status: string;
   submission: {
@@ -47,7 +48,7 @@ interface ExamItem {
   } | null;
 }
 
-interface LongitudinalItem {
+export interface LongitudinalItem {
   submissionId: string;
   examId: string;
   examTitle: string;
@@ -61,14 +62,16 @@ interface LongitudinalItem {
   mentorNotes?: string | null;
 }
 
-interface StudentExamsClientProps {
-  initialData: {
-    success: boolean;
-    mentorName: string;
-    exams: ExamItem[];
-    longitudinalHistory: LongitudinalItem[];
-    message?: string;
-  };
+export interface StudentExamsOverviewData {
+  success: boolean;
+  mentorName: string;
+  exams: ExamItem[];
+  longitudinalHistory: LongitudinalItem[];
+  message?: string;
+}
+
+export interface StudentExamsClientProps {
+  initialData: StudentExamsOverviewData;
   initialViewResultId?: string;
   userName: string;
 }
@@ -529,15 +532,32 @@ export function StudentExamsClient({
       {/* TAB 3: LONGITUDINAL GROWTH TRAJECTORY */}
       {activeTab === "LONGITUDINAL" && (
         <div className="space-y-6">
+          {/* Visual Longitudinal SVG Area/Line Chart (M-15) */}
+          <LongitudinalScoreChart
+            data={longitudinalHistory.map((item) => ({
+              id: item.submissionId,
+              title: item.examTitle,
+              category: item.examCategory,
+              scorePercent: item.totalPercentage,
+              deltaFromPrevious: item.deltaFromPrevious,
+              deltaFromBaseline: item.deltaFromBaseline,
+              date: item.publishedAt || item.submittedAt,
+              mentorNotes: item.mentorNotes,
+            }))}
+            passingScore={50}
+            title="نمودار طولی رشد و پیشرفت تراز شبیه‌سازها"
+            subtitle="تحلیل روند آمادگی و سنجش مهارت‌های حقوقی در طول زمان نسبت به آزمون تعیین سطح بدو ورود (Baseline)"
+          />
+
           <Card className="border-border bg-card shadow-xs">
             <CardHeader className="pb-3 border-b border-border">
               <CardTitle className="text-sm font-bold text-foreground flex items-center justify-between">
                 <span className="flex items-center gap-2">
                   <TrendingUp className="h-4 w-4 text-emerald-500" />
-                  <span>پایش رشد طولی تراز داوطلب در شبیه‌سازهای وکالت</span>
+                  <span>تاریخچه مرحله‌ای آزمون‌ها و توصیه‌های راهبردی پشتیبان</span>
                 </span>
                 <span className="text-xs text-muted-foreground font-normal">
-                  مقایسه تطبیقی نسبت به آزمون تعیین سطح بدو ورود (Baseline)
+                  سوابق تفصیلی و بازخوردهای آموزشی
                 </span>
               </CardTitle>
             </CardHeader>

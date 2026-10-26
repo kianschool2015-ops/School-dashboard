@@ -27,9 +27,10 @@ interface ExamRunnerClientProps {
   exam: ExamRecord;
   questions: ExamQuestion[];
   userId: string;
+  initialStartedAt?: string;
 }
 
-export function ExamRunnerClient({ exam, questions, userId }: ExamRunnerClientProps) {
+export function ExamRunnerClient({ exam, questions, userId, initialStartedAt }: ExamRunnerClientProps) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
 
@@ -39,13 +40,16 @@ export function ExamRunnerClient({ exam, questions, userId }: ExamRunnerClientPr
   // Answers Map: { [questionId]: optionId (1 to 4) }
   const [answers, setAnswers] = useState<Record<string, number>>({});
 
-  // StartedAt timestamp (stored in sessionStorage or current time)
-  const [startedAt] = useState<string>(() => new Date().toISOString());
+  // StartedAt timestamp (derived from server timestamp or fallback)
+  const [startedAt] = useState<string>(() => initialStartedAt || new Date().toISOString());
 
-  // Countdown timer state in seconds
+  // Countdown timer state in seconds (enforced via server start time)
   const totalSeconds = (exam.durationMinutes || 120) * 60;
-  const [remainingSeconds, setRemainingSeconds] = useState(totalSeconds);
-  const [isTimeUp, setIsTimeUp] = useState(false);
+  const initialRemaining = initialStartedAt
+    ? Math.max(0, totalSeconds - Math.floor((Date.now() - new Date(initialStartedAt).getTime()) / 1000))
+    : totalSeconds;
+  const [remainingSeconds, setRemainingSeconds] = useState(initialRemaining);
+  const [isTimeUp, setIsTimeUp] = useState(() => initialRemaining <= 0);
 
   // Submission State
   const [isSubmitting, setIsSubmitting] = useState(false);

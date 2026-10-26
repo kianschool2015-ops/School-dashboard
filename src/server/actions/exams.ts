@@ -1,6 +1,6 @@
 "use server";
 
-import { requireAuth, requireRole, requireStudentOwnership } from "../auth/guard";
+import { requireAuth, requireRole, requireStudentOwnership, getSession } from "../auth/guard";
 import { db } from "../db";
 import {
   evaluationExams,
@@ -11,13 +11,16 @@ import {
   studentWhitelist,
   entitledCourses,
   users,
+  triageCases,
 } from "../db/schema";
-import { eq, and, desc, asc } from "drizzle-orm";
+import { eq, and, desc, asc, ne, isNotNull } from "drizzle-orm";
 import { sendSystemSms } from "../services/sms";
 import { isExamDeadlinePassed, parseJalaliDateTime } from "@/lib/jalali";
 import { getRedisClient } from "../redis";
 import { enqueueExamSubmission } from "../queue/exam-queue";
 import { revalidatePath } from "next/cache";
+import { evaluateStudentRisk, calculateSlaDueAt } from "../services/alert-engine";
+import { sanitizeUserForClient } from "@/lib/sanitize";
 import type {
   EvaluationExamRecord,
   ExamSubmissionRecord,
@@ -486,9 +489,11 @@ export async function publishExamAction(
 
 /**
  * Fetch Exam With All Questions
+ * Implements C-04: Strip correctOption and explanation from student queries unless published
  */
 export async function getExamWithQuestionsAction(examId: string) {
   try {
+    const session = await getSession();
     const [exam] = await db.select().from(exams).where(eq(exams.id, examId)).limit(1);
     if (!exam) return null;
 
@@ -498,12 +503,21 @@ export async function getExamWithQuestionsAction(examId: string) {
       .where(eq(examQuestions.examId, examId))
       .orderBy(asc(examQuestions.questionNumber));
 
+    const isPrivileged = !!(session?.role && ["CEO", "ADMIN", "SUPERVISOR", "MENTOR"].includes(session.role));
+
     return {
       ...exam,
-      questions: questions.map((q) => ({
-        ...q,
-        options: (q.options as ExamOptionItem[]) || [],
-      })),
+      questions: questions.map((q) => {
+        const item: ExamQuestion = {
+          ...q,
+          options: (q.options as ExamOptionItem[]) || [],
+        };
+        if (!isPrivileged) {
+          delete item.correctOption;
+          delete item.explanation;
+        }
+        return item;
+      }),
     };
   } catch {
     return null;
@@ -512,9 +526,11 @@ export async function getExamWithQuestionsAction(examId: string) {
 
 /**
  * List all Exams with creation info
+ * Implements H-04: Filter out unpublished exams and audience-mismatched exams for students
  */
 export async function listAllExamsAction() {
   try {
+    const session = await getSession();
     const rows = await db
       .select({
         exam: exams,
@@ -523,6 +539,42 @@ export async function listAllExamsAction() {
       .from(exams)
       .leftJoin(users, eq(exams.createdById, users.id))
       .orderBy(desc(exams.createdAt));
+
+    if (session?.role === "STUDENT") {
+      let studentCourseCode: string | null = null;
+      try {
+        const [prof] = await db
+          .select({ enrolledCourseCode: studentProfiles.enrolledCourseCode })
+          .from(studentProfiles)
+          .where(eq(studentProfiles.userId, session.userId))
+          .limit(1);
+        studentCourseCode = prof?.enrolledCourseCode || null;
+      } catch {}
+
+      const filtered = rows.filter((r) => {
+        if (!r.exam.isPublished) return false;
+        const aud = r.exam.targetAudience || "ALL";
+        if (aud === "ALL") return true;
+        if (aud === "COURSE_CODE") {
+          const codes = Array.isArray(r.exam.targetCourseCodes)
+            ? (r.exam.targetCourseCodes as string[])
+            : [];
+          return !!studentCourseCode && codes.includes(studentCourseCode);
+        }
+        if (aud === "SPECIFIC_STUDENTS") {
+          const sids = Array.isArray(r.exam.targetStudentIds)
+            ? (r.exam.targetStudentIds as string[])
+            : [];
+          return sids.includes(session.userId);
+        }
+        return true;
+      });
+
+      return filtered.map((r) => ({
+        ...r.exam,
+        creatorName: r.creatorName || "نامشخص",
+      }));
+    }
 
     return rows.map((r) => ({
       ...r.exam,
@@ -627,6 +679,92 @@ export async function getExamTargetOptionsAction(): Promise<{
 // ============================================================================
 
 /**
+ * Start Exam Attempt - Records IN_PROGRESS submission with server timestamp
+ * Implements H-22 Server-Side Timer Validation
+ */
+export async function startExamAttemptAction(examId: string): Promise<{
+  success: boolean;
+  submissionId?: string;
+  startedAt?: string;
+  message?: string;
+}> {
+  try {
+    const session = await requireAuth();
+    const [exam] = await db.select().from(exams).where(eq(exams.id, examId)).limit(1);
+    if (!exam) {
+      return { success: false, message: "آزمون مورد نظر یافت نشد." };
+    }
+
+    if (!exam.isPublished && session.role === "STUDENT") {
+      return { success: false, message: "این آزمون هنوز منتشر نشده است." };
+    }
+
+    // Check existing submission
+    const [existingSub] = await db
+      .select()
+      .from(examSubmissions)
+      .where(
+        and(
+          eq(examSubmissions.examId, examId),
+          eq(examSubmissions.studentId, session.userId)
+        )
+      )
+      .limit(1);
+
+    if (existingSub) {
+      return {
+        success: true,
+        submissionId: existingSub.id,
+        startedAt: existingSub.startedAt ? new Date(existingSub.startedAt).toISOString() : new Date().toISOString(),
+      };
+    }
+
+    // Resolve student profile and mentor
+    const [studentProfile] = await db
+      .select({ id: studentProfiles.id, mentorId: studentProfiles.mentorId })
+      .from(studentProfiles)
+      .where(eq(studentProfiles.userId, session.userId))
+      .limit(1);
+
+    const mentorId = studentProfile?.mentorId || exam.createdById;
+    const submissionId = `sub_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+    const now = new Date();
+
+    await db.insert(examSubmissions).values({
+      id: submissionId,
+      examId: exam.id,
+      studentId: session.userId,
+      studentName: session.fullName || "داوطلب مشاهیر دانش",
+      mentorId,
+      studentProfileId: studentProfile?.id || null,
+      examTitle: exam.title,
+      startedAt: now,
+      submittedAt: null,
+      answers: {},
+      correctCount: 0,
+      incorrectCount: 0,
+      unansweredCount: exam.totalQuestions,
+      totalPercentage: "0.00",
+      subjectBreakdown: [],
+      subjectScores: {},
+      status: "IN_PROGRESS",
+      scorePercent: 0,
+    });
+
+    return {
+      success: true,
+      submissionId,
+      startedAt: now.toISOString(),
+    };
+  } catch (error: unknown) {
+    return {
+      success: false,
+      message: error instanceof Error ? error.message : "خطا در شروع آزمون.",
+    };
+  }
+}
+
+/**
  * Submit an Exam and execute Iranian Bar Exam Grading Engine
  * Standard 1/3 negative marking penalty formula:
  * Percentage = ((Correct * 3) - Incorrect) / (TotalQuestions * 3) * 100
@@ -681,6 +819,19 @@ export async function submitExamAction(payload: {
         success: false,
         message: "پاسخنامه شما قبلاً در سامانه ثبت شده است و امکان ارسال مجدد وجود ندارد.",
       };
+    }
+
+    // Enforce server-side timer validation with 2-minute grace period (H-22)
+    const startedAtDate = existingSub?.startedAt || (payload.startedAt ? new Date(payload.startedAt) : null);
+    if (startedAtDate) {
+      const elapsedSeconds = (Date.now() - new Date(startedAtDate).getTime()) / 1000;
+      const maxAllowedSeconds = (exam.durationMinutes * 60) + 120; // 2 minutes (120 seconds) grace period
+      if (elapsedSeconds > maxAllowedSeconds) {
+        return {
+          success: false,
+          message: "مهلت قانونی آزمون به همراه ۲ دقیقه زمان فرجه شبکه به پایان رسیده است و امکان ثبت پاسخنامه وجود ندارد.",
+        };
+      }
     }
 
     // 4. Identify Assigned Mentor & Reliably Resolve Candidate Full Name
@@ -800,7 +951,7 @@ export async function submitExamAction(payload: {
     }, {});
 
     const submissionId = existingSub?.id || `sub_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
-    const startedAtDate = payload.startedAt ? new Date(payload.startedAt) : new Date(Date.now() - exam.durationMinutes * 60 * 1000);
+    const resolvedStartedAt = startedAtDate || (payload.startedAt ? new Date(payload.startedAt) : new Date(Date.now() - exam.durationMinutes * 60 * 1000));
 
     if (existingSub) {
       await db
@@ -828,7 +979,7 @@ export async function submitExamAction(payload: {
         mentorId,
         studentProfileId: studentProfile?.id || null,
         examTitle: exam.title,
-        startedAt: startedAtDate,
+        startedAt: resolvedStartedAt,
         submittedAt: new Date(),
         answers: payload.answers,
         correctCount: totalCorrect,
@@ -840,6 +991,61 @@ export async function submitExamAction(payload: {
         status: "AUTO_GRADED_PENDING_MENTOR",
         scorePercent: Math.round(finalPercentageNum),
       });
+    }
+
+    // Automated Alert Engine Evaluation on Exam Submission (E-08)
+    if (studentProfile?.id) {
+      try {
+        const prevSubs = await db
+          .select({ scorePercent: examSubmissions.scorePercent })
+          .from(examSubmissions)
+          .where(
+            and(
+              eq(examSubmissions.studentId, session.userId),
+              ne(examSubmissions.id, submissionId),
+              isNotNull(examSubmissions.submittedAt)
+            )
+          )
+          .orderBy(desc(examSubmissions.submittedAt))
+          .limit(1);
+
+        if (prevSubs.length > 0 && prevSubs[0].scorePercent !== null) {
+          const prevScore = Number(prevSubs[0].scorePercent);
+          if (prevScore - finalPercentageNum > 15) {
+            const dropAmount = Math.round(prevScore - finalPercentageNum);
+            const evalResult = evaluateStudentRisk({
+              studentProfileId: studentProfile.id,
+              mockExamScoreDropPercent: dropAmount,
+            });
+
+            await db
+              .update(studentProfiles)
+              .set({
+                riskStatus: evalResult.riskState,
+                riskReason: evalResult.riskReason,
+                updatedAt: new Date(),
+              })
+              .where(eq(studentProfiles.id, studentProfile.id));
+
+            const a06 = evalResult.activeTriggers.find((t) => t.code === "A06");
+            if (a06) {
+              const slaDueAt = calculateSlaDueAt(a06);
+              await db.insert(triageCases).values({
+                id: `trg_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+                studentProfileId: studentProfile.id,
+                mentorId,
+                triggerCode: "A06",
+                priorityTier: a06.tier,
+                description: `افت معنادار تراز آزمون آزمایشی (${dropAmount}٪) در آزمون «${exam.title}»`,
+                isResolved: false,
+                slaDueAt,
+              });
+            }
+          }
+        }
+      } catch (riskErr) {
+        console.warn("[AlertEngine] Notice on exam submit risk evaluation:", riskErr);
+      }
     }
 
     revalidatePath("/student/exams");
@@ -900,11 +1106,7 @@ export async function getSubmissionForReviewAction(submissionId: string) {
         answers: (sub.submission.answers as Record<string, number>) || {},
         subjectBreakdown: (sub.submission.subjectBreakdown as SubjectBreakdownItem[]) || [],
       },
-      student: {
-        id: sub.student.id,
-        fullName: sub.student.fullName,
-        phoneNumber: sub.student.phoneNumber,
-      },
+      student: sanitizeUserForClient(sub.student, session.role),
       exam: sub.exam,
       questions: questions.map((q) => ({
         ...q,

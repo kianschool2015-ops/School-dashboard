@@ -70,58 +70,72 @@ export const analysisStatusEnum = pgEnum("analysis_status", [
 ]);
 
 // 1. Users
-export const users = pgTable("users", {
-  id: text("id").primaryKey(),
-  username: text("username").unique(),
-  phoneNumber: varchar("phone_number", { length: 20 }).unique().notNull(),
-  fullName: text("full_name").notNull(),
-  nationalId: varchar("national_id", { length: 20 }),
-  sipExtension: varchar("sip_extension", { length: 20 }),
-  role: userRoleEnum("role").default("STUDENT").notNull(),
-  passwordHash: text("password_hash"),
-  mustChangePassword: boolean("must_change_password").default(false).notNull(),
-  garnetUserId: text("garnet_user_id"),
-  garnetUsername: text("garnet_username"),
-  canCreateExams: boolean("can_create_exams").default(false).notNull(),
-  isActive: boolean("is_active").default(true).notNull(),
-  createdAt: timestamp("created_at").defaultNow().notNull(),
-  updatedAt: timestamp("updated_at").defaultNow().notNull(),
-});
+export const users = pgTable(
+  "users",
+  {
+    id: text("id").primaryKey(),
+    username: text("username").unique(),
+    phoneNumber: varchar("phone_number", { length: 20 }).unique().notNull(),
+    fullName: text("full_name").notNull(),
+    nationalId: varchar("national_id", { length: 20 }),
+    sipExtension: varchar("sip_extension", { length: 20 }),
+    role: userRoleEnum("role").default("STUDENT").notNull(),
+    passwordHash: text("password_hash"),
+    mustChangePassword: boolean("must_change_password").default(false).notNull(),
+    garnetUserId: text("garnet_user_id"),
+    garnetUsername: text("garnet_username"),
+    canCreateExams: boolean("can_create_exams").default(false).notNull(),
+    isActive: boolean("is_active").default(true).notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    usersRoleIdx: index("users_role_idx").on(table.role),
+  })
+);
 
 // 2. Student Profiles
-export const studentProfiles = pgTable("student_profiles", {
-  id: text("id").primaryKey(),
-  userId: text("user_id").references(() => users.id).notNull(),
-  mentorId: text("mentor_id").references(() => users.id),
-  employmentStatus: employmentStatusEnum("employment_status").default("UNEMPLOYED"),
-  isStudent: boolean("is_student").default(false).notNull(),
-  maritalStatus: maritalStatusEnum("marital_status").default("SINGLE"),
-  hasChildren: boolean("has_children").default(false).notNull(),
-  childrenCount: integer("children_count").default(0).notNull(),
-  hasFamilyCareDuty: boolean("has_family_care_duty").default(false).notNull(),
-  familyCareDetail: text("family_care_detail"),
-  workdayStudyHoursCap: integer("workday_study_hours_cap").default(6).notNull(),
-  holidayStudyHoursCap: integer("holiday_study_hours_cap").default(10).notNull(),
-  bestStudyTime: text("best_study_time").default("MORNING"), // MORNING, AFTERNOON, NIGHT
-  primaryConstraint: text("primary_constraint"),
-  previousBarExamAttempts: integer("previous_bar_exam_attempts").default(0).notNull(),
-  currentDailyStudyHours: integer("current_daily_study_hours").default(4).notNull(),
-  selfBaselineAssessment: text("self_baseline_assessment"),
-  masterclassGoal: text("masterclass_goal"),
-  riskStatus: riskStatusEnum("risk_status").default("GREEN").notNull(),
-  riskReason: text("risk_reason"),
-  lastContactAt: timestamp("last_contact_at"),
-  enrolledCourseCode: text("enrolled_course_code"),
-  enrolledCourseName: text("enrolled_course_name"),
-  hasActiveSupport: boolean("has_active_support").default(true).notNull(),
-  createdAt: timestamp("created_at").defaultNow().notNull(),
-  updatedAt: timestamp("updated_at").defaultNow().notNull(),
-});
+export const studentProfiles = pgTable(
+  "student_profiles",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id").references(() => users.id, { onDelete: "cascade" }).notNull(),
+    mentorId: text("mentor_id").references(() => users.id, { onDelete: "set null" }),
+    employmentStatus: employmentStatusEnum("employment_status").default("UNEMPLOYED"),
+    isStudent: boolean("is_student").default(false).notNull(),
+    maritalStatus: maritalStatusEnum("marital_status").default("SINGLE"),
+    hasChildren: boolean("has_children").default(false).notNull(),
+    childrenCount: integer("children_count").default(0).notNull(),
+    hasFamilyCareDuty: boolean("has_family_care_duty").default(false).notNull(),
+    familyCareDetail: text("family_care_detail"),
+    workdayStudyHoursCap: integer("workday_study_hours_cap").default(6).notNull(),
+    holidayStudyHoursCap: integer("holiday_study_hours_cap").default(10).notNull(),
+    bestStudyTime: text("best_study_time").default("MORNING"), // MORNING, AFTERNOON, NIGHT
+    primaryConstraint: text("primary_constraint"),
+    previousBarExamAttempts: integer("previous_bar_exam_attempts").default(0).notNull(),
+    currentDailyStudyHours: integer("current_daily_study_hours").default(4).notNull(),
+    selfBaselineAssessment: text("self_baseline_assessment"),
+    masterclassGoal: text("masterclass_goal"),
+    riskStatus: riskStatusEnum("risk_status").default("GREEN").notNull(),
+    riskReason: text("risk_reason"),
+    lastContactAt: timestamp("last_contact_at"),
+    enrolledCourseCode: text("enrolled_course_code"),
+    enrolledCourseName: text("enrolled_course_name"),
+    hasActiveSupport: boolean("has_active_support").default(true).notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    studentProfilesUserIdIdx: uniqueIndex("student_profiles_user_id_idx").on(table.userId),
+    studentProfilesMentorIdIdx: index("student_profiles_mentor_id_idx").on(table.mentorId),
+    studentProfilesCourseCodeIdx: index("student_profiles_course_code_idx").on(table.enrolledCourseCode),
+  })
+);
 
 // 3. Study Preference Profiles
 export const studyPreferenceProfiles = pgTable("study_preference_profiles", {
   id: text("id").primaryKey(),
-  studentProfileId: text("student_profile_id").references(() => studentProfiles.id).notNull(),
+  studentProfileId: text("student_profile_id").references(() => studentProfiles.id, { onDelete: "cascade" }).notNull(),
   auditoryScore: integer("auditory_score").default(0).notNull(),
   textualScore: integer("textual_score").default(0).notNull(),
   structuralScore: integer("structural_score").default(0).notNull(),
@@ -133,7 +147,7 @@ export const studyPreferenceProfiles = pgTable("study_preference_profiles", {
 // 4. Benchmark Assessments
 export const benchmarkAssessments = pgTable("benchmark_assessments", {
   id: text("id").primaryKey(),
-  studentProfileId: text("student_profile_id").references(() => studentProfiles.id).notNull(),
+  studentProfileId: text("student_profile_id").references(() => studentProfiles.id, { onDelete: "cascade" }).notNull(),
   assessmentType: assessmentTypeEnum("assessment_type").notNull(),
   overallScorePercent: integer("overall_score_percent").notNull(),
   subjectScores: jsonb("subject_scores").notNull(), // { civilLaw: 45, commercialLaw: 50, ... }
@@ -146,7 +160,7 @@ export const studentSchedules = pgTable(
   "student_schedules",
   {
     id: text("id").primaryKey(),
-    studentProfileId: text("student_profile_id").references(() => studentProfiles.id).notNull(),
+    studentProfileId: text("student_profile_id").references(() => studentProfiles.id, { onDelete: "cascade" }).notNull(),
     jalaliYear: integer("jalali_year").notNull(),
     jalaliWeekNumber: integer("jalali_week_number").notNull(),
     weekStartDate: text("week_start_date").notNull(),
@@ -171,25 +185,31 @@ export const studentSchedules = pgTable(
 export const schedules = studentSchedules;
 
 // 6. Schedule Items
-export const scheduleItems = pgTable("schedule_items", {
-  id: text("id").primaryKey(),
-  scheduleId: text("schedule_id").references(() => studentSchedules.id).notNull(),
-  dayOfWeek: integer("day_of_week").notNull(), // 0 = Saturday (Shanbeh) to 6 = Friday (Jomeh)
-  subject: text("subject").notNull(), // حقوق مدنی، حقوق تجارت، etc.
-  activityType: activityTypeEnum("activity_type").default("STUDY").notNull(),
-  topicDescription: text("topic_description").notNull(),
-  targetVolume: text("target_volume").notNull(), // e.g. "۴۰ صفحه", "۳۰ تست"
-  targetDurationMinutes: integer("target_duration_minutes").notNull(),
-  isCatchup: boolean("is_catchup").default(false).notNull(),
-  status: itemStatusEnum("status").default("NOT_DONE").notNull(),
-});
+export const scheduleItems = pgTable(
+  "schedule_items",
+  {
+    id: text("id").primaryKey(),
+    scheduleId: text("schedule_id").references(() => studentSchedules.id, { onDelete: "cascade" }).notNull(),
+    dayOfWeek: integer("day_of_week").notNull(), // 0 = Saturday (Shanbeh) to 6 = Friday (Jomeh)
+    subject: text("subject").notNull(), // حقوق مدنی، حقوق تجارت، etc.
+    activityType: activityTypeEnum("activity_type").default("STUDY").notNull(),
+    topicDescription: text("topic_description").notNull(),
+    targetVolume: text("target_volume").notNull(), // e.g. "۴۰ صفحه", "۳۰ تست"
+    targetDurationMinutes: integer("target_duration_minutes").notNull(),
+    isCatchup: boolean("is_catchup").default(false).notNull(),
+    status: itemStatusEnum("status").default("NOT_DONE").notNull(),
+  },
+  (table) => ({
+    scheduleItemsScheduleIdIdx: index("schedule_items_schedule_id_idx").on(table.scheduleId),
+  })
+);
 
 // 7. Daily Check-ins
 export const dailyCheckins = pgTable(
   "daily_checkins",
   {
     id: text("id").primaryKey(),
-    studentProfileId: text("student_profile_id").references(() => studentProfiles.id).notNull(),
+    studentProfileId: text("student_profile_id").references(() => studentProfiles.id, { onDelete: "cascade" }).notNull(),
     checkinDate: text("checkin_date").notNull(), // "1403-07-21"
     calculatedExecutionPercent: integer("calculated_execution_percent").notNull(),
     plannedHours: integer("planned_hours").default(6),
@@ -529,6 +549,7 @@ export const exams = pgTable(
     examCategoryIdx: index("exams_category_idx").on(table.category),
     examPublishedIdx: index("exams_published_idx").on(table.isPublished),
     examAudienceIdx: index("exams_target_audience_idx").on(table.targetAudience),
+    examsCourseCodeIdx: index("exams_course_code_idx").on(table.courseCode),
   })
 );
 
@@ -557,9 +578,9 @@ export const examSubmissions = pgTable(
   "exam_submissions",
   {
     id: text("id").primaryKey(), // "sub_{nanoid}"
-    examId: text("exam_id").references(() => exams.id).notNull(),
-    studentId: text("student_id").references(() => users.id).notNull(),
-    mentorId: text("mentor_id").references(() => users.id).notNull(),
+    examId: text("exam_id").references(() => exams.id, { onDelete: "cascade" }).notNull(),
+    studentId: text("student_id").references(() => users.id, { onDelete: "cascade" }).notNull(),
+    mentorId: text("mentor_id").references(() => users.id, { onDelete: "set null" }).notNull(),
     startedAt: timestamp("started_at").defaultNow().notNull(),
     submittedAt: timestamp("submitted_at"),
     answers: jsonb("answers").default({}).notNull(), // { [questionId]: selectedOptionNumber }
@@ -590,6 +611,7 @@ export const examSubmissions = pgTable(
     examSubStudentIdx: index("exam_sub_student_idx").on(table.studentId),
     examSubMentorIdx: index("exam_sub_mentor_idx").on(table.mentorId),
     examSubStatusIdx: index("exam_sub_status_idx").on(table.status),
+    examSubmissionsStatusSubmittedIdx: index("exam_submissions_status_submitted_idx").on(table.status, table.submittedAt),
   })
 );
 

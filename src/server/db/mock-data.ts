@@ -23,6 +23,7 @@ import type {
   CoachingMissionRecord,
   StudentWhitelistRecord,
 } from "@/types/models";
+import { hashPassword } from "@/lib/password";
 
 // 1. Production Users: Exactly 4 Authentic Institutional Users
 export const initialUsers: UserRecord[] = [
@@ -32,7 +33,7 @@ export const initialUsers: UserRecord[] = [
     phoneNumber: "09120000001",
     fullName: "مدیریت عالی مشاهیر دانش",
     role: "CEO",
-    passwordHash: "Admin@123456",
+    passwordHash: hashPassword("Admin@123456"),
     isActive: true,
     createdAt: new Date("2024-01-01"),
     updatedAt: new Date("2024-01-01"),
@@ -43,7 +44,7 @@ export const initialUsers: UserRecord[] = [
     phoneNumber: "09120000002",
     fullName: "دکتر مریم رضایی (سرپرست آموزشی)",
     role: "SUPERVISOR",
-    passwordHash: "Supervisor@123456",
+    passwordHash: hashPassword("Supervisor@123456"),
     isActive: true,
     createdAt: new Date("2024-01-01"),
     updatedAt: new Date("2024-01-01"),
@@ -55,7 +56,7 @@ export const initialUsers: UserRecord[] = [
     phoneNumber: "09121000001",
     fullName: "استاد علی کاظمی (پشتیبان علمی)",
     role: "MENTOR",
-    passwordHash: "Mentor@123456",
+    passwordHash: hashPassword("Mentor@123456"),
     isActive: true,
     createdAt: new Date("2024-01-01"),
     updatedAt: new Date("2024-01-01"),
@@ -67,7 +68,7 @@ export const initialUsers: UserRecord[] = [
     nationalId: "0012345678",
     fullName: "سارا احمدی (داوطلب کانون وکلا)",
     role: "STUDENT",
-    passwordHash: "Student@123456",
+    passwordHash: hashPassword("Student@123456"),
     isActive: true,
     createdAt: new Date("2024-06-01"),
     updatedAt: new Date("2024-06-01"),

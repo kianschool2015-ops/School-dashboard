@@ -6,6 +6,7 @@ import { fridayReports, studentProfiles, users } from "../db/schema";
 import { eq, and, desc, inArray } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { isIranFriday, getStudyWeekBoundaries } from "@/lib/jalali";
+import { sanitizeTextContent, maskPhoneNumber, maskNationalId } from "@/lib/sanitize";
 
 export interface SubmitFridayReportInput {
   weekNumber: number;
@@ -114,9 +115,9 @@ export async function submitFridayReportAction(
           studyHoursProcedure: Number(input.studyHoursProcedure || 0),
           totalHours,
           testsCount: Number(input.testsCount || 0),
-          weakPoints: input.weakPoints?.trim() || null,
-          strengths: input.strengths?.trim() || null,
-          studentNotes: input.studentNotes?.trim() || null,
+          weakPoints: input.weakPoints ? sanitizeTextContent(input.weakPoints) : null,
+          strengths: input.strengths ? sanitizeTextContent(input.strengths) : null,
+          studentNotes: input.studentNotes ? sanitizeTextContent(input.studentNotes) : null,
           status: "SUBMITTED",
           updatedAt: new Date(),
         })
@@ -146,9 +147,9 @@ export async function submitFridayReportAction(
       studyHoursProcedure: Number(input.studyHoursProcedure || 0),
       totalHours,
       testsCount: Number(input.testsCount || 0),
-      weakPoints: input.weakPoints?.trim() || null,
-      strengths: input.strengths?.trim() || null,
-      studentNotes: input.studentNotes?.trim() || null,
+      weakPoints: input.weakPoints ? sanitizeTextContent(input.weakPoints) : null,
+      strengths: input.strengths ? sanitizeTextContent(input.strengths) : null,
+      studentNotes: input.studentNotes ? sanitizeTextContent(input.studentNotes) : null,
       status: "SUBMITTED",
       supervisorApproval: false,
     });
@@ -214,30 +215,55 @@ export async function getMentorFridayReportsAction(filters?: {
     return [];
   }
 
-  const reportsQuery = await db
-    .select()
+  // Optimized SQL LEFT JOIN (H-21): eliminates unbounded in-memory array scans
+  const rows = await db
+    .select({
+      report: fridayReports,
+      studentUser: {
+        fullName: users.fullName,
+        phoneNumber: users.phoneNumber,
+        nationalId: users.nationalId,
+      },
+      profile: {
+        enrolledCourseName: studentProfiles.enrolledCourseName,
+        mentorId: studentProfiles.mentorId,
+      },
+    })
     .from(fridayReports)
+    .leftJoin(users, eq(fridayReports.studentId, users.id))
+    .leftJoin(studentProfiles, eq(fridayReports.studentId, studentProfiles.userId))
     .where(inArray(fridayReports.studentId, accessibleStudentUserIds))
     .orderBy(desc(fridayReports.submittedAt));
 
-  // Get user info and mentor info
-  const allUsers = await db.select().from(users);
-  const userMap = new Map(allUsers.map((u) => [u.id, u]));
+  // Targeted query for mentor names only (zero full-table scans)
+  const mentorIds = Array.from(
+    new Set(rows.map((r) => r.profile?.mentorId).filter(Boolean))
+  ) as string[];
 
-  const allProfiles = await db.select().from(studentProfiles);
-  const profileMap = new Map(allProfiles.map((p) => [p.userId, p]));
+  const mentorUsers =
+    mentorIds.length > 0
+      ? await db
+          .select({ id: users.id, fullName: users.fullName })
+          .from(users)
+          .where(inArray(users.id, mentorIds))
+      : [];
 
-  return reportsQuery.map((r) => {
-    const studentUser = userMap.get(r.studentId);
-    const profile = profileMap.get(r.studentId);
-    const mentorUser = profile?.mentorId ? userMap.get(profile.mentorId) : null;
+  const mentorMap = new Map(mentorUsers.map((m) => [m.id, m.fullName]));
+  const isPrivileged = session.role === "CEO" || session.role === "ADMIN";
+
+  return rows.map(({ report, studentUser, profile }) => {
+    const mentorName = profile?.mentorId ? mentorMap.get(profile.mentorId) : null;
 
     return {
-      ...r,
+      ...report,
       studentName: studentUser?.fullName || "داوطلب آزمون وکالت",
-      studentPhone: studentUser?.phoneNumber || "---",
-      nationalId: studentUser?.nationalId || "---",
-      mentorName: mentorUser?.fullName || "پشتیبان آموزشی",
+      studentPhone: isPrivileged
+        ? studentUser?.phoneNumber || "---"
+        : maskPhoneNumber(studentUser?.phoneNumber),
+      nationalId: isPrivileged
+        ? studentUser?.nationalId || "---"
+        : maskNationalId(studentUser?.nationalId),
+      mentorName: mentorName || "پشتیبان آموزشی",
       courseName: profile?.enrolledCourseName || "دوره آمادگی آزمون وکالت",
     };
   });
@@ -245,22 +271,51 @@ export async function getMentorFridayReportsAction(filters?: {
 
 /**
  * Mentor submits educational feedback and guidance on a Friday report
+ * Enforces Zero-Trust Mentor Ownership (H-05) and text sanitization (M-04)
  */
 export async function submitMentorFeedbackAction(
   reportId: string,
   feedback: string
 ): Promise<FridayReportActionResult> {
   try {
-    await requireRole(["MENTOR", "SUPERVISOR", "CEO", "ADMIN"]);
+    const session = await requireRole(["MENTOR", "SUPERVISOR", "CEO", "ADMIN"]);
 
     if (!feedback || feedback.trim().length < 5) {
       return { success: false, message: "متن بازخورد باید حداقل شامل ۵ کاراکتر باشد." };
     }
 
+    const [report] = await db
+      .select()
+      .from(fridayReports)
+      .where(eq(fridayReports.id, reportId))
+      .limit(1);
+
+    if (!report) {
+      return { success: false, message: "گزارش خودارزیابی یافت نشد." };
+    }
+
+    // Mentor IDOR check (H-05): Mentor can only provide feedback to assigned students
+    if (session.role === "MENTOR") {
+      const [profile] = await db
+        .select({ mentorId: studentProfiles.mentorId })
+        .from(studentProfiles)
+        .where(eq(studentProfiles.userId, report.studentId))
+        .limit(1);
+
+      if (!profile || profile.mentorId !== session.userId) {
+        return {
+          success: false,
+          message: "شما تنها مجاز به ثبت بازخورد برای داوطلبان تحت نظارت مستقیم خود هستید.",
+        };
+      }
+    }
+
+    const cleanFeedback = sanitizeTextContent(feedback);
+
     await db
       .update(fridayReports)
       .set({
-        mentorFeedback: feedback.trim(),
+        mentorFeedback: cleanFeedback,
         mentorReviewedAt: new Date(),
         updatedAt: new Date(),
       })
@@ -287,11 +342,13 @@ export async function submitSupervisorApprovalAction(
   try {
     await requireRole(["SUPERVISOR", "CEO", "ADMIN"]);
 
+    const cleanNotes = notes ? sanitizeTextContent(notes) : null;
+
     await db
       .update(fridayReports)
       .set({
         supervisorApproval: approval,
-        supervisorNotes: notes?.trim() || null,
+        supervisorNotes: cleanNotes,
         supervisorApprovedAt: new Date(),
         updatedAt: new Date(),
       })
@@ -321,6 +378,7 @@ export interface ReviewFridayReportInput {
 
 /**
  * Review Friday report by Mentor or Supervisor (Approve or Reject with feedback)
+ * Enforces Zero-Trust Mentor Ownership (H-05) and text sanitization (M-04)
  */
 export async function reviewFridayReportAction(
   input: ReviewFridayReportInput
@@ -338,6 +396,22 @@ export async function reviewFridayReportAction(
       return { success: false, message: "گزارش خودارزیابی یافت نشد." };
     }
 
+    // Mentor IDOR check (H-05): Mentor can only review assigned students
+    if (session.role === "MENTOR") {
+      const [profile] = await db
+        .select({ mentorId: studentProfiles.mentorId })
+        .from(studentProfiles)
+        .where(eq(studentProfiles.userId, report.studentId))
+        .limit(1);
+
+      if (!profile || profile.mentorId !== session.userId) {
+        return {
+          success: false,
+          message: "شما تنها مجاز به بررسی گزارش داوطلبان تحت نظارت مستقیم خود هستید.",
+        };
+      }
+    }
+
     const isSupervisorOrAdmin = ["SUPERVISOR", "CEO", "ADMIN"].includes(session.role);
 
     const updatePayload: Record<string, unknown> = {
@@ -346,14 +420,14 @@ export async function reviewFridayReportAction(
     };
 
     if (input.feedback !== undefined) {
-      updatePayload.mentorFeedback = input.feedback.trim() || null;
+      updatePayload.mentorFeedback = sanitizeTextContent(input.feedback) || null;
       updatePayload.mentorReviewedAt = new Date();
     }
 
     if (isSupervisorOrAdmin) {
       updatePayload.supervisorApproval = input.status === "APPROVED";
       if (input.supervisorNotes !== undefined) {
-        updatePayload.supervisorNotes = input.supervisorNotes.trim() || null;
+        updatePayload.supervisorNotes = sanitizeTextContent(input.supervisorNotes) || null;
       }
       updatePayload.supervisorApprovedAt = new Date();
     }

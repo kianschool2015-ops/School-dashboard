@@ -37,6 +37,15 @@ export function sanitizeIranianPhone(phone: string): string {
   return p;
 }
 
+/**
+ * Sanitize AMI parameter against CRLF injection (H-08)
+ * Strips \r, \n, and null bytes to prevent Asterisk command injection
+ */
+export function sanitizeAmiParam(val: unknown): string {
+  if (val === null || val === undefined) return "";
+  return String(val).replace(/[\r\n\0]/g, "").trim();
+}
+
 export interface AmiResponse {
   success: boolean;
   message: string;
@@ -269,9 +278,14 @@ export class AsteriskAmiClient {
 
       this.pendingActions.set(actionId, { resolve, reject, timer });
 
-      let commandStr = `Action: ${actionName}\r\nActionID: ${actionId}\r\n`;
+      const safeAction = sanitizeAmiParam(actionName);
+      let commandStr = `Action: ${safeAction}\r\nActionID: ${actionId}\r\n`;
       for (const [k, v] of Object.entries(params)) {
-        commandStr += `${k}: ${v}\r\n`;
+        const safeK = sanitizeAmiParam(k);
+        const safeV = sanitizeAmiParam(v);
+        if (safeK) {
+          commandStr += `${safeK}: ${safeV}\r\n`;
+        }
       }
       commandStr += "\r\n";
 
