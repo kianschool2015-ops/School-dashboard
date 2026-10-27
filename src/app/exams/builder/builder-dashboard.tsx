@@ -26,7 +26,7 @@ import {
 } from "lucide-react";
 import { toPersianDigits } from "@/lib/jalali";
 import { JalaliDatePicker } from "@/components/ui/jalali-datepicker";
-import { createExamAction, publishExamAction } from "@/server/actions/exams";
+import { createExamAction, publishExamAction, deleteExamAction } from "@/server/actions/exams";
 import type { ExamRecord, ExamCategory, ExamTargetAudience } from "@/types/models";
 
 export interface TargetCourse {
@@ -171,6 +171,23 @@ export function ExamBuilderDashboard({
       }
     } catch {
       alert("خطا در تغییر وضعیت انتشار آزمون.");
+    }
+  };
+
+  const handleDeleteExam = async (examId: string, examTitle: string) => {
+    if (!confirm(`آیا از حذف کامل آزمون «${examTitle}» و تمامی سؤالات آن اطمینان دارید؟`)) {
+      return;
+    }
+    try {
+      const res = await deleteExamAction(examId);
+      if (res.success) {
+        setExamsList((prev) => prev.filter((e) => e.id !== examId));
+        setFeedback({ type: "success", text: res.message });
+      } else {
+        setFeedback({ type: "error", text: res.message });
+      }
+    } catch {
+      setFeedback({ type: "error", text: "خطا در حذف آزمون." });
     }
   };
 
@@ -739,15 +756,28 @@ export function ExamBuilderDashboard({
                       )}
                     </Button>
 
-                    <Link href={`/exams/builder/${exam.id}`}>
+                    <div className="flex items-center gap-1.5">
+                      <Link href={`/exams/builder/${exam.id}`}>
+                        <Button
+                          size="sm"
+                          className="text-xs h-8 bg-amber-600 hover:bg-amber-700 text-white flex items-center gap-1.5"
+                        >
+                          <Sliders className="h-3 w-3" />
+                          <span>طراحی و بارگذاری سؤالات</span>
+                        </Button>
+                      </Link>
+
                       <Button
+                        type="button"
+                        variant="ghost"
                         size="sm"
-                        className="text-xs h-8 bg-amber-600 hover:bg-amber-700 text-white flex items-center gap-1.5"
+                        onClick={() => handleDeleteExam(exam.id, exam.title)}
+                        className="h-8 px-2 text-rose-500 hover:bg-rose-500/10 hover:text-rose-600"
+                        title="حذف کامل آزمون"
                       >
-                        <Sliders className="h-3 w-3" />
-                        <span>طراحی و بارگذاری سؤالات</span>
+                        <Trash2 className="h-3.5 w-3.5" />
                       </Button>
-                    </Link>
+                    </div>
                   </div>
                 </CardContent>
               </Card>

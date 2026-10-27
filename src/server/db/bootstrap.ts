@@ -100,6 +100,7 @@ export async function runDatabaseBootstrap(client: postgres.Sql): Promise<void> 
       accepted_legal_terms_ip varchar(64),
       is_probationary boolean DEFAULT true NOT NULL,
       last_entitlement_check_at timestamp,
+      last_central_check_result text,
       suspension_reason text,
       created_at timestamp DEFAULT now() NOT NULL,
       updated_at timestamp DEFAULT now() NOT NULL

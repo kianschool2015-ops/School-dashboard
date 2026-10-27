@@ -623,21 +623,21 @@ export function ExamRunnerClient({
                   <button
                     type="button"
                     onClick={() => handleToggleFlag(currentQ.id)}
-                    className={`flex items-center gap-1 text-xs px-2.5 py-1 rounded-lg border transition-all ${
+                    className={`flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-lg border transition-all ${
                       flaggedQuestions.includes(currentQ.id)
-                        ? "bg-amber-500/10 border-amber-500/30 text-amber-600 dark:text-amber-400 font-bold"
+                        ? "bg-amber-500/15 border-amber-500/40 text-amber-700 dark:text-amber-300 font-bold"
                         : "border-border text-muted-foreground hover:text-foreground"
                     }`}
                   >
                     {flaggedQuestions.includes(currentQ.id) ? (
                       <>
                         <BookmarkCheck className="w-3.5 h-3.5 text-amber-500" />
-                        <span>نشان‌دار شده</span>
+                        <span>نشان‌دار شده (جهت بازبینی)</span>
                       </>
                     ) : (
                       <>
                         <Bookmark className="w-3.5 h-3.5" />
-                        <span>نشان‌دار کردن</span>
+                        <span>نشان‌دار کردن (Flag for Review)</span>
                       </>
                     )}
                   </button>
@@ -838,7 +838,11 @@ export function ExamRunnerClient({
                       onClick={() => handleNavigateQuestion(idx)}
                       className={`relative h-8 rounded-lg font-mono text-xs font-bold transition-all flex items-center justify-center ${
                         isActive
-                          ? "ring-2 ring-[#004071] bg-[#004071] text-white shadow-sm"
+                          ? isFlagged
+                            ? "ring-2 ring-amber-500 bg-[#004071] text-white shadow-sm"
+                            : "ring-2 ring-[#004071] bg-[#004071] text-white shadow-sm"
+                          : isFlagged
+                          ? "bg-amber-500/20 text-amber-800 dark:text-amber-200 border-2 border-amber-500 font-black shadow-xs"
                           : isAnswered
                           ? "bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 border border-emerald-500/40"
                           : "bg-muted/40 text-muted-foreground border border-border hover:bg-muted"
@@ -846,7 +850,7 @@ export function ExamRunnerClient({
                     >
                       {toPersianDigits(idx + 1)}
                       {isFlagged && (
-                        <span className="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-amber-500 ring-2 ring-background" />
+                        <span className="absolute -top-1 -right-1 w-2.5 h-2.5 rounded-full bg-amber-500 ring-2 ring-background" />
                       )}
                     </button>
                   );

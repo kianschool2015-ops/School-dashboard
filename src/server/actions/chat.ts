@@ -531,3 +531,104 @@ export async function deleteConversationAction(conversationId: string) {
   };
 }
 
+/**
+ * Bulk Add Members by Mentor to Channel or Group (Requirement 5)
+ */
+export async function bulkAddMembersByMentorAction(payload: {
+  conversationId: string;
+  mentorId: string;
+}) {
+  const session = await requireAuth();
+
+  const [conv] = await db
+    .select()
+    .from(chatConversations)
+    .where(eq(chatConversations.id, payload.conversationId))
+    .limit(1);
+
+  if (!conv) {
+    return { success: false, message: "گفتگو یافت نشد." };
+  }
+
+  const canManage =
+    session.role === "CEO" ||
+    session.role === "ADMIN" ||
+    session.role === "SUPERVISOR" ||
+    session.userId === payload.mentorId ||
+    conv.creatorId === session.userId;
+
+  if (!canManage) {
+    return { success: false, message: "شما مجوز افزودن اعضای این پشتیبان را ندارید." };
+  }
+
+  const assignedProfiles = await db
+    .select({ userId: studentProfiles.userId })
+    .from(studentProfiles)
+    .where(eq(studentProfiles.mentorId, payload.mentorId));
+
+  const targetUserIds = assignedProfiles.map((p) => p.userId);
+
+  if (targetUserIds.length === 0) {
+    return {
+      success: false,
+      message: "هیچ داوطلبی تحت نظارت این پشتیبان یافت نشد.",
+    };
+  }
+
+  const currentMembers = Array.isArray(conv.memberIds) ? (conv.memberIds as string[]) : [];
+  const mergedMembers = Array.from(new Set([...currentMembers, ...targetUserIds]));
+  const addedCount = mergedMembers.length - currentMembers.length;
+
+  await db
+    .update(chatConversations)
+    .set({
+      memberIds: mergedMembers,
+      updatedAt: new Date(),
+    })
+    .where(eq(chatConversations.id, payload.conversationId));
+
+  revalidatePath("/messages");
+
+  return {
+    success: true,
+    message: `${addedCount} داوطلب پشتیبان با موفقیت به این گفتگو اضافه شدند.`,
+    memberIds: mergedMembers,
+    addedCount,
+  };
+}
+
+/**
+ * Delete a chat message (Admin/Supervisor/CEO/Sender delete)
+ */
+export async function deleteChatMessageAction(messageId: string) {
+  const session = await requireAuth();
+
+  const [msg] = await db
+    .select()
+    .from(chatMessages)
+    .where(eq(chatMessages.id, messageId))
+    .limit(1);
+
+  if (!msg) {
+    return { success: false, message: "پیام یافت نشد." };
+  }
+
+  const canDelete =
+    session.role === "CEO" ||
+    session.role === "ADMIN" ||
+    session.role === "SUPERVISOR" ||
+    msg.senderId === session.userId;
+
+  if (!canDelete) {
+    return { success: false, message: "شما مجوز حذف این پیام را ندارید." };
+  }
+
+  await db.delete(chatMessages).where(eq(chatMessages.id, messageId));
+
+  revalidatePath("/messages");
+  return {
+    success: true,
+    message: "پیام با موفقیت حذف گردید.",
+  };
+}
+

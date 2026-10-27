@@ -10,6 +10,7 @@ import {
   Sparkles,
   Plus,
   Trash2,
+  Edit3,
   CheckCircle2,
   AlertCircle,
   Clock,
@@ -21,6 +22,8 @@ import {
 import {
   createWeeklyPlanTemplateAction,
   applyTailoredPlanToStudentAction,
+  editWeeklyPlanTemplateAction,
+  deleteWeeklyPlanTemplateAction,
 } from "@/server/actions/plans";
 import type { WeeklyPlanTemplateRecord, ScheduleItemRecord } from "@/types/models";
 
@@ -66,6 +69,14 @@ export function PlansClient({ currentUser, templates: initialTemplates, students
   const [activeTab, setActiveTab] = useState<"TEMPLATES" | "STUDENT_TAILOR">("STUDENT_TAILOR");
   const [feedback, setFeedback] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // Templates list state
+  const [templatesList, setTemplatesList] = useState<WeeklyPlanTemplateRecord[]>(initialTemplates);
+  const [editingTemplate, setEditingTemplate] = useState<WeeklyPlanTemplateRecord | null>(null);
+  const [editTitle, setEditTitle] = useState("");
+  const [editCohort, setEditCohort] = useState("");
+  const [editGoal, setEditGoal] = useState("");
+  const [isEditingSubmitting, setIsEditingSubmitting] = useState(false);
 
   // Template creation state (Supervisor/CEO)
   const [isCreatingTemplate, setIsCreatingTemplate] = useState(false);
@@ -142,7 +153,7 @@ export function PlansClient({ currentUser, templates: initialTemplates, students
 
   // Load from supervisor template into student's plan
   const handleLoadTemplateIntoStudent = (templateId: string) => {
-    const tpl = initialTemplates.find((t) => t.id === templateId);
+    const tpl = templatesList.find((t) => t.id === templateId);
     if (!tpl) return;
     setTailoredGoal(tpl.weeklyMainGoal);
     setTailoredItems(
@@ -234,6 +245,24 @@ export function PlansClient({ currentUser, templates: initialTemplates, students
       if (res.success) {
         setFeedback({ type: "success", text: res.message });
         setIsCreatingTemplate(false);
+        if (res.templateId) {
+          setTemplatesList((prev) => [
+            {
+              id: res.templateId!,
+              title: templateTitle,
+              authorId: currentUser.id,
+              authorName: currentUser.fullName,
+              targetCohort: templateCohort,
+              weeklyMainGoal: templateGoal,
+              jalaliYear: 1403,
+              jalaliWeekNumber: 8,
+              items: templateItems,
+              createdAt: new Date(),
+              updatedAt: new Date(),
+            },
+            ...prev,
+          ]);
+        }
       } else {
         setFeedback({ type: "error", text: res.message });
       }
@@ -241,6 +270,52 @@ export function PlansClient({ currentUser, templates: initialTemplates, students
       setFeedback({ type: "error", text: "خطا در ایجاد تمپلیت هفتگی." });
     } finally {
       setIsSubmitting(false);
+    }
+  };
+
+  const handleSaveEditTemplate = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingTemplate || !editTitle || !editGoal) return;
+    setIsEditingSubmitting(true);
+    try {
+      const res = await editWeeklyPlanTemplateAction({
+        templateId: editingTemplate.id,
+        title: editTitle,
+        targetCohort: editCohort,
+        weeklyMainGoal: editGoal,
+      });
+      if (res.success) {
+        setTemplatesList((prev) =>
+          prev.map((t) =>
+            t.id === editingTemplate.id
+              ? { ...t, title: editTitle, targetCohort: editCohort, weeklyMainGoal: editGoal }
+              : t
+          )
+        );
+        setEditingTemplate(null);
+        setFeedback({ type: "success", text: res.message });
+      } else {
+        setFeedback({ type: "error", text: res.message });
+      }
+    } catch {
+      setFeedback({ type: "error", text: "خطا در ویرایش تمپلیت هفتگی." });
+    } finally {
+      setIsEditingSubmitting(false);
+    }
+  };
+
+  const handleDeleteTemplate = async (templateId: string) => {
+    if (!confirm("آیا از حذف این تمپلیت هفتگی اطمینان دارید؟")) return;
+    try {
+      const res = await deleteWeeklyPlanTemplateAction(templateId);
+      if (res.success) {
+        setTemplatesList((prev) => prev.filter((t) => t.id !== templateId));
+        setFeedback({ type: "success", text: res.message });
+      } else {
+        setFeedback({ type: "error", text: res.message });
+      }
+    } catch {
+      setFeedback({ type: "error", text: "خطا در حذف تمپلیت هفتگی." });
     }
   };
 
@@ -347,7 +422,7 @@ export function PlansClient({ currentUser, templates: initialTemplates, students
                   </div>
 
                   {/* Load from supervisor template button */}
-                  {initialTemplates.length > 0 && (
+                  {templatesList.length > 0 && (
                     <div className="flex items-center gap-2">
                       <select
                         onChange={(e) => {
@@ -357,7 +432,7 @@ export function PlansClient({ currentUser, templates: initialTemplates, students
                         defaultValue=""
                       >
                         <option value="" disabled>بارگذاری از تمپلیت سرپرست...</option>
-                        {initialTemplates.map((t) => (
+                        {templatesList.map((t) => (
                           <option key={t.id} value={t.id}>
                             {t.title}
                           </option>
@@ -581,13 +656,114 @@ export function PlansClient({ currentUser, templates: initialTemplates, students
             </Card>
           )}
 
+          {/* Template Edit Form Modal / Inline */}
+          {editingTemplate && isSupervisorOrAbove && (
+            <Card className="border-2 border-amber-500/40 bg-amber-500/5">
+              <CardHeader>
+                <CardTitle className="text-sm font-bold text-amber-600 flex items-center justify-between">
+                  <span className="flex items-center gap-2">
+                    <Edit3 className="h-4 w-4" />
+                    ویرایش تمپلیت هفتگی: {editingTemplate.title}
+                  </span>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => setEditingTemplate(null)}
+                    className="h-7 text-xs"
+                  >
+                    انصراف
+                  </Button>
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <form onSubmit={handleSaveEditTemplate} className="space-y-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-xs font-semibold mb-1">عنوان تمپلیت</label>
+                      <input
+                        type="text"
+                        value={editTitle}
+                        onChange={(e) => setEditTitle(e.target.value)}
+                        className="w-full px-3 py-2 text-xs border border-border rounded bg-background"
+                        required
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold mb-1">دوره آموزشی هدف</label>
+                      <input
+                        type="text"
+                        value={editCohort}
+                        onChange={(e) => setEditCohort(e.target.value)}
+                        className="w-full px-3 py-2 text-xs border border-border rounded bg-background"
+                        required
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold mb-1">هدف کلان هفته</label>
+                    <input
+                      type="text"
+                      value={editGoal}
+                      onChange={(e) => setEditGoal(e.target.value)}
+                      className="w-full px-3 py-2 text-xs border border-border rounded bg-background"
+                      required
+                    />
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <Button type="submit" disabled={isEditingSubmitting}>
+                      {isEditingSubmitting ? "در حال ثبت تغییرات..." : "ذخیره تغییرات تمپلیت"}
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => setEditingTemplate(null)}
+                    >
+                      انصراف
+                    </Button>
+                  </div>
+                </form>
+              </CardContent>
+            </Card>
+          )}
+
           {/* Templates Cards Grid */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            {initialTemplates.map((t) => (
+            {templatesList.map((t) => (
               <Card key={t.id} className="border border-border">
-                <CardHeader className="p-4 bg-muted/20 border-b border-border">
-                  <CardTitle className="text-sm font-bold text-foreground">{t.title}</CardTitle>
-                  <p className="text-xs text-muted-foreground mt-1">طراح: {t.authorName} | دوره آموزشی: {t.targetCohort}</p>
+                <CardHeader className="p-4 bg-muted/20 border-b border-border flex flex-row items-start justify-between gap-2">
+                  <div>
+                    <CardTitle className="text-sm font-bold text-foreground">{t.title}</CardTitle>
+                    <p className="text-xs text-muted-foreground mt-1">طراح: {t.authorName} | دوره آموزشی: {t.targetCohort}</p>
+                  </div>
+                  {isSupervisorOrAbove && (
+                    <div className="flex items-center gap-1 shrink-0">
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-8 w-8 p-0 text-muted-foreground hover:text-foreground"
+                        title="ویرایش تمپلیت"
+                        onClick={() => {
+                          setEditingTemplate(t);
+                          setEditTitle(t.title);
+                          setEditCohort(t.targetCohort);
+                          setEditGoal(t.weeklyMainGoal);
+                        }}
+                      >
+                        <Edit3 className="h-4 w-4" />
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-8 w-8 p-0 text-rose-500 hover:text-rose-700 hover:bg-rose-50 dark:hover:bg-rose-950/30"
+                        title="حذف تمپلیت"
+                        onClick={() => handleDeleteTemplate(t.id)}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  )}
                 </CardHeader>
                 <CardContent className="p-4 space-y-2 text-xs">
                   <p className="text-muted-foreground font-medium">هدف اصلی: {t.weeklyMainGoal}</p>

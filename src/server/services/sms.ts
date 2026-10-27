@@ -208,6 +208,8 @@ export async function sendSystemSms(options: SendSmsOptions): Promise<{
   let statusMessage = "پیامک با موفقیت ثبت شد.";
 
   const isSampleApiKey =
+    process.env.NODE_ENV === "test" ||
+    Boolean(process.env.VITEST) ||
     !settings.apiKey ||
     settings.apiKey.includes("sample") ||
     settings.apiKey.includes("mock") ||

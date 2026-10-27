@@ -80,16 +80,28 @@ export async function getNavbarNotificationCounts(): Promise<NavbarNotificationC
     // - Student: reports returned for revision (REJECTED)
     let pendingReportsCount = 0;
     if (session.role === "MENTOR") {
-      const [repRes] = await db
-        .select({ count: count() })
-        .from(fridayReports)
-        .where(
-          and(
-            eq(fridayReports.status, "SUBMITTED"),
-            isNull(fridayReports.mentorFeedback)
-          )
-        );
-      pendingReportsCount = repRes ? Number(repRes.count) : 0;
+      // Scoped strictly to mentor's assigned students
+      const assignedProfiles = await db
+        .select({ userId: studentProfiles.userId })
+        .from(studentProfiles)
+        .where(eq(studentProfiles.mentorId, session.userId));
+      const studentUserIds = assignedProfiles.map((p) => p.userId);
+
+      if (studentUserIds.length > 0) {
+        const [repRes] = await db
+          .select({ count: count() })
+          .from(fridayReports)
+          .where(
+            and(
+              inArray(fridayReports.studentId, studentUserIds),
+              eq(fridayReports.status, "SUBMITTED"),
+              isNull(fridayReports.mentorFeedback)
+            )
+          );
+        pendingReportsCount = repRes ? Number(repRes.count) : 0;
+      } else {
+        pendingReportsCount = 0;
+      }
     } else if (session.role === "SUPERVISOR" || session.role === "CEO" || session.role === "ADMIN") {
       const [repRes] = await db
         .select({ count: count() })
@@ -157,6 +169,7 @@ export async function getNavbarNotificationCounts(): Promise<NavbarNotificationC
             inArray(examSubmissions.status, [
               "AUTO_GRADED_PENDING_MENTOR",
               "PENDING_MENTOR_REVIEW",
+              "SUBMITTED",
             ])
           )
         );
@@ -169,6 +182,7 @@ export async function getNavbarNotificationCounts(): Promise<NavbarNotificationC
           inArray(examSubmissions.status, [
             "AUTO_GRADED_PENDING_MENTOR",
             "PENDING_MENTOR_REVIEW",
+            "SUBMITTED",
           ])
         );
       pendingExamsCount = examRes ? Number(examRes.count) : 0;

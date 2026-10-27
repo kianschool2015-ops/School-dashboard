@@ -2,8 +2,36 @@
 
 import { requireRole } from "../auth/guard";
 import { db, ensureDatabaseBootstrap } from "../db";
-import { users, studentProfiles, studentWhitelist, mentorCallingWindows } from "../db/schema";
-import { eq, desc, and, or, ilike, sql } from "drizzle-orm";
+import {
+  users,
+  studentProfiles,
+  studentWhitelist,
+  mentorCallingWindows,
+  studentSchedules,
+  scheduleItems,
+  dailyCheckins,
+  studyPreferenceProfiles,
+  benchmarkAssessments,
+  weeklyReviews,
+  mockExams,
+  studentMissionLogs,
+  mentorTriageCases,
+  voipCalls,
+  fridayReports,
+  directMessages,
+  chatMessages,
+  chatConversations,
+  escalationTickets,
+  hierarchyTasks,
+  videoSessions,
+  weeklyPlanTemplates,
+  evaluationExams,
+  exams,
+  examQuestions,
+  examSubmissions,
+  auditLogs,
+} from "../db/schema";
+import { eq, desc, and, or, inArray, ilike, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { hashPassword } from "@/lib/password";
 import { sanitizeTextContent } from "@/lib/sanitize";
@@ -342,11 +370,127 @@ export async function deleteUserAction(
       return { success: false, message: "کاربر مورد نظر یافت نشد." };
     }
 
-    // Delete cascading dependencies explicitly if needed
-    await db.delete(studentProfiles).where(eq(studentProfiles.userId, userId));
-    await db.delete(studentWhitelist).where(eq(studentWhitelist.phoneNumber, targetUser.phoneNumber));
-    await db.delete(mentorCallingWindows).where(eq(mentorCallingWindows.mentorId, userId));
-    await db.delete(users).where(eq(users.id, userId));
+    // Execute transactional cascading deletion of all user dependencies
+    await db.transaction(async (tx) => {
+      // 1. Find student profiles for this user
+      const profiles = await tx
+        .select({ id: studentProfiles.id })
+        .from(studentProfiles)
+        .where(eq(studentProfiles.userId, userId));
+      const profileIds = profiles.map((p) => p.id);
+
+      if (profileIds.length > 0) {
+        // Find schedules
+        const scheds = await tx
+          .select({ id: studentSchedules.id })
+          .from(studentSchedules)
+          .where(inArray(studentSchedules.studentProfileId, profileIds));
+        const schedIds = scheds.map((s) => s.id);
+
+        if (schedIds.length > 0) {
+          await tx.delete(scheduleItems).where(inArray(scheduleItems.scheduleId, schedIds));
+          await tx.delete(weeklyReviews).where(inArray(weeklyReviews.scheduleId, schedIds));
+        }
+
+        await tx.delete(weeklyReviews).where(inArray(weeklyReviews.studentProfileId, profileIds));
+        await tx.delete(studentSchedules).where(inArray(studentSchedules.studentProfileId, profileIds));
+        await tx.delete(dailyCheckins).where(inArray(dailyCheckins.studentProfileId, profileIds));
+        await tx.delete(studyPreferenceProfiles).where(inArray(studyPreferenceProfiles.studentProfileId, profileIds));
+        await tx.delete(benchmarkAssessments).where(inArray(benchmarkAssessments.studentProfileId, profileIds));
+        await tx.delete(mockExams).where(inArray(mockExams.studentProfileId, profileIds));
+        await tx.delete(studentMissionLogs).where(inArray(studentMissionLogs.studentProfileId, profileIds));
+        await tx.delete(mentorTriageCases).where(inArray(mentorTriageCases.studentProfileId, profileIds));
+        await tx.delete(voipCalls).where(inArray(voipCalls.studentProfileId, profileIds));
+        await tx.delete(fridayReports).where(inArray(fridayReports.studentProfileId, profileIds));
+      }
+
+      // 2. Clean up triage cases, voip calls, friday reports referencing userId
+      await tx.delete(mentorTriageCases).where(eq(mentorTriageCases.mentorId, userId));
+      await tx.delete(voipCalls).where(eq(voipCalls.mentorId, userId));
+      await tx.delete(fridayReports).where(eq(fridayReports.studentId, userId));
+
+      // 3. Escalation tickets, hierarchy tasks, video sessions
+      await tx.delete(escalationTickets).where(
+        or(
+          eq(escalationTickets.studentId, userId),
+          eq(escalationTickets.mentorId, userId),
+          eq(escalationTickets.supervisorId, userId)
+        )
+      );
+
+      await tx.delete(hierarchyTasks).where(
+        or(
+          eq(hierarchyTasks.senderId, userId),
+          eq(hierarchyTasks.receiverId, userId),
+          eq(hierarchyTasks.reviewedBy, userId)
+        )
+      );
+
+      await tx.delete(videoSessions).where(eq(videoSessions.hostId, userId));
+
+      // 4. Weekly plan templates & evaluation exams
+      await tx.delete(weeklyPlanTemplates).where(eq(weeklyPlanTemplates.authorId, userId));
+      await tx.delete(evaluationExams).where(eq(evaluationExams.creatorId, userId));
+
+      // 5. CBT Exams & Submissions
+      await tx.delete(examSubmissions).where(
+        or(
+          eq(examSubmissions.studentId, userId),
+          eq(examSubmissions.mentorId, userId),
+          eq(examSubmissions.reviewedById, userId)
+        )
+      );
+
+      const authoredExams = await tx
+        .select({ id: exams.id })
+        .from(exams)
+        .where(eq(exams.createdById, userId));
+      const authoredExamIds = authoredExams.map((e) => e.id);
+      if (authoredExamIds.length > 0) {
+        await tx.delete(examQuestions).where(inArray(examQuestions.examId, authoredExamIds));
+        await tx.delete(examSubmissions).where(inArray(examSubmissions.examId, authoredExamIds));
+        await tx.delete(exams).where(inArray(exams.id, authoredExamIds));
+      }
+      await tx.update(exams).set({ targetMentorId: null }).where(eq(exams.targetMentorId, userId));
+
+      // 6. Direct messages & Chat
+      await tx.delete(directMessages).where(
+        or(
+          eq(directMessages.senderId, userId),
+          eq(directMessages.receiverId, userId)
+        )
+      );
+
+      await tx.delete(chatMessages).where(eq(chatMessages.senderId, userId));
+
+      const ownedConvs = await tx
+        .select({ id: chatConversations.id })
+        .from(chatConversations)
+        .where(eq(chatConversations.creatorId, userId));
+      const convIds = ownedConvs.map((c) => c.id);
+      if (convIds.length > 0) {
+        await tx.delete(chatMessages).where(inArray(chatMessages.conversationId, convIds));
+        await tx.delete(chatConversations).where(inArray(chatConversations.id, convIds));
+      }
+
+      // 7. Audit logs & Calling windows & Whitelist
+      await tx.delete(auditLogs).where(eq(auditLogs.actorId, userId));
+      await tx.delete(mentorCallingWindows).where(eq(mentorCallingWindows.mentorId, userId));
+      await tx.delete(studentWhitelist).where(
+        or(
+          eq(studentWhitelist.phoneNumber, targetUser.phoneNumber),
+          eq(studentWhitelist.assignedMentorId, userId)
+        )
+      );
+
+      // 8. Nullify mentor_id and supervisor_id references in student_profiles and users
+      await tx.update(studentProfiles).set({ mentorId: null }).where(eq(studentProfiles.mentorId, userId));
+      await tx.update(users).set({ supervisorId: null }).where(eq(users.supervisorId, userId));
+
+      // 9. Delete student profile and finally the user row
+      await tx.delete(studentProfiles).where(eq(studentProfiles.userId, userId));
+      await tx.delete(users).where(eq(users.id, userId));
+    });
 
     revalidatePath("/executive/users");
     revalidatePath("/executive");

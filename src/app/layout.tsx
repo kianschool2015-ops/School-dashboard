@@ -35,7 +35,7 @@ export default async function RootLayout({
   const session = await getSession();
   const notificationCounts = session
     ? await getNavbarNotificationCounts()
-    : { unreadMessagesCount: 0, pendingTasksCount: 0, pendingReportsCount: 0, unassignedStudentsCount: 0, openTriageCasesCount: 0 };
+    : { unreadMessagesCount: 0, pendingTasksCount: 0, pendingReportsCount: 0, unassignedStudentsCount: 0, openTriageCasesCount: 0, pendingExamsCount: 0 };
 
   return (
     <html lang="fa" dir="rtl" className={vazirmatn.variable} data-theme="light" suppressHydrationWarning>
@@ -69,6 +69,7 @@ export default async function RootLayout({
           pendingReportsCount={notificationCounts.pendingReportsCount}
           unassignedStudentsCount={notificationCounts.unassignedStudentsCount}
           openTriageCasesCount={notificationCounts.openTriageCasesCount}
+          pendingExamsCount={notificationCounts.pendingExamsCount}
         >
           {children}
         </AppShell>

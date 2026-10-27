@@ -44,7 +44,7 @@ export const DEFAULT_SSO_API_SETTINGS: SsoApiSettingsRecord = {
   productsEndpoint: "/invoices/productListByUser",
   codeCount: 5,
   apiKeyHeader: "g-api-key",
-  apiKeyValue: "AEbk35zB9YfSqw8u9mjH7ykNK4xq2Yq5",
+  apiKeyValue: process.env.GARNET_API_KEY || "AEbk35zB9YfSqw8u9mjH7ykNK4xq2Yq5",
   mobileFieldName: "mobile",
   passwordFieldName: "password",
   successStatusCode: 2000,

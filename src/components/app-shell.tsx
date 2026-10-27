@@ -4,6 +4,7 @@ import React from "react";
 import { usePathname } from "next/navigation";
 import { AppSidebar } from "./sidebar";
 import { TopUtilityBar } from "./top-utility-bar";
+import { ForensicWatermark } from "@/components/security/forensic-watermark";
 import type { UserRole } from "@/types/models";
 
 interface AppShellProps {
@@ -16,6 +17,7 @@ interface AppShellProps {
   pendingReportsCount?: number;
   unassignedStudentsCount?: number;
   openTriageCasesCount?: number;
+  pendingExamsCount?: number;
 }
 
 export function AppShell({
@@ -28,6 +30,7 @@ export function AppShell({
   pendingReportsCount = 0,
   unassignedStudentsCount = 0,
   openTriageCasesCount = 0,
+  pendingExamsCount = 0,
 }: AppShellProps) {
   const pathname = usePathname();
 
@@ -54,6 +57,7 @@ export function AppShell({
         pendingReportsCount={pendingReportsCount}
         unassignedStudentsCount={unassignedStudentsCount}
         openTriageCasesCount={openTriageCasesCount}
+        pendingExamsCount={pendingExamsCount}
       />
 
       {/* Main Content Area Placed to its Left */}
@@ -68,7 +72,16 @@ export function AppShell({
 
         {/* Main Page Content Body */}
         <main className="flex-1 p-4 md:p-6 lg:p-8 max-w-7xl mx-auto w-full">
-          {children}
+          {userName ? (
+            <ForensicWatermark
+              userFullName={userName}
+              phoneNumber={phoneNumber || "۰۹•••••••••"}
+            >
+              {children}
+            </ForensicWatermark>
+          ) : (
+            children
+          )}
         </main>
 
         {/* Footer */}

@@ -45,6 +45,7 @@ import {
   toggleThreadClosureAction,
   pollDirectMessagesAction,
   markDirectMessagesAsReadAction,
+  deleteDirectMessageAction,
 } from "@/server/actions/messages";
 import {
   createConversationAction,
@@ -53,8 +54,10 @@ import {
   removeMemberFromConversationAction,
   toggleConversationGhostModeAction,
   bulkAddMembersByCourseAction,
+  bulkAddMembersByMentorAction,
   editConversationAction,
   deleteConversationAction,
+  deleteChatMessageAction,
 } from "@/server/actions/chat";
 import type {
   DirectMessageRecord,
@@ -257,6 +260,9 @@ export function MessagesClient({
   const [selectedBulkCourse, setSelectedBulkCourse] = useState("ALL");
   const [isBulkAdding, setIsBulkAdding] = useState(false);
   const [bulkFeedback, setBulkFeedback] = useState<string | null>(null);
+  const [selectedBulkMentor, setSelectedBulkMentor] = useState("");
+  const [isBulkAddingMentor, setIsBulkAddingMentor] = useState(false);
+  const [bulkMentorFeedback, setBulkMentorFeedback] = useState<string | null>(null);
   const [memberActionLoading, setMemberActionLoading] = useState(false);
   const [memberFeedback, setMemberFeedback] = useState<string | null>(null);
 
@@ -411,6 +417,60 @@ export function MessagesClient({
       setBulkFeedback("خطا در برقراری ارتباط با پایگاه داده.");
     } finally {
       setIsBulkAdding(false);
+    }
+  };
+
+  const handleBulkAddMentor = async () => {
+    if (!selectedConversation || !selectedBulkMentor) return;
+    setIsBulkAddingMentor(true);
+    setBulkMentorFeedback(null);
+    try {
+      const res = await bulkAddMembersByMentorAction({
+        conversationId: selectedConversation.id,
+        mentorId: selectedBulkMentor,
+      });
+      if (res.success && res.memberIds) {
+        setBulkMentorFeedback(res.message);
+        const updated = { ...selectedConversation, memberIds: res.memberIds };
+        setSelectedConversation(updated);
+        setConversations((prev) =>
+          prev.map((c) => (c.id === updated.id ? updated : c))
+        );
+      } else {
+        setBulkMentorFeedback(res.message || "خطا در افزودن دسته‌جمعی داوطلبان.");
+      }
+    } catch {
+      setBulkMentorFeedback("خطا در برقراری ارتباط با پایگاه داده.");
+    } finally {
+      setIsBulkAddingMentor(false);
+    }
+  };
+
+  const handleDeleteDirectMessage = async (msgId: string) => {
+    if (!confirm("آیا از حذف این پیام اطمینان دارید؟")) return;
+    try {
+      const res = await deleteDirectMessageAction(msgId);
+      if (res.success) {
+        setDirectMessages((prev) => prev.filter((m) => m.id !== msgId));
+      } else {
+        alert(res.message || "خطا در حذف پیام.");
+      }
+    } catch {
+      alert("خطا در برقراری ارتباط با سرور.");
+    }
+  };
+
+  const handleDeleteChatMessage = async (msgId: string) => {
+    if (!confirm("آیا از حذف این پیام اطمینان دارید؟")) return;
+    try {
+      const res = await deleteChatMessageAction(msgId);
+      if (res.success) {
+        setChatMessages((prev) => prev.filter((m) => m.id !== msgId));
+      } else {
+        alert(res.message || "خطا در حذف پیام.");
+      }
+    } catch {
+      alert("خطا در برقراری ارتباط با سرور.");
     }
   };
 
@@ -917,7 +977,9 @@ export function MessagesClient({
                 {allDirectMessages.map((m) => (
                   <div key={m.id} className="p-3 bg-muted/30 rounded-lg text-xs space-y-1 border border-border/50">
                     <div className="flex items-center justify-between text-[11px]">
-                      <span className="font-bold text-foreground">{m.senderName} ➔ {m.receiverId}</span>
+                      <span className="font-bold text-foreground">
+                        {m.senderName} ➔ {allUsersList.find((u) => u.id === m.receiverId)?.fullName || m.receiverId}
+                      </span>
                       <span className="text-muted-foreground font-mono">
                         {new Date(m.createdAt).toLocaleTimeString("fa-IR")}
                       </span>
@@ -1293,9 +1355,24 @@ export function MessagesClient({
                             >
                               <div className="flex items-center justify-between gap-4 text-[10px] opacity-80 border-b border-white/20 pb-1">
                                 <span className="font-bold">{msg.senderName}</span>
-                                <span className="font-mono">
-                                  {new Date(msg.createdAt).toLocaleTimeString("fa-IR", { hour: "2-digit", minute: "2-digit" })}
-                                </span>
+                                <div className="flex items-center gap-1.5">
+                                  <span className="font-mono">
+                                    {new Date(msg.createdAt).toLocaleTimeString("fa-IR", { hour: "2-digit", minute: "2-digit" })}
+                                  </span>
+                                  {(currentUser.role === "CEO" ||
+                                    currentUser.role === "ADMIN" ||
+                                    currentUser.role === "SUPERVISOR" ||
+                                    msg.senderId === currentUser.id) && (
+                                    <button
+                                      type="button"
+                                      onClick={() => handleDeleteDirectMessage(msg.id)}
+                                      className="opacity-70 hover:opacity-100 hover:text-rose-300 transition-opacity p-0.5"
+                                      title="حذف پیام"
+                                    >
+                                      <Trash2 className="h-3 w-3" />
+                                    </button>
+                                  )}
+                                </div>
                               </div>
 
                               <p className="leading-relaxed whitespace-pre-wrap">{msg.message}</p>
@@ -1481,9 +1558,24 @@ export function MessagesClient({
                           >
                             <div className="flex items-center justify-between gap-4 text-[10px] opacity-80 border-b border-white/20 pb-1">
                               <span className="font-bold">{msg.senderName} ({msg.senderRole})</span>
-                              <span className="font-mono">
-                                {new Date(msg.createdAt).toLocaleTimeString("fa-IR", { hour: "2-digit", minute: "2-digit" })}
-                              </span>
+                              <div className="flex items-center gap-1.5">
+                                <span className="font-mono">
+                                  {new Date(msg.createdAt).toLocaleTimeString("fa-IR", { hour: "2-digit", minute: "2-digit" })}
+                                </span>
+                                {(currentUser.role === "CEO" ||
+                                  currentUser.role === "ADMIN" ||
+                                  currentUser.role === "SUPERVISOR" ||
+                                  msg.senderId === currentUser.id) && (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleDeleteChatMessage(msg.id)}
+                                    className="opacity-70 hover:opacity-100 hover:text-rose-300 transition-opacity p-0.5"
+                                    title="حذف پیام"
+                                  >
+                                    <Trash2 className="h-3 w-3" />
+                                  </button>
+                                )}
+                              </div>
                             </div>
 
                             <p className="leading-relaxed whitespace-pre-wrap">{msg.message}</p>
@@ -1872,6 +1964,59 @@ export function MessagesClient({
                     >
                       <Users className="h-3.5 w-3.5" />
                       <span>{isBulkAdding ? "در حال ثبت..." : "افزودن دسته‌جمعی"}</span>
+                    </Button>
+                  </div>
+                </div>
+              )}
+
+              {/* Bulk Add by Mentor's Students (Item 5) */}
+              {(currentUser.role === "CEO" ||
+                currentUser.role === "ADMIN" ||
+                currentUser.role === "SUPERVISOR" ||
+                currentUser.role === "MENTOR") && (
+                <div className="space-y-2 bg-indigo-50/50 dark:bg-indigo-950/20 p-3 rounded-xl border border-indigo-200/50 dark:border-indigo-800/30">
+                  <div className="flex items-center gap-1.5 font-bold text-foreground">
+                    <UserPlus className="h-4 w-4 text-indigo-600 dark:text-indigo-400" />
+                    <span>افزودن دسته‌جمعی داوطلبان پشتیبان</span>
+                  </div>
+                  <p className="text-[11px] text-muted-foreground">
+                    افزودن کلیه داوطلبان تحت نظارت یک پشتیبان به این گفتگو با یک کلیک:
+                  </p>
+                  {bulkMentorFeedback && (
+                    <div className="p-2 bg-indigo-100/50 dark:bg-indigo-900/30 border border-indigo-300 dark:border-indigo-700 rounded-lg text-indigo-700 dark:text-indigo-300 text-xs flex items-center gap-2">
+                      <CheckCircle2 className="h-4 w-4 shrink-0" />
+                      <span>{bulkMentorFeedback}</span>
+                    </div>
+                  )}
+                  <div className="flex gap-2">
+                    <select
+                      value={selectedBulkMentor}
+                      onChange={(e) => setSelectedBulkMentor(e.target.value)}
+                      className="flex-1 text-xs border border-border rounded-lg px-3 py-2 bg-background focus:outline-none focus:border-primary"
+                    >
+                      <option value="">-- انتخاب پشتیبان آموزشی --</option>
+                      {allUsersList
+                        .filter(
+                          (u) =>
+                            u.role === "MENTOR" &&
+                            (currentUser.role !== "MENTOR" || u.id === currentUser.id)
+                        )
+                        .map((m) => (
+                          <option key={m.id} value={m.id}>
+                            {m.fullName}
+                          </option>
+                        ))}
+                    </select>
+                    <Button
+                      size="sm"
+                      onClick={handleBulkAddMentor}
+                      disabled={isBulkAddingMentor || !selectedBulkMentor}
+                      className="bg-indigo-600 hover:bg-indigo-700 text-white gap-1.5 shrink-0 text-xs"
+                    >
+                      <Users className="h-3.5 w-3.5" />
+                      <span>
+                        {isBulkAddingMentor ? "در حال ثبت..." : "افزودن دسته‌جمعی داوطلبان پشتیبان"}
+                      </span>
                     </Button>
                   </div>
                 </div>

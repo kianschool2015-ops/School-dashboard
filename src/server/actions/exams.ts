@@ -23,7 +23,7 @@ import { getRedisClient } from "../redis";
 import { enqueueExamSubmission } from "../queue/exam-queue";
 import { revalidatePath } from "next/cache";
 import { evaluateStudentRisk, calculateSlaDueAt } from "../services/alert-engine";
-import { sanitizeUserForClient, maskPhoneNumber } from "@/lib/sanitize";
+import { sanitizeUserForClient, maskPhoneNumber, maskNationalId } from "@/lib/sanitize";
 import type {
   EvaluationExamRecord,
   ExamSubmissionRecord,
@@ -605,6 +605,11 @@ export async function getExamWithQuestionsAction(examId: string) {
     const [exam] = await db.select().from(exams).where(eq(exams.id, examId)).limit(1);
     if (!exam) return null;
 
+    // Student guard: prevent taking unpublished exams
+    if (session.role === "STUDENT" && !exam.isPublished) {
+      return null;
+    }
+
     const questions = await db
       .select()
       .from(examQuestions)
@@ -765,13 +770,14 @@ export async function getExamTargetOptionsAction(): Promise<{
           })
         : studentUsers;
 
+    const shouldMask = session.role === "MENTOR" || session.role === "SUPERVISOR";
     const students = filteredStudentUsers.map((u) => {
       const prof = profileMap.get(u.id);
       return {
         id: u.id,
         fullName: u.fullName || u.username || "داوطلب مشاهیر",
-        phoneNumber: u.phoneNumber || "---",
-        nationalId: u.nationalId || "---",
+        phoneNumber: shouldMask ? maskPhoneNumber(u.phoneNumber) : (u.phoneNumber || "---"),
+        nationalId: shouldMask ? maskNationalId(u.nationalId) : (u.nationalId || "---"),
         enrolledCourseName: prof?.enrolledCourseName || null,
         enrolledCourseCode: prof?.enrolledCourseCode || null,
       };

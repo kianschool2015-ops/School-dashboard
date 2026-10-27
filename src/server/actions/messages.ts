@@ -501,3 +501,39 @@ export async function markDirectMessagesAsReadAction(contactId?: string): Promis
   }
 }
 
+/**
+ * Delete Direct Message (Admin, CEO, Supervisor, or sender)
+ */
+export async function deleteDirectMessageAction(messageId: string) {
+  const session = await requireAuth();
+
+  const [msg] = await db
+    .select()
+    .from(directMessages)
+    .where(eq(directMessages.id, messageId))
+    .limit(1);
+
+  if (!msg) {
+    return { success: false, message: "پیام یافت نشد." };
+  }
+
+  const canDelete =
+    session.role === "CEO" ||
+    session.role === "ADMIN" ||
+    session.role === "SUPERVISOR" ||
+    msg.senderId === session.userId;
+
+  if (!canDelete) {
+    return { success: false, message: "شما مجوز حذف این پیام را ندارید." };
+  }
+
+  await db.delete(directMessages).where(eq(directMessages.id, messageId));
+
+  revalidatePath("/messages");
+  revalidatePath("/student/messages");
+  return {
+    success: true,
+    message: "پیام با موفقیت حذف گردید.",
+  };
+}
+

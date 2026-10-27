@@ -211,13 +211,30 @@ export default async function MessagesPage() {
 
   // Supervisory & Omniscient data for Manager & Supervisor (Requirement 8)
   const allConversations = isSupervisorOrManager ? (rawConversations as unknown as ChatConversationRecord[]) : [];
-  const allDirectMessages = isSupervisorOrManager
+  const rawDirectMessages = isSupervisorOrManager
     ? ((await db
         .select()
         .from(directMessages)
         .orderBy(desc(directMessages.createdAt))
         .limit(100)) as unknown as DirectMessageRecord[])
     : [];
+
+  const userRoleMap = new Map(allUsers.map((u) => [u.id, u.role]));
+
+  // Supervisors can audit messages, but cannot view private DMs involving CEO or ADMIN
+  const allDirectMessages = session.role === "SUPERVISOR"
+    ? rawDirectMessages.filter((dm) => {
+        const senderRole = userRoleMap.get(dm.senderId);
+        const receiverRole = userRoleMap.get(dm.receiverId);
+        return (
+          senderRole !== "CEO" &&
+          senderRole !== "ADMIN" &&
+          receiverRole !== "CEO" &&
+          receiverRole !== "ADMIN"
+        );
+      })
+    : rawDirectMessages;
+
   const allUsersList = allUsers.map((u) => ({ id: u.id, fullName: u.fullName, role: u.role }));
 
   return (

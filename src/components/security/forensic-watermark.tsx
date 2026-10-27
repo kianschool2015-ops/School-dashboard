@@ -83,11 +83,11 @@ export function ForensicWatermark({
 
           // Dual-channel micro-offset technique:
           // Pass 1: Subtle blue channel shift (opacity 0.012)
-          ctx.fillStyle = "rgba(0, 40, 255, 0.014)";
+          ctx.fillStyle = "rgba(0, 40, 255, 0.012)";
           ctx.fillText(stampText, x + offsetX, y);
 
-          // Pass 2: Complementary amber/red offset by 1px (opacity 0.010)
-          ctx.fillStyle = "rgba(255, 140, 0, 0.011)";
+          // Pass 2: Complementary amber/red offset by 1px (opacity 0.012)
+          ctx.fillStyle = "rgba(255, 140, 0, 0.012)";
           ctx.fillText(stampText, x + offsetX + 1, y + 1);
         }
       }
@@ -198,7 +198,6 @@ export function ForensicWatermark({
           ref={canvasRef}
           aria-hidden="true"
           className="fixed inset-0 pointer-events-none select-none z-[9999] opacity-100"
-          style={{ mixBlendMode: "multiply" }}
         />
 
         {/* Non-intrusive DRM toast warning */}
