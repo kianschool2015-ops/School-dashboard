@@ -638,7 +638,7 @@ export async function checkMentorCallingWindowAvailability(mentorId: string): Pr
         isOpen: false,
         window: null,
         message: "پشتیبان شما هنوز پنجره زمانی پاسخگویی تلفنی تعیین نکرده است.",
-        scheduleDescription: "ساعات پیش‌فرض پاسخگویی: روزهای شنبه تا چهارشنبه ساعت ۱۷:۰۰ الی ۲۰:۰۰",
+        scheduleDescription: "شنبه تا چهارشنبه — ساعت ۱۷:۰۰ الی ۲۰:۰۰",
       };
     }
 
@@ -681,7 +681,7 @@ export async function checkMentorCallingWindowAvailability(mentorId: string): Pr
       .filter(Boolean)
       .join("، ");
 
-    const scheduleDescription = `روزهای ${dayNames} از ساعت ${toPersianDigits(windowData.startTime)} الی ${toPersianDigits(windowData.endTime)}`;
+    const scheduleDescription = `${dayNames} — ساعت ${toPersianDigits(windowData.startTime)} الی ${toPersianDigits(windowData.endTime)}`;
 
     if (isAllowedDay && isAllowedTime) {
       return {

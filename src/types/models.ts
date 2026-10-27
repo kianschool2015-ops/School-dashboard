@@ -18,6 +18,7 @@ export interface UserRecord {
   garnetUserId?: string | null;
   garnetUsername?: string | null;
   canCreateExams?: boolean;
+  supervisorId?: string | null;
   isActive: boolean;
   createdAt: Date;
   updatedAt: Date;
@@ -72,6 +73,9 @@ export interface ScheduleItemRecord {
   targetDurationMinutes: number;
   isCatchup: boolean;
   status: "NOT_DONE" | "PARTIAL" | "DONE";
+  actualDurationMinutes?: number | null;
+  studentNote?: string | null;
+  completedAt?: Date | null;
   isTemplateOverride?: boolean;
 }
 
@@ -660,6 +664,8 @@ export interface EntitledCourseRecord {
   garnetPurchaseUrl: string;
   hasSupport: boolean;
   supportTier?: string;
+  studyPlanStartDate?: string | null;
+  studyPlanEndDate?: string | null;
   isActive: boolean;
   createdAt: Date;
   updatedAt: Date;

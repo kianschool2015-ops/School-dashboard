@@ -232,7 +232,7 @@ export function SupervisorDashboardClient({
             <div className="flex items-center space-x-2 space-x-reverse">
               <Users className="h-4 w-4 text-primary" />
               <CardTitle className="text-sm font-bold text-foreground">
-                پایش عملکرد پشتیبانان و پایبندی به SLA مداخله
+                پایش عملکرد پشتیبانان و پایبندی به زمان‌بندی پاسخگویی
               </CardTitle>
             </div>
           </CardHeader>
@@ -251,7 +251,7 @@ export function SupervisorDashboardClient({
                     </p>
                   </div>
                   <Badge variant={mentor.slaCompliance >= 90 ? "green" : "yellow"}>
-                    {toPersianDigits(mentor.slaCompliance)}% SLA
+                    ٪{toPersianDigits(mentor.slaCompliance)} تعهد زمانی
                   </Badge>
                 </div>
 

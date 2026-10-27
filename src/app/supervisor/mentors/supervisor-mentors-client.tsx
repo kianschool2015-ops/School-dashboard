@@ -224,7 +224,7 @@ export function SupervisorMentorsClient({
                     </div>
 
                     <div className="p-2 rounded-lg bg-muted/40 border border-border/80 text-center">
-                      <span className="text-[10px] text-muted-foreground block">رعایت مهلت SLA</span>
+                      <span className="text-[10px] text-muted-foreground block">رعایت مهلت پاسخگویی</span>
                       <span className={`font-black block mt-0.5 ${slaColor}`}>
                         {toPersianDigits(mentor.slaCompliancePercent)}٪
                       </span>

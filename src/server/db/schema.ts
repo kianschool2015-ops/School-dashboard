@@ -85,6 +85,7 @@ export const users = pgTable(
     garnetUserId: text("garnet_user_id"),
     garnetUsername: text("garnet_username"),
     canCreateExams: boolean("can_create_exams").default(false).notNull(),
+    supervisorId: text("supervisor_id"), // Supervisor folder hierarchy assignment
     isActive: boolean("is_active").default(true).notNull(),
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at").defaultNow().notNull(),
@@ -206,6 +207,9 @@ export const scheduleItems = pgTable(
     topicDescription: text("topic_description").notNull(),
     targetVolume: text("target_volume").notNull(), // e.g. "۴۰ صفحه", "۳۰ تست"
     targetDurationMinutes: integer("target_duration_minutes").notNull(),
+    actualDurationMinutes: integer("actual_duration_minutes").default(0),
+    studentNote: text("student_note"),
+    completedAt: timestamp("completed_at"),
     isCatchup: boolean("is_catchup").default(false).notNull(),
     status: itemStatusEnum("status").default("NOT_DONE").notNull(),
   },
@@ -759,6 +763,8 @@ export const entitledCourses = pgTable("entitled_courses", {
   garnetPurchaseUrl: text("garnet_purchase_url").notNull(),
   hasSupport: boolean("has_support").default(true).notNull(),
   supportTier: varchar("support_tier", { length: 50 }).default("GOLD").notNull(),
+  studyPlanStartDate: varchar("study_plan_start_date", { length: 50 }), // Jalali date e.g. "1405/08/02"
+  studyPlanEndDate: varchar("study_plan_end_date", { length: 50 }),     // Jalali date e.g. "1406/04/30"
   isActive: boolean("is_active").default(true).notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),

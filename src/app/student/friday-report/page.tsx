@@ -60,8 +60,9 @@ export default async function StudentFridayReportPage() {
     mentorFeedback: r.mentorFeedback || undefined,
     mentorReviewedAt: r.mentorReviewedAt || undefined,
     supervisorApproval: r.supervisorApproval,
-    supervisorNotes: r.supervisorNotes || undefined,
-    supervisorApprovedAt: r.supervisorApprovedAt || undefined,
+    // Module 5: Hide supervisor notes on Friday reports from students
+    supervisorNotes: session.role === "STUDENT" ? undefined : (r.supervisorNotes || undefined),
+    supervisorApprovedAt: session.role === "STUDENT" ? undefined : (r.supervisorApprovedAt || undefined),
     submittedAt: r.submittedAt,
     updatedAt: r.updatedAt,
   }));

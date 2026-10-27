@@ -437,6 +437,26 @@ export function FridayReportsReviewClient({
                     </div>
                   </div>
 
+                  {/* Supervisor Notes Highlighted Box (Module 5) */}
+                  {report.supervisorNotes && (
+                    <div className="rounded-xl bg-amber-500/10 border-2 border-amber-500/40 p-3.5 space-y-1.5 shadow-xs">
+                      <div className="text-xs font-bold text-amber-800 dark:text-amber-300 flex items-center justify-between">
+                        <span className="flex items-center gap-1.5">
+                          <ShieldCheck className="h-4 w-4 text-amber-600 dark:text-amber-400" />
+                          <span>یادداشت و ملاحظات نظارتی سرپرست آموزشی (محرمانه - غیرقابل مشاهده برای داوطلب):</span>
+                        </span>
+                        {report.supervisorApprovedAt && (
+                          <span className="text-[10px] text-amber-700/80 dark:text-amber-300/80 font-normal">
+                            ثبت شده در تاریخ {new Date(report.supervisorApprovedAt).toLocaleDateString("fa-IR")}
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-xs text-foreground leading-relaxed bg-background/80 p-2.5 rounded-lg border border-amber-300/40 dark:border-amber-800/40 font-medium">
+                        {report.supervisorNotes}
+                      </p>
+                    </div>
+                  )}
+
                   {/* Existing Mentor Feedback Display */}
                   {report.mentorFeedback && !isEditing && (
                     <div className="rounded-xl bg-blue-50/70 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-900/50 p-3.5 space-y-1.5">

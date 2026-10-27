@@ -41,7 +41,7 @@ export default async function ExamBuilderPage() {
           </div>
           <h2 className="text-lg font-bold text-rose-600 dark:text-rose-400">دسترسی غیرمجاز</h2>
           <p className="text-xs text-muted-foreground leading-relaxed">
-            UNAUTHORIZED: شما مجوز لازم برای طراحی و بارگذاری آزمون را ندارید.
+            شما مجوز لازم برای طراحی و بارگذاری آزمون را در سامانه ندارید.
           </p>
           <p className="text-[11px] text-muted-foreground/80">
             طراحی آزمون نیاز به مجوز اختصاصی مدیریت ارشد یا دسترسی فعال طراحی در پنل پشتیبانی دارد.

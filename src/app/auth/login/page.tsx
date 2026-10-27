@@ -233,6 +233,17 @@ export default function LoginPage() {
           </p>
         </div>
 
+        {/* Candidate Guidance Callout Box (Module 6) */}
+        <div className="rounded-2xl border-2 border-[#004071]/20 bg-linear-to-b from-[#004071]/10 via-[#004071]/5 to-background p-4 text-xs space-y-2 shadow-sm">
+          <div className="flex items-center gap-2 font-bold text-[#004071] dark:text-sky-300">
+            <GraduationCap className="h-4 w-4 shrink-0 text-[#004071] dark:text-sky-300" />
+            <span>راهنمای ورود داوطلبان مؤسسه مشاهیر دانش</span>
+          </div>
+          <p className="text-muted-foreground text-[11px] leading-relaxed">
+            داوطلبان گرامی می‌توانند با استفاده از همان مشخصات و شماره همراه ثبت‌شده در وب‌سایت اصلی مشاهیر دانش، از طریق رمز عبور یا دریافت کد پیامکی وارد شوند. پروفایل و بسته‌های آموزشی شما به صورت خودکار شناسایی و همگام‌سازی می‌گردد.
+          </p>
+        </div>
+
         {/* Main Authentication Card */}
         <Card className="border-border bg-card shadow-2xl rounded-2xl overflow-hidden">
           <CardHeader className="pb-3 border-b border-border bg-muted/20">

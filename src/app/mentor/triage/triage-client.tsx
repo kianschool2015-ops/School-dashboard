@@ -85,7 +85,7 @@ export function MentorTriageClient({
       return (
         <span className="rounded-full bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800/40 px-3 py-1 text-xs font-bold flex items-center space-x-1.5 space-x-reverse">
           <Check className="h-3.5 w-3.5" />
-          <span>رسیدگی شده در موعد SLA</span>
+          <span>رسیدگی شده در موعد مقرر</span>
         </span>
       );
     }
@@ -113,7 +113,7 @@ export function MentorTriageClient({
         }`}
       >
         <Clock className="h-3.5 w-3.5" />
-        <span>{toPersianDigits(diffHours)} ساعت تا اتمام مهلت SLA</span>
+        <span>{toPersianDigits(diffHours)} ساعت تا اتمام مهلت پاسخگویی</span>
       </span>
     );
   };

@@ -18,6 +18,7 @@ import {
   TRIGGER_DEFINITIONS,
 } from "../services/alert-engine";
 import { formatJalaliDate } from "@/lib/jalali";
+import { getCurrentCourseWeekInfo } from "@/lib/jalali-week";
 import { sanitizeTextContent } from "@/lib/sanitize";
 import { revalidatePath } from "next/cache";
 
@@ -66,14 +67,17 @@ export async function submitDailyCheckinAction(payload: CheckinPayload) {
   const cleanRootFailureCause = rootFailureCause ? sanitizeTextContent(rootFailureCause) : null;
   const cleanStudentNotes = studentNotes ? sanitizeTextContent(studentNotes) : null;
 
-  // 2. Enforce schedule item ownership (H-06 IDOR protection)
+  // 2. Enforce schedule item ownership (H-06 IDOR protection) & current-week access (Module 2)
   let doneCount = 0;
   let partialCount = 0;
 
   const itemIds = items.map((i) => i.id).filter(Boolean);
   if (itemIds.length > 0) {
     const validItems = await db
-      .select({ id: scheduleItems.id })
+      .select({
+        id: scheduleItems.id,
+        weekNumber: studentSchedules.jalaliWeekNumber,
+      })
       .from(scheduleItems)
       .innerJoin(studentSchedules, eq(scheduleItems.scheduleId, studentSchedules.id))
       .where(
@@ -82,6 +86,21 @@ export async function submitDailyCheckinAction(payload: CheckinPayload) {
           inArray(scheduleItems.id, itemIds)
         )
       );
+
+    // Module 2: Strict current-week access & expiry lock for students
+    if (session.role === "STUDENT" && validItems.length > 0) {
+      const activeWeek = getCurrentCourseWeekInfo();
+      const hasExpiredItem = validItems.some((v) => v.weekNumber !== activeWeek.weekNumber);
+      if (hasExpiredItem) {
+        return {
+          success: false,
+          message:
+            "مهلت مشاهده و ثبت گزارش این هفته به پایان رسیده است. صرفاً برنامه هفته جاری قابل مشاهده و ثبت می‌باشد.",
+          executionPercent: 0,
+          durationMs: Date.now() - startTime,
+        };
+      }
+    }
 
     const validIdSet = new Set(validItems.map((v) => v.id));
 
@@ -520,3 +539,133 @@ export async function submitMockExamAction(payload: {
     deltaPreviousExam,
   };
 }
+
+/**
+ * Update single study schedule item progress independently (Module 3)
+ * Allows student to record actual hours and completion per individual subject
+ */
+export async function updateSingleScheduleItemProgressAction(payload: {
+  itemId: string;
+  actualHours: number;
+  isCompleted: boolean;
+  studentNote?: string;
+}): Promise<{
+  success: boolean;
+  message: string;
+  executionPercent?: number;
+}> {
+  const session = await requireRole(["STUDENT", "ADMIN"]);
+
+  try {
+    // 1. Fetch item with schedule
+    const [itemWithSchedule] = await db
+      .select({
+        item: scheduleItems,
+        schedule: studentSchedules,
+      })
+      .from(scheduleItems)
+      .innerJoin(studentSchedules, eq(scheduleItems.scheduleId, studentSchedules.id))
+      .where(eq(scheduleItems.id, payload.itemId))
+      .limit(1);
+
+    if (!itemWithSchedule) {
+      return { success: false, message: "آیتم مطالعاتی مورد نظر یافت نشد." };
+    }
+
+    const { item, schedule } = itemWithSchedule;
+
+    // 2. Ownership verification for students
+    if (session.role === "STUDENT") {
+      let userProfileId = session.studentProfileId;
+      if (!userProfileId) {
+        const [prof] = await db
+          .select({ id: studentProfiles.id })
+          .from(studentProfiles)
+          .where(eq(studentProfiles.userId, session.userId))
+          .limit(1);
+        userProfileId = prof?.id;
+      }
+
+      if (schedule.studentProfileId !== userProfileId) {
+        return { success: false, message: "دسترسی غیرمجاز به برنامه مطالعاتی داوطلب دیگر." };
+      }
+
+      // 3. Strict current week check (Module 2)
+      // Once week ends (Friday 23:59:59 Asia/Tehran), student cannot edit
+      const currentWeek = getCurrentCourseWeekInfo();
+      if (schedule.jalaliWeekNumber !== currentWeek.weekNumber) {
+        return {
+          success: false,
+          message:
+            "مهلت مشاهده و ثبت گزارش این هفته به پایان رسیده است. صرفاً برنامه هفته جاری قابل مشاهده و ثبت می‌باشد.",
+        };
+      }
+    }
+
+    // 4. Update the item
+    const newStatus = payload.isCompleted ? "DONE" : "PARTIAL";
+    const actualMinutes = Math.max(0, Math.round(Number(payload.actualHours || 0) * 60));
+    const cleanNote = payload.studentNote ? sanitizeTextContent(payload.studentNote) : null;
+
+    await db
+      .update(scheduleItems)
+      .set({
+        status: newStatus,
+        actualDurationMinutes: actualMinutes,
+        studentNote: cleanNote,
+        completedAt: payload.isCompleted ? new Date() : null,
+      })
+      .where(eq(scheduleItems.id, payload.itemId));
+
+    // 5. Recalculate execution percent for the schedule
+    const allItems = await db
+      .select()
+      .from(scheduleItems)
+      .where(eq(scheduleItems.scheduleId, schedule.id));
+
+    let doneCount = 0;
+    let partialCount = 0;
+    for (const it of allItems) {
+      const itStatus = it.id === payload.itemId ? newStatus : it.status;
+      if (itStatus === "DONE") doneCount++;
+      else if (itStatus === "PARTIAL") partialCount++;
+    }
+
+    const executionPercent = calculateProgramExecutionPercent(doneCount, partialCount, allItems.length);
+
+    // 6. Update or insert daily check-in
+    const todayDate = formatJalaliDate(new Date());
+    await db
+      .insert(dailyCheckins)
+      .values({
+        id: `chk_${schedule.studentProfileId}_${todayDate.replace(/[^0-9]/g, "")}`,
+        studentProfileId: schedule.studentProfileId,
+        checkinDate: todayDate,
+        calculatedExecutionPercent: executionPercent,
+        actualHours: Math.round(actualMinutes / 60),
+      })
+      .onConflictDoUpdate({
+        target: [dailyCheckins.studentProfileId, dailyCheckins.checkinDate],
+        set: {
+          calculatedExecutionPercent: executionPercent,
+          actualHours: Math.round(actualMinutes / 60),
+        },
+      });
+
+    revalidatePath("/student/dashboard");
+    revalidatePath("/student/study-plan");
+    revalidatePath("/plans");
+
+    return {
+      success: true,
+      message: `گزارش مطالعه درس «${item.subject}» با موفقیت ثبت شد.`,
+      executionPercent,
+    };
+  } catch (error) {
+    return {
+      success: false,
+      message: error instanceof Error ? error.message : "خطا در ثبت گزارش مطالعه.",
+    };
+  }
+}
+

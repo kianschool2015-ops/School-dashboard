@@ -438,7 +438,7 @@ export function CandidateProfileCard({
             </div>
             <div className="pt-1">
               <span className="text-muted-foreground block text-[11px]">
-                پوشش هوشمند الگوهای A01 تا A09 با زمان پاسخگویی منطبق بر توافق‌نامه سطح خدمات (SLA).
+                پوشش هوشمند الگوهای A01 تا A09 با زمان پاسخگویی منطبق بر تعهد زمانی خدمت.
               </span>
             </div>
           </CardContent>

@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
+import Link from "next/link";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -22,7 +23,9 @@ import {
   FileQuestion,
   UserCheck,
   ShieldAlert,
+  Eye,
 } from "lucide-react";
+import { toPersianDigits } from "@/lib/jalali";
 import {
   createEvaluationExamAction,
   submitEvaluationExamAction,
@@ -772,6 +775,105 @@ export function ExamsClient({
           })}
         </div>
       </div>
+
+      {/* =====================================================================
+          SUBMISSIONS TABLE: کارنامه‌ها و نتایج آزمون داوطلبان (جهت بررسی سرپرست و پشتیبان)
+          ===================================================================== */}
+      {submissions.length > 0 && (
+        <div className="space-y-4 pt-4">
+          <div className="flex items-center justify-between">
+            <div className="space-y-1">
+              <h3 className="text-sm font-bold text-foreground flex items-center gap-2">
+                <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+                <span>کارنامه‌ها و نتایج ثبت‌شده آزمون‌ها ({toPersianDigits(submissions.length)} پاسخنامه)</span>
+              </h3>
+              <p className="text-xs text-muted-foreground">
+                {currentUser.role === "STUDENT"
+                  ? "سوابق شرکت در آزمون‌ها، نمرات و وضعیت بررسی توسط پشتیبان علمی"
+                  : "فهرست کامل پاسخنامه‌های داوطلبان جهت بازبینی، ثبت تحلیل و تایید نهایی کارنامه"}
+              </p>
+            </div>
+          </div>
+
+          <Card className="border border-border rounded-2xl overflow-hidden shadow-xs">
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs text-start">
+                <thead className="bg-muted/40 border-b border-border text-muted-foreground font-semibold">
+                  <tr>
+                    <th className="py-3 px-4 text-start">داوطلب</th>
+                    <th className="py-3 px-4 text-start">عنوان آزمون</th>
+                    <th className="py-3 px-4 text-center">نمره / درصد تراز</th>
+                    <th className="py-3 px-4 text-center">پاسخ‌های صحیح / غلط</th>
+                    <th className="py-3 px-4 text-center">وضعیت بررسی</th>
+                    <th className="py-3 px-4 text-center">تاریخ ارسال</th>
+                    <th className="py-3 px-4 text-center">عملیات</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-border">
+                  {submissions.map((sub) => {
+                    const pct = sub.totalPercentage ?? sub.scorePercent ?? 0;
+                    const isMentorOrLeadership = currentUser.role !== "STUDENT";
+                    return (
+                      <tr key={sub.id} className="hover:bg-muted/20 transition-colors">
+                        <td className="py-3 px-4 font-medium text-foreground">
+                          {sub.studentName || "داوطلب آزمون"}
+                        </td>
+                        <td className="py-3 px-4 text-foreground font-semibold">
+                          {sub.examTitle || "آزمون آزمایشی استاندارد"}
+                        </td>
+                        <td className="py-3 px-4 text-center">
+                          <span className="font-mono font-bold text-foreground">
+                            ٪{toPersianDigits(typeof pct === "number" ? pct.toFixed(1) : pct)}
+                          </span>
+                        </td>
+                        <td className="py-3 px-4 text-center text-muted-foreground font-mono">
+                          <span className="text-emerald-600 font-bold">{toPersianDigits(sub.correctCount || 0)}</span> صحیح /{" "}
+                          <span className="text-rose-500 font-bold">{toPersianDigits(sub.incorrectCount ?? sub.wrongCount ?? 0)}</span> غلط
+                        </td>
+                        <td className="py-3 px-4 text-center">
+                          {sub.status === "PUBLISHED_TO_STUDENT" ? (
+                            <Badge className="bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30 text-[10px]">
+                              تایید و منتشر شده
+                            </Badge>
+                          ) : sub.status === "AUTO_GRADED_PENDING_MENTOR" ? (
+                            <Badge className="bg-amber-500/10 text-amber-700 dark:text-amber-300 border border-amber-500/30 text-[10px]">
+                              در انتظار بازبینی پشتیبان
+                            </Badge>
+                          ) : (
+                            <Badge variant="outline" className="text-[10px]">
+                              ثبت اولیه
+                            </Badge>
+                          )}
+                        </td>
+                        <td className="py-3 px-4 text-center text-muted-foreground font-mono">
+                          {sub.submittedAt ? new Date(sub.submittedAt).toLocaleDateString("fa-IR") : "---"}
+                        </td>
+                        <td className="py-3 px-4 text-center">
+                          {isMentorOrLeadership ? (
+                            <Link href={`/mentor/exams/review/${sub.id}`}>
+                              <Button size="sm" variant="outline" className="h-8 text-[11px] gap-1 px-2.5">
+                                <Eye className="h-3.5 w-3.5 text-primary" />
+                                <span>بررسی و ثبت نظر</span>
+                              </Button>
+                            </Link>
+                          ) : (
+                            <Link href={`/student/exams?viewResult=${sub.id}`}>
+                              <Button size="sm" variant="ghost" className="h-8 text-[11px] gap-1 px-2.5 text-primary">
+                                <Eye className="h-3.5 w-3.5" />
+                                <span>مشاهده کارنامه</span>
+                              </Button>
+                            </Link>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </Card>
+        </div>
+      )}
 
       {/* =====================================================================
           MODAL 1: QUESTION BUILDER (اضافه کردن سؤال با اولویت چهارگزینه‌ای)

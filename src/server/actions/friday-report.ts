@@ -196,6 +196,7 @@ export async function submitFridayReportAction(
 
 /**
  * Fetch all Friday reports for current logged in student
+ * Strips supervisorNotes on the server when session.role === "STUDENT" (Module 5)
  */
 export async function getStudentFridayReportsAction() {
   const session = await requireRole(["STUDENT", "ADMIN"]);
@@ -205,6 +206,13 @@ export async function getStudentFridayReportsAction() {
     .from(fridayReports)
     .where(eq(fridayReports.studentId, session.userId))
     .orderBy(desc(fridayReports.weekNumber));
+
+  if (session.role === "STUDENT") {
+    return reports.map((r) => ({
+      ...r,
+      supervisorNotes: null,
+    }));
+  }
 
   return reports;
 }

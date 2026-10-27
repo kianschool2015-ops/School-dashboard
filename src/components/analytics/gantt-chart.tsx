@@ -34,23 +34,86 @@ interface MultiHorizonGanttProps {
   entityType: "STUDENT" | "MENTOR" | "SUPERVISOR";
   entityName?: string;
   readOnlyAuditorRole?: "SUPERVISOR" | "CEO";
+  realItems?: any[];
 }
 
 export function MultiHorizonGantt({
   entityType,
   entityName = "داوطلب آزمون وکالت",
   readOnlyAuditorRole,
+  realItems,
 }: MultiHorizonGanttProps) {
   const [horizon, setHorizon] = useState<GanttTimeHorizon>("WEEK");
   const [selectedItem, setSelectedItem] = useState<GanttItem | null>(null);
 
+  // Derive real items if passed
+  const hasRealItems = Array.isArray(realItems) && realItems.length > 0;
+
+  const derivedWeekItems: GanttItem[] = hasRealItems
+    ? realItems.map((it, idx) => {
+        const durHours = Math.max(0.5, Math.round(((it.targetDurationMinutes || 120) / 60) * 10) / 10);
+        const actualH = it.actualDurationMinutes
+          ? Math.round((it.actualDurationMinutes / 60) * 10) / 10
+          : it.status === "DONE"
+          ? durHours
+          : it.status === "PARTIAL"
+          ? Math.round(durHours * 0.5 * 10) / 10
+          : 0;
+
+        return {
+          id: it.id || `real_w_${idx}`,
+          title: `${it.subject}: ${it.topicDescription || "مبحث مقرر"}`,
+          category: it.subject || "دروس تخصصی",
+          startHourOrDay: typeof it.dayOfWeek === "number" ? it.dayOfWeek : 0,
+          duration: durHours,
+          actualDuration: actualH,
+          status: it.status === "DONE" ? "COMPLETED" : it.status === "PARTIAL" ? "PARTIAL" : "NOT_STARTED",
+          progressPercent: it.status === "DONE" ? 100 : it.status === "PARTIAL" ? 50 : 0,
+          notes: it.studentNote || it.targetVolume || undefined,
+        };
+      })
+    : [];
+
+  const derivedTodayItems: GanttItem[] = hasRealItems
+    ? (() => {
+        let curHour = 7.5;
+        // Group by today or fallback to first items
+        return realItems.slice(0, 5).map((it, idx) => {
+          const durHours = Math.max(1, Math.round(((it.targetDurationMinutes || 120) / 60) * 10) / 10);
+          const startH = curHour;
+          curHour += durHours + 0.5;
+          const actualH = it.actualDurationMinutes
+            ? Math.round((it.actualDurationMinutes / 60) * 10) / 10
+            : it.status === "DONE"
+            ? durHours
+            : it.status === "PARTIAL"
+            ? Math.round(durHours * 0.5 * 10) / 10
+            : 0;
+
+          return {
+            id: it.id || `real_d_${idx}`,
+            title: `${it.subject}: ${it.topicDescription || "مطالعه و حل تست"}`,
+            category: it.subject || "دروس تخصصی",
+            startHourOrDay: Math.min(20, startH),
+            duration: durHours,
+            actualDuration: actualH,
+            status: it.status === "DONE" ? "COMPLETED" : it.status === "PARTIAL" ? "PARTIAL" : "NOT_STARTED",
+            progressPercent: it.status === "DONE" ? 100 : it.status === "PARTIAL" ? 50 : 0,
+            notes: it.studentNote || it.targetVolume || undefined,
+          };
+        });
+      })()
+    : [];
+
   // Mocked rich datasets tailored to each horizon and entity
   const studentData: Record<GanttTimeHorizon, { title: string; subtitle: string; columns: string[]; items: GanttItem[] }> = {
     TODAY: {
-      title: "گانت پارت‌های مطالعه امروز",
-      subtitle: "شنبه (۲۴ ساعت شبانه‌روز) - ساعت ۰۶:۰۰ تا ۲۴:۰۰",
+      title: "زمان‌بندی مباحث مطالعه امروز",
+      subtitle: hasRealItems
+        ? "مباحث مطالعاتی ثبت‌شده در برنامه راهبردی امروز"
+        : "شنبه (۲۴ ساعت شبانه‌روز) - ساعت ۰۶:۰۰ تا ۲۴:۰۰",
       columns: ["۰۶:۰۰", "۰۹:۰۰", "۱۲:۰۰", "۱۵:۰۰", "۱۸:۰۰", "۲۱:۰۰", "۲۴:۰۰"],
-      items: [
+      items: derivedTodayItems.length > 0 ? derivedTodayItems : [
         { id: "1", title: "حقوق مدنی (تعهدات و عقود)", category: "حقوق مدنی", startHourOrDay: 7, duration: 3.5, actualDuration: 3, status: "COMPLETED", progressPercent: 100, notes: "ماده ۱۸۳ تا ۲۳۰ قانون مدنی - ۴۰ تست" },
         { id: "2", title: "آیین دادرسی مدنی (صلاحیت محاکم)", category: "آیین دادرسی مدنی", startHourOrDay: 11, duration: 2.5, actualDuration: 2.5, status: "COMPLETED", progressPercent: 100, notes: "مواد ۱۰ تا ۴۰ ق.آ.د.م - خلاصه نویسی" },
         { id: "3", title: "حقوق تجارت (اسناد تجاری و سفته)", category: "حقوق تجارت", startHourOrDay: 15, duration: 2.5, actualDuration: 1.5, status: "PARTIAL", progressPercent: 60, notes: "بررسی مواد ظهرنویسی و ضمانت برات" },
@@ -70,20 +133,22 @@ export function MultiHorizonGantt({
       ],
     },
     WEEK: {
-      title: "گانت جامع هفته جاری (شنبه تا جمعه)",
-      subtitle: "برنامه هفتگی مصوب سرپرستی و پشتیبان آموزشی",
+      title: "زمان‌بندی جامع هفته جاری (شنبه تا جمعه)",
+      subtitle: hasRealItems
+        ? "واحدهای مطالعاتی استخراج‌شده از برنامه راهبردی مصوب هفتگی"
+        : "برنامه هفتگی مصوب سرپرستی و پشتیبان آموزشی",
       columns: ["شنبه", "یکشنبه", "دوشنبه", "سه‌شنبه", "چهارشنبه", "پنج‌شنبه", "جمعه"],
-      items: [
+      items: derivedWeekItems.length > 0 ? derivedWeekItems : [
         { id: "w-1", title: "حقوق مدنی (قواعد عمومی و اموال)", category: "حقوق مدنی", startHourOrDay: 0, duration: 4.8, actualDuration: 4.8, status: "COMPLETED", progressPercent: 100, notes: "هدف هفتگی: تسلط بر ماده ۱۰ تا ۳۰۰ قانون مدنی" },
         { id: "w-2", title: "آیین دادرسی مدنی (طرق اعتراض به آرا)", category: "آیین دادرسی مدنی", startHourOrDay: 1, duration: 3.5, actualDuration: 3.0, status: "COMPLETED", progressPercent: 85, notes: "تجدیدنظرخواهی و فرجام‌خواهی" },
         { id: "w-3", title: "حقوق تجارت (شرکت‌های سهامی و با مسئولیت محدود)", category: "حقوق تجارت", startHourOrDay: 2, duration: 3, actualDuration: 2.5, status: "COMPLETED", progressPercent: 80, notes: "لایحه اصلاحی قسمتی از قانون تجارت" },
         { id: "w-4", title: "اصول فقه (مباحث الفاظ، اوامر و نواهی)", category: "اصول فقه", startHourOrDay: 3, duration: 3, actualDuration: 1.5, status: "PARTIAL", progressPercent: 50, notes: "مطالعه تست‌های سنوات قبل" },
         { id: "w-5", title: "حقوق جزا و آیین دادرسی کیفری", category: "دروس کیفری", startHourOrDay: 4, duration: 2.8, actualDuration: 0, status: "NOT_STARTED", progressPercent: 0, notes: "مباحث ادله اثبات در امور کیفری" },
-        { id: "w-6", title: "پارت جبرانی و تثبیت آخر هفته", category: "جبرانی", startHourOrDay: 5, duration: 1.8, actualDuration: 0, status: "NOT_STARTED", progressPercent: 0, notes: "پوشش سرفصل‌های عقب‌افتاده اصول فقه" },
+        { id: "w-6", title: "مبحث جبرانی و تثبیت آخر هفته", category: "جبرانی", startHourOrDay: 5, duration: 1.8, actualDuration: 0, status: "NOT_STARTED", progressPercent: 0, notes: "پوشش سرفصل‌های عقب‌افتاده اصول فقه" },
       ],
     },
     MONTH: {
-      title: "گانت پیشرفت ماه جاری",
+      title: "زمان‌بندی پیشرفت ماه جاری",
       subtitle: "عملکرد ۴ هفته مطالعاتی دوره کانون وکلا",
       columns: ["هفته اول", "هفته دوم", "هفته سوم", "هفته چهارم"],
       items: [
@@ -94,7 +159,7 @@ export function MultiHorizonGantt({
       ],
     },
     CUMULATIVE: {
-      title: "گانت تجمعی از آغاز دوره تا کنون",
+      title: "زمان‌بندی تجمعی از آغاز دوره تا کنون",
       subtitle: "روند پیشرفت کلی داوطلب از تاریخ ثبت‌نام در سامانه مشاهیر دانش",
       columns: ["مهر ۱۴۰۳", "آبان ۱۴۰۳", "آذر ۱۴۰۳", "دی ۱۴۰۳", "بهمن ۱۴۰۳", "اسفند ۱۴۰۳"],
       items: [
@@ -107,7 +172,7 @@ export function MultiHorizonGantt({
 
   const mentorData: Record<GanttTimeHorizon, { title: string; subtitle: string; columns: string[]; items: GanttItem[] }> = {
     TODAY: {
-      title: "گانت فعالیت و تماس‌های پشتیبان (امروز)",
+      title: "زمان‌بندی فعالیت و تماس‌های پشتیبان (امروز)",
       subtitle: "ساعت ۰۸:۰۰ الی ۲۲:۰۰",
       columns: ["۰۸:۰۰", "۱۰:۰۰", "۱۲:۰۰", "۱۴:۰۰", "۱۶:۰۰", "۱۸:۰۰", "۲۰:۰۰", "۲۲:۰۰"],
       items: [
@@ -119,16 +184,16 @@ export function MultiHorizonGantt({
     },
     THREE_DAYS: {
       title: "عملکرد ۳ روز اخیر پشتیبان",
-      subtitle: "رسیدگی به پایش عارضه‌یابی و هشدارهای A01 تا A09",
+      subtitle: "رسیدگی به پایش عارضه‌یابی و هشدارهای تحصیلی",
       columns: ["پنج‌شنبه", "جمعه", "امروز"],
       items: [
-        { id: "men-3d-1", title: "حل هشدارهای قطع گزارش داوطلبان (A01)", category: "پایش بحران", startHourOrDay: 0, duration: 2.8, actualDuration: 2.8, status: "COMPLETED", progressPercent: 100 },
-        { id: "men-3d-2", title: "ارسال فیدبک آزمون‌های جامع", category: "ارزیابی آزمون", startHourOrDay: 0.5, duration: 2.0, actualDuration: 2.0, status: "COMPLETED", progressPercent: 100 },
-        { id: "men-3d-3", title: "پیگیری تیکت‌های ارجاعی و تماس با اولیا/داوطلب", category: "مشاوره", startHourOrDay: 1.5, duration: 1.2, actualDuration: 1.2, status: "COMPLETED", progressPercent: 100 },
+        { id: "men-3d-1", title: "حل هشدارهای قطع گزارش داوطلبان", category: "پایش بحران", startHourOrDay: 0, duration: 2.8, actualDuration: 2.8, status: "COMPLETED", progressPercent: 100 },
+        { id: "men-3d-2", title: "ارسال بازخورد آزمون‌های جامع", category: "ارزیابی آزمون", startHourOrDay: 0.5, duration: 2.0, actualDuration: 2.0, status: "COMPLETED", progressPercent: 100 },
+        { id: "men-3d-3", title: "پیگیری تیکت‌های ارجاعی و تماس با داوطلب", category: "مشاوره", startHourOrDay: 1.5, duration: 1.2, actualDuration: 1.2, status: "COMPLETED", progressPercent: 100 },
       ],
     },
     WEEK: {
-      title: "گانت هفتگی عملکرد پشتیبان (شنبه تا جمعه)",
+      title: "عملکرد هفتگی پشتیبان (شنبه تا جمعه)",
       subtitle: "پایش کامل ۳۵ داوطلب تحت نظارت",
       columns: ["شنبه", "یکشنبه", "دوشنبه", "سه‌شنبه", "چهارشنبه", "پنج‌شنبه", "جمعه"],
       items: [
@@ -139,11 +204,11 @@ export function MultiHorizonGantt({
       ],
     },
     MONTH: {
-      title: "گانت ماهانه بازدهی پشتیبان",
+      title: "بازدهی ماهانه پشتیبان",
       subtitle: "ارزیابی پایبندی داوطلبان تحت نظارت به برنامه‌ها",
       columns: ["هفته اول", "هفته دوم", "هفته سوم", "هفته چهارم"],
       items: [
-        { id: "men-m-1", title: "کاهش نرخ ترک مطالعه (Zero Drop-out Initiative)", category: "رسیدگی به داوطلبان", startHourOrDay: 0, duration: 3.9, actualDuration: 3.9, status: "COMPLETED", progressPercent: 100 },
+        { id: "men-m-1", title: "کاهش نرخ انصراف از مطالعه و استمرار تحصیلی", category: "رسیدگی به داوطلبان", startHourOrDay: 0, duration: 3.9, actualDuration: 3.9, status: "COMPLETED", progressPercent: 100 },
         { id: "men-m-2", title: "افزایش میانگین ساعات مطالعه گروه داوطلبان از ۵.۲ به ۷.۴ ساعت", category: "شاخص عملکرد", startHourOrDay: 0.5, duration: 3.2, actualDuration: 3.0, status: "COMPLETED", progressPercent: 94 },
       ],
     },
@@ -263,7 +328,7 @@ export function MultiHorizonGantt({
         <div className="border border-border rounded-xl overflow-hidden bg-background">
           {/* Header Row: Columns */}
           <div className="grid grid-cols-12 bg-muted/50 border-b border-border py-2 text-xs font-bold text-muted-foreground text-center">
-            <div className="col-span-4 sm:col-span-3 text-start ps-3">عنوان پارت / سرفصل</div>
+            <div className="col-span-4 sm:col-span-3 text-start ps-3">عنوان مبحث / سرفصل</div>
             <div className="col-span-8 sm:col-span-9 grid" style={{ gridTemplateColumns: `repeat(${currentDataset.columns.length}, 1fr)` }}>
               {currentDataset.columns.map((col, idx) => (
                 <div key={idx} className="border-e border-border/50 last:border-e-0 px-1 truncate">

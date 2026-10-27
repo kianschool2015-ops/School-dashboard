@@ -161,7 +161,7 @@ export function DailyCheckinDrawer({
             {/* Task Item Toggles */}
             <div className="space-y-2.5">
               <label className="text-xs font-semibold text-foreground block">
-                تکالیف و پارت‌های مطالعاتی امروز:
+                تکالیف و مباحث مطالعاتی امروز:
               </label>
               <div className="space-y-2">
                 {items.map((item) => {

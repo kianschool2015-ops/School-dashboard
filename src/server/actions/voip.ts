@@ -304,8 +304,8 @@ export async function getMentorCallingStatusAction(mentorIdParam?: string): Prom
     return {
       isOpen: false,
       message: "پشتیبان اختصاصی شما هنوز تعیین نشده است. لطفاً منتظر بررسی سرپرست آموزشی باشید.",
-      scheduleDescription: "در انتظار تعیین پشتیبان اختصاصی",
-      mentorName: "در انتظار تعیین پشتیبان",
+      scheduleDescription: "در انتظار تخصیص پشتیبان",
+      mentorName: "در انتظار تخصیص پشتیبان",
       window: null,
     };
   }

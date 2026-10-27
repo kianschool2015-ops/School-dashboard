@@ -352,7 +352,7 @@ export function TasksClient({ currentUser, tasks: initialTasks, assignees }: Tas
             className="flex items-center gap-2 text-xs"
           >
             <TrendingUp className="h-4 w-4" />
-            {showGantt ? "پنهان‌سازی گانت‌چارت" : "مشاهده گانت‌چارت"}
+            {showGantt ? "پنهان‌سازی نمودار زمان‌بندی راهبردی" : "مشاهده نمودار زمان‌بندی راهبردی"}
           </Button>
 
           {canAssign && (

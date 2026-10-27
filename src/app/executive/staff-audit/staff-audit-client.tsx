@@ -370,7 +370,7 @@ export function StaffAuditClient({ initialData }: StaffAuditClientProps) {
                       </div>
 
                       <div className="p-2.5 rounded-xl bg-muted/40 border border-border/80 text-center">
-                        <span className="text-[10px] text-muted-foreground block">رعایت مهلت SLA</span>
+                        <span className="text-[10px] text-muted-foreground block">رعایت مهلت پاسخگویی</span>
                         <span className={`font-black block mt-0.5 text-sm ${slaColor}`}>
                           {toPersianDigits(men.slaCompliancePercent)}٪
                         </span>
@@ -380,7 +380,7 @@ export function StaffAuditClient({ initialData }: StaffAuditClientProps) {
 
                   <div className="px-5 py-2.5 bg-muted/15 border-t border-border/80 flex items-center justify-between text-xs text-muted-foreground">
                     <span>
-                      تسک‌های انجام‌شده: {toPersianDigits(men.tasksCompletedCount)} از{" "}
+                      وظایف انجام‌شده: {toPersianDigits(men.tasksCompletedCount)} از{" "}
                       {toPersianDigits(men.tasksReceivedCount)} مأموریت
                     </span>
                     <div className="flex items-center gap-2">

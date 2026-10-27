@@ -9,8 +9,10 @@ import {
   mockExams as mockExamsTable,
   studentSchedules,
   examSubmissions,
+  entitledCourses,
+  users,
 } from "@/server/db/schema";
-import { eq, desc } from "drizzle-orm";
+import { eq, desc, asc, and, inArray } from "drizzle-orm";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -24,14 +26,16 @@ import {
   Flame,
   Scale,
   ArrowLeft,
+  UserCheck,
 } from "lucide-react";
 import {
   PERSIAN_WEEKDAYS,
-  getStudyWeekBoundaries,
   toPersianDigits,
   getPersianDayOfWeek,
   formatJalaliRangeHuman,
 } from "@/lib/jalali";
+import { getCurrentCourseWeekInfo } from "@/lib/jalali-week";
+import { ActiveWeekBadge } from "@/components/study-plan/active-week-badge";
 import { StudentDashboardClient } from "./dashboard-client";
 import { StudentCallCoachWidget } from "@/components/student/student-call-coach-widget";
 import { MultiHorizonGantt } from "@/components/analytics/gantt-chart";
@@ -50,6 +54,10 @@ export default async function StudentDashboardPage() {
   let student: typeof studentProfiles.$inferSelect | null = null;
   let items: (typeof scheduleItems.$inferSelect)[] = [];
   let mockExams: (typeof mockExamsTable.$inferSelect)[] = [];
+  let mentorName = "در انتظار تخصیص پشتیبان";
+
+  // Course timeline & dynamic week calculation (Module 1 & 2)
+  let courseTimeline: typeof entitledCourses.$inferSelect | null = null;
 
   try {
     await ensureDatabaseBootstrap().catch(() => {});
@@ -109,28 +117,85 @@ export default async function StudentDashboardPage() {
       studentProfileId = newProfileId;
     }
 
-    if (studentProfileId) {
-      const [studentSchedule] = await db
+    // Fetch mentor info (Module 4)
+    if (student?.mentorId) {
+      const [m] = await db
+        .select({ fullName: users.fullName })
+        .from(users)
+        .where(eq(users.id, student.mentorId))
+        .limit(1);
+      if (m?.fullName) {
+        mentorName = m.fullName.replace(/\s*\([^)]*\)/g, "").trim();
+      }
+    }
+
+    // Fetch enrolled course timeline (Module 1)
+    if (student?.enrolledCourseCode) {
+      const [crs] = await db
+        .select()
+        .from(entitledCourses)
+        .where(eq(entitledCourses.courseCode, student.enrolledCourseCode))
+        .limit(1);
+      courseTimeline = crs || null;
+    }
+  } catch (err) {
+    console.warn("[StudentDashboard] Profile DB query error:", err);
+  }
+
+  // Calculate dynamic weekly boundaries relative to course start date
+  const weekInfo = getCurrentCourseWeekInfo(
+    courseTimeline?.studyPlanStartDate,
+    courseTimeline?.studyPlanEndDate
+  );
+
+  try {
+    // Schedule resolution checking both studentProfile.id and user.id, matching active weekNumber (Module 3)
+    const candidateProfileIds = [studentProfileId, session.userId].filter(Boolean) as string[];
+
+    if (candidateProfileIds.length > 0) {
+      // 1. Try matching active weekNumber first
+      const [matchingSchedule] = await db
         .select({ id: studentSchedules.id })
         .from(studentSchedules)
-        .where(eq(studentSchedules.studentProfileId, studentProfileId))
+        .where(
+          and(
+            inArray(studentSchedules.studentProfileId, candidateProfileIds),
+            eq(studentSchedules.jalaliWeekNumber, weekInfo.weekNumber)
+          )
+        )
         .limit(1);
 
-      if (studentSchedule) {
+      let activeScheduleId = matchingSchedule?.id;
+
+      // 2. If no exact active week schedule found, fallback to latest schedule for this student
+      if (!activeScheduleId) {
+        const [latestSchedule] = await db
+          .select({ id: studentSchedules.id })
+          .from(studentSchedules)
+          .where(inArray(studentSchedules.studentProfileId, candidateProfileIds))
+          .orderBy(desc(studentSchedules.jalaliWeekNumber))
+          .limit(1);
+        activeScheduleId = latestSchedule?.id;
+      }
+
+      if (activeScheduleId) {
         items = await db
           .select()
           .from(scheduleItems)
-          .where(eq(scheduleItems.scheduleId, studentSchedule.id));
+          .where(eq(scheduleItems.scheduleId, activeScheduleId))
+          .orderBy(asc(scheduleItems.dayOfWeek));
       }
 
-      mockExams = await db
-        .select()
-        .from(mockExamsTable)
-        .where(eq(mockExamsTable.studentProfileId, studentProfileId))
-        .orderBy(desc(mockExamsTable.createdAt));
+      if (studentProfileId) {
+        mockExams = await db
+          .select()
+          .from(mockExamsTable)
+          .where(eq(mockExamsTable.studentProfileId, studentProfileId))
+          .orderBy(desc(mockExamsTable.createdAt));
+      }
     }
   } catch (err) {
-    console.warn("[StudentDashboard] DB query error:", err);
+    console.warn("[StudentDashboard] Schedule DB query error:", err);
   }
 
   // Fetch latest exam submission for two-stage publishing check
@@ -155,8 +220,6 @@ export default async function StudentDashboardPage() {
     console.warn("[StudentDashboard] longitudinalHistory query error:", err);
   }
 
-  const { startDateObj, endDateObj, jalaliWeekNumber } = getStudyWeekBoundaries();
-  const studyWeekRange = formatJalaliRangeHuman(startDateObj, endDateObj);
   const currentDayIndex = getPersianDayOfWeek(new Date());
 
   // Copywriting cleanup: strip parenthetical role suffixes from full name (e.g. "(داوطلب کانون وکلا)")
@@ -196,9 +259,9 @@ export default async function StudentDashboardPage() {
 
   return (
     <div className="space-y-6">
-      {/* Top Banner & Welcome */}
+      {/* Top Banner & Welcome with Active Week Badge (Module 1) */}
       <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4 border-b border-border pb-6">
-        <div>
+        <div className="space-y-2">
           <div className="flex flex-wrap items-center gap-2.5">
             <h1 className="text-xl font-bold text-foreground tracking-tight">
               سلام، {cleanFullName} 👋
@@ -207,9 +270,19 @@ export default async function StudentDashboardPage() {
               {riskStatusConfig.label}
             </Badge>
           </div>
-          <p className="text-xs text-muted-foreground mt-1.5 leading-relaxed">
-            هفته مطالعاتی {toPersianDigits(jalaliWeekNumber)} ({studyWeekRange}) • وضعیت پایش:{" "}
-            <span className="text-foreground font-medium">{riskStatusConfig.reason}</span>
+
+          {/* Active Week Badge (Module 1) */}
+          <div className="flex flex-wrap items-center gap-2.5 pt-0.5">
+            <ActiveWeekBadge weekInfo={weekInfo} variant="default" />
+            <span className="text-xs text-muted-foreground flex items-center gap-1.5 bg-muted/40 px-2.5 py-1 rounded-xl border border-border/60">
+              <UserCheck className="w-3.5 h-3.5 text-[#004071] dark:text-sky-400" />
+              <span>پشتیبان اختصاصی شما:</span>
+              <span className="font-semibold text-foreground">{mentorName}</span>
+            </span>
+          </div>
+
+          <p className="text-xs text-muted-foreground leading-relaxed">
+            وضعیت پایش آموزشی: <span className="text-foreground font-medium">{riskStatusConfig.reason}</span>
           </p>
         </div>
 
@@ -263,7 +336,7 @@ export default async function StudentDashboardPage() {
               ٪{toPersianDigits(executionPercent)}
             </div>
             <p className="text-[11px] text-muted-foreground mt-1">
-              {toPersianDigits(doneCount)} پارت تکمیل از {toPersianDigits(totalTasks)} پارت مصوب
+              {toPersianDigits(doneCount)} مبحث تکمیل از {toPersianDigits(totalTasks)} مبحث مصوب
             </p>
           </div>
           <Progress value={executionPercent} className="mt-3 h-1.5 rounded-full" indicatorClassName="bg-emerald-500" />
@@ -432,8 +505,8 @@ export default async function StudentDashboardPage() {
         />
       )}
 
-      {/* Multi-Horizon 5-Level Progress Gantt Chart */}
-      <MultiHorizonGantt entityType="STUDENT" entityName={cleanFullName} />
+      {/* Multi-Horizon 5-Level Progress Gantt Chart with Real Schedule Items (Module 3) */}
+      <MultiHorizonGantt entityType="STUDENT" entityName={cleanFullName} realItems={items} />
 
       {/* Persian 7-Day Study Week Schedule (Saturday to Friday) */}
       <Card>
@@ -481,7 +554,7 @@ export default async function StudentDashboardPage() {
                     )}
                   </div>
                   <span className="text-xs text-muted-foreground persian-nums">
-                    {toPersianDigits(dayTasks.length)} پارت مطالعاتی
+                    {toPersianDigits(dayTasks.length)} مبحث مطالعاتی
                   </span>
                 </div>
 

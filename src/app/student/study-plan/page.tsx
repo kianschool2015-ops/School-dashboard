@@ -8,13 +8,15 @@ import {
   studentSchedules,
   dailyCheckins,
   users,
+  entitledCourses,
 } from "@/server/db/schema";
-import { eq, and, desc, lte } from "drizzle-orm";
+import { eq, and, desc, inArray } from "drizzle-orm";
 import {
   getStudyWeekBoundaries,
   getPersianDayOfWeek,
   formatJalaliDate,
 } from "@/lib/jalali";
+import { getCurrentCourseWeekInfo } from "@/lib/jalali-week";
 import { StudyPlanClient } from "./study-plan-client";
 import { ForensicWatermark } from "@/components/security/forensic-watermark";
 import { LegalConsentModal } from "@/components/security/legal-consent-modal";
@@ -34,9 +36,7 @@ export default async function StudentStudyPlanPage() {
   let weeklyMainGoal = "";
   let todayCheckin: DailyCheckinRecord | null = null;
   let currentUser: { fullName: string; nationalId: string | null; phoneNumber: string | null } | null = null;
-
-  const { weekStartDate, weekEndDate, jalaliYear, jalaliWeekNumber } = getStudyWeekBoundaries();
-  const currentDayOfWeek = getPersianDayOfWeek(new Date());
+  let courseTimeline: typeof entitledCourses.$inferSelect | null = null;
 
   try {
     await ensureDatabaseBootstrap().catch(() => {});
@@ -106,6 +106,29 @@ export default async function StudentStudyPlanPage() {
       studentProfileId = newProfileId;
     }
 
+    // Fetch enrolled course timeline (Module 1)
+    if (student?.enrolledCourseCode) {
+      const [crs] = await db
+        .select()
+        .from(entitledCourses)
+        .where(eq(entitledCourses.courseCode, student.enrolledCourseCode))
+        .limit(1);
+      courseTimeline = crs || null;
+    }
+  } catch (err) {
+    console.warn("[StudentStudyPlan] DB init query error:", err);
+  }
+
+  // Calculate dynamic weekly boundaries (Module 1)
+  const weekInfo = getCurrentCourseWeekInfo(
+    courseTimeline?.studyPlanStartDate,
+    courseTimeline?.studyPlanEndDate
+  );
+
+  const { weekStartDate, weekEndDate, jalaliYear } = getStudyWeekBoundaries();
+  const currentDayOfWeek = getPersianDayOfWeek(new Date());
+
+  try {
     if (student) {
       // Find mentor name
       if (student.mentorId) {
@@ -119,18 +142,19 @@ export default async function StudentStudyPlanPage() {
         }
       }
 
-      // Layer 4 DRM: Drip-feed content - strictly restrict to active Jalali week (hide future weeks)
+      // Module 2 & 3: Strict current-week access for students
+      // When session.role === "STUDENT", only return and display the schedule for the current active study week
+      const candidateProfileIds = [student.id, session.userId].filter(Boolean) as string[];
+
       const [studentSchedule] = await db
         .select()
         .from(studentSchedules)
         .where(
           and(
-            eq(studentSchedules.studentProfileId, student.id),
-            eq(studentSchedules.jalaliYear, jalaliYear),
-            lte(studentSchedules.jalaliWeekNumber, jalaliWeekNumber)
+            inArray(studentSchedules.studentProfileId, candidateProfileIds),
+            eq(studentSchedules.jalaliWeekNumber, weekInfo.weekNumber)
           )
         )
-        .orderBy(desc(studentSchedules.jalaliWeekNumber))
         .limit(1);
 
       if (studentSchedule) {
@@ -138,7 +162,8 @@ export default async function StudentStudyPlanPage() {
         const rawItems = await db
           .select()
           .from(scheduleItems)
-          .where(eq(scheduleItems.scheduleId, studentSchedule.id));
+          .where(eq(scheduleItems.scheduleId, studentSchedule.id))
+          .orderBy(scheduleItems.dayOfWeek);
 
         items = rawItems.map((r) => ({
           id: r.id,
@@ -149,6 +174,9 @@ export default async function StudentStudyPlanPage() {
           topicDescription: r.topicDescription,
           targetVolume: r.targetVolume,
           targetDurationMinutes: r.targetDurationMinutes,
+          actualDurationMinutes: r.actualDurationMinutes ?? 0,
+          studentNote: r.studentNote || null,
+          completedAt: r.completedAt || null,
           isCatchup: r.isCatchup,
           status: r.status as any,
         }));
@@ -183,7 +211,7 @@ export default async function StudentStudyPlanPage() {
       }
     }
   } catch (err) {
-    console.warn("[StudentStudyPlan] DB query error:", err);
+    console.warn("[StudentStudyPlan] DB schedule query error:", err);
   }
 
   return (
@@ -204,11 +232,12 @@ export default async function StudentStudyPlanPage() {
         weekStartDate={weekStartDate}
         weekEndDate={weekEndDate}
         jalaliYear={jalaliYear}
-        jalaliWeekNumber={jalaliWeekNumber}
+        jalaliWeekNumber={weekInfo.weekNumber}
         currentDayOfWeek={currentDayOfWeek}
         items={items}
         todayCheckin={todayCheckin}
         weeklyMainGoal={weeklyMainGoal}
+        weekInfo={weekInfo}
       />
     </ForensicWatermark>
   );

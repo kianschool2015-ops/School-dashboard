@@ -29,6 +29,7 @@ import {
   FileText,
   ShieldCheck,
   QrCode,
+  FolderTree,
 } from "lucide-react";
 import { ThemeToggle } from "./theme-toggle";
 import { logoutAction } from "@/server/actions/auth";
@@ -181,6 +182,7 @@ export function AppSidebar({
   } else if (userRole === "SUPERVISOR") {
     navItems = [
       { title: "نظارت و مانیتورینگ آموزشی", href: "/supervisor", icon: LayoutDashboard },
+      { title: "تخصیص و جابه‌جایی داوطلبان", href: "/assignments", icon: FolderTree },
       { title: "عملکرد پشتیبانان علمی", href: "/supervisor/mentors", icon: Users },
       {
         title: "داوطلبان جدید (تعیین پشتیبان)",
@@ -213,6 +215,7 @@ export function AppSidebar({
     // CEO / ADMIN
     navItems = [
       { title: "شاخص‌های کلیدی (داشبورد کلان)", href: "/executive", icon: LayoutDashboard },
+      { title: "سلسله‌مراتب و پوشه سرپرستان", href: "/assignments", icon: FolderTree },
       { title: "مدیریت جامع کاربران", href: "/executive/users", icon: Shield },
       { title: "عملکرد پشتیبانان علمی", href: "/supervisor/mentors", icon: Users },
       { title: "بازرسی کادر پشتیبانی", href: "/executive/staff-audit", icon: ShieldCheck },

@@ -29,20 +29,31 @@ export function hmacPhoneForAudit(phone: string): string {
 
 /**
  * Validate attachment URL scheme (H-10)
- * Rejects dangerous URI schemes like javascript:, data:, vbscript:, blob:
+ * Rejects dangerous URI schemes like javascript:, vbscript:, data:text/html
+ * Allows safe data: URLs for recorded voice and documents/images
  */
-export function isValidAttachmentUrl(url?: string | null): boolean {
+export function isValidAttachmentUrl(url: string | null | undefined): boolean {
   if (!url) return true;
-  const trimmed = url.trim().toLowerCase();
-  if (
-    trimmed.startsWith("javascript:") ||
-    trimmed.startsWith("data:") ||
-    trimmed.startsWith("vbscript:") ||
-    trimmed.startsWith("blob:")
-  ) {
+  const trimmed = url.trim();
+  const lower = trimmed.toLowerCase();
+  if (lower.startsWith("javascript:") || lower.startsWith("vbscript:")) {
     return false;
   }
-  return trimmed.startsWith("/") || trimmed.startsWith("http://") || trimmed.startsWith("https://");
+  // Allow safe base64 data URLs for recorded voice messages and allowed document/image attachments
+  if (lower.startsWith("data:")) {
+    return /^data:(audio\/(webm|ogg|mp3|mpeg|wav|mp4)|image\/(png|jpeg|jpg|webp|gif)|application\/(pdf|msword|vnd\.openxmlformats-officedocument\.[a-z0-9.]+|vnd\.ms-excel));base64,[a-z0-9+/=\s]+$/i.test(
+      trimmed
+    );
+  }
+  if (trimmed.startsWith("/") && !trimmed.startsWith("//")) {
+    return true;
+  }
+  try {
+    const parsed = new URL(trimmed);
+    return parsed.protocol === "https:" || parsed.protocol === "http:";
+  } catch {
+    return false;
+  }
 }
 
 /**

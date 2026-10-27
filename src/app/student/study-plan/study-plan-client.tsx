@@ -30,7 +30,12 @@ import {
   toPersianDigits,
   formatJalaliDate,
 } from "@/lib/jalali";
-import { submitDailyStudyLogAction } from "@/server/actions/student";
+import type { CourseWeekInfo } from "@/lib/jalali-week";
+import { ActiveWeekBadge } from "@/components/study-plan/active-week-badge";
+import {
+  submitDailyStudyLogAction,
+  updateSingleScheduleItemProgressAction,
+} from "@/server/actions/student";
 import type { ScheduleItemRecord, DailyCheckinRecord } from "@/types/models";
 
 interface StudyPlanClientProps {
@@ -45,6 +50,7 @@ interface StudyPlanClientProps {
   items: ScheduleItemRecord[];
   todayCheckin?: DailyCheckinRecord | null;
   weeklyMainGoal?: string;
+  weekInfo?: CourseWeekInfo;
 }
 
 const DEFAULT_LEGAL_BLOCKS: Record<number, { subject: string; topic: string; duration: number; volume: string; type: string }[]> = {
@@ -84,6 +90,14 @@ const DEFAULT_LEGAL_BLOCKS: Record<number, { subject: string; topic: string; dur
   ],
 };
 
+interface ItemProgressState {
+  actualHours: number;
+  isCompleted: boolean;
+  studentNote: string;
+  isSubmitting?: boolean;
+  feedback?: { success: boolean; message: string };
+}
+
 export function StudyPlanClient({
   studentProfileId,
   studentName,
@@ -96,8 +110,80 @@ export function StudyPlanClient({
   items,
   todayCheckin,
   weeklyMainGoal,
+  weekInfo,
 }: StudyPlanClientProps) {
   const [selectedDay, setSelectedDay] = useState<number>(currentDayOfWeek);
+
+  // Per-item completion logging state (Module 3)
+  const [itemStates, setItemStates] = useState<Record<string, ItemProgressState>>(() => {
+    const initial: Record<string, ItemProgressState> = {};
+    items.forEach((it) => {
+      const defaultHours = it.actualDurationMinutes
+        ? Math.round((it.actualDurationMinutes / 60) * 10) / 10
+        : it.status === "DONE"
+        ? Math.round((it.targetDurationMinutes / 60) * 10) / 10
+        : it.status === "PARTIAL"
+        ? Math.round((it.targetDurationMinutes / 60) * 0.5 * 10) / 10
+        : Math.round((it.targetDurationMinutes / 60) * 10) / 10;
+      initial[it.id] = {
+        actualHours: defaultHours,
+        isCompleted: it.status === "DONE",
+        studentNote: it.studentNote || "",
+      };
+    });
+    return initial;
+  });
+
+  const handleUpdateSingleItem = async (itemId: string) => {
+    const current = itemStates[itemId];
+    if (!current) return;
+
+    setItemStates((prev) => ({
+      ...prev,
+      [itemId]: { ...prev[itemId], isSubmitting: true, feedback: undefined },
+    }));
+
+    try {
+      const res = await updateSingleScheduleItemProgressAction({
+        itemId,
+        actualHours: current.actualHours,
+        isCompleted: current.isCompleted,
+        studentNote: current.studentNote,
+      });
+
+      setItemStates((prev) => ({
+        ...prev,
+        [itemId]: {
+          ...prev[itemId],
+          isSubmitting: false,
+          feedback: {
+            success: res.success,
+            message: res.message,
+          },
+        },
+      }));
+
+      if (res.success) {
+        const found = items.find((it) => it.id === itemId);
+        if (found) {
+          found.status = current.isCompleted ? "DONE" : "PARTIAL";
+          found.actualDurationMinutes = Math.round(current.actualHours * 60);
+        }
+      }
+    } catch {
+      setItemStates((prev) => ({
+        ...prev,
+        [itemId]: {
+          ...prev[itemId],
+          isSubmitting: false,
+          feedback: {
+            success: false,
+            message: "خطا در برقراری ارتباط با سرور.",
+          },
+        },
+      }));
+    }
+  };
 
   // Clean mentor name to avoid double parentheses like: (تعیین‌شده توسط استاد علی کاظمی (پشتیبان علمی)):
   const cleanMentorName = (mentorName || "پشتیبان علمی")
@@ -178,13 +264,19 @@ export function StudyPlanClient({
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          <Badge variant="outline" className="text-xs py-1 px-3 border-primary/40 bg-primary/5 text-primary">
-            <Calendar className="h-3.5 w-3.5 ms-1.5" />
-            <span>هفته {toPersianDigits(jalaliWeekNumber)} سال {toPersianDigits(jalaliYear)}</span>
-          </Badge>
-          <Badge variant="secondary" className="text-xs py-1 px-3">
-            از شنبه {toPersianDigits(weekStartDate)} تا جمعه {toPersianDigits(weekEndDate)}
-          </Badge>
+          {weekInfo ? (
+            <ActiveWeekBadge weekInfo={weekInfo} variant="default" />
+          ) : (
+            <>
+              <Badge variant="outline" className="text-xs py-1 px-3 border-primary/40 bg-primary/5 text-primary">
+                <Calendar className="h-3.5 w-3.5 ms-1.5" />
+                <span>هفته {toPersianDigits(jalaliWeekNumber)} سال {toPersianDigits(jalaliYear)}</span>
+              </Badge>
+              <Badge variant="secondary" className="text-xs py-1 px-3">
+                از شنبه {toPersianDigits(weekStartDate)} تا جمعه {toPersianDigits(weekEndDate)}
+              </Badge>
+            </>
+          )}
           <Link href="/student/friday-reports">
             <Button size="sm" variant="outline" className="text-xs h-8 gap-1.5 border-emerald-500/40 text-emerald-700 dark:text-emerald-300">
               <Sparkles className="h-3.5 w-3.5" />
@@ -193,6 +285,10 @@ export function StudyPlanClient({
           </Link>
         </div>
       </div>
+
+      {weekInfo && (
+        <ActiveWeekBadge weekInfo={weekInfo} variant="banner" />
+      )}
 
       {banner && (
         <div
@@ -342,6 +438,133 @@ export function StudyPlanClient({
                     <p className="text-xs text-foreground leading-relaxed break-words">
                       {topic}
                     </p>
+
+                    {/* Per-Item Logging Controls (Module 3) */}
+                    {!isDefault && (
+                      <div className="mt-3 pt-3 border-t border-border/60 bg-muted/20 p-3 rounded-xl space-y-2.5">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div className="flex items-center gap-3">
+                            <label className="text-[11px] font-medium text-muted-foreground flex items-center gap-1.5">
+                              <span>ساعت واقعی:</span>
+                              <input
+                                type="number"
+                                min="0"
+                                max="10"
+                                step="0.5"
+                                value={itemStates[(block as any).id]?.actualHours ?? Math.round(((duration || 90) / 60) * 10) / 10}
+                                onChange={(e) => {
+                                  const val = parseFloat(e.target.value) || 0;
+                                  const itemId = (block as any).id;
+                                  setItemStates((prev) => ({
+                                    ...prev,
+                                    [itemId]: {
+                                      ...(prev[itemId] || {
+                                        actualHours: 0,
+                                        isCompleted: status === "DONE",
+                                        studentNote: "",
+                                      }),
+                                      actualHours: val,
+                                    },
+                                  }));
+                                }}
+                                className="w-16 px-2 py-1 text-xs text-center border border-border rounded-lg bg-background text-foreground font-mono focus:ring-1 focus:ring-primary"
+                              />
+                              <span className="text-[10px] text-muted-foreground">ساعت</span>
+                            </label>
+
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const itemId = (block as any).id;
+                                setItemStates((prev) => {
+                                  const curr = prev[itemId] || {
+                                    actualHours: Math.round(((duration || 90) / 60) * 10) / 10,
+                                    isCompleted: status === "DONE",
+                                    studentNote: "",
+                                  };
+                                  return {
+                                    ...prev,
+                                    [itemId]: {
+                                      ...curr,
+                                      isCompleted: !curr.isCompleted,
+                                    },
+                                  };
+                                });
+                              }}
+                              className={`text-[11px] px-3 py-1 rounded-lg border font-semibold transition-all flex items-center gap-1.5 ${
+                                (itemStates[(block as any).id]?.isCompleted ?? status === "DONE")
+                                  ? "bg-emerald-500/15 border-emerald-500/40 text-emerald-700 dark:text-emerald-300 shadow-xs"
+                                  : "bg-muted/50 border-border text-muted-foreground hover:bg-muted"
+                              }`}
+                            >
+                              <CheckCircle2
+                                className={`w-3.5 h-3.5 ${
+                                  (itemStates[(block as any).id]?.isCompleted ?? status === "DONE")
+                                    ? "text-emerald-600"
+                                    : "text-muted-foreground"
+                                }`}
+                              />
+                              <span>
+                                {(itemStates[(block as any).id]?.isCompleted ?? status === "DONE")
+                                  ? "تکمیل شد ✓"
+                                  : "تکمیل ناقص"}
+                              </span>
+                            </button>
+                          </div>
+
+                          <Button
+                            type="button"
+                            size="sm"
+                            disabled={itemStates[(block as any).id]?.isSubmitting}
+                            onClick={() => handleUpdateSingleItem((block as any).id)}
+                            className="text-xs h-7 px-3 bg-[#004071] hover:bg-[#002f54] text-white font-medium shadow-xs"
+                          >
+                            {itemStates[(block as any).id]?.isSubmitting ? "در حال ثبت..." : "ثبت این درس"}
+                          </Button>
+                        </div>
+
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="text"
+                            placeholder="یادداشت مختصر درباره این درس (اختیاری)..."
+                            value={itemStates[(block as any).id]?.studentNote ?? ""}
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              const itemId = (block as any).id;
+                              setItemStates((prev) => ({
+                                ...prev,
+                                [itemId]: {
+                                  ...(prev[itemId] || {
+                                    actualHours: Math.round(((duration || 90) / 60) * 10) / 10,
+                                    isCompleted: status === "DONE",
+                                    studentNote: "",
+                                  }),
+                                  studentNote: val,
+                                },
+                              }));
+                            }}
+                            className="w-full px-2.5 py-1 text-xs border border-border/80 rounded-lg bg-background text-foreground placeholder:text-muted-foreground/60 focus:ring-1 focus:ring-primary"
+                          />
+                        </div>
+
+                        {itemStates[(block as any).id]?.feedback && (
+                          <div
+                            className={`text-[11px] p-2 rounded-lg flex items-center gap-1.5 ${
+                              itemStates[(block as any).id]?.feedback?.success
+                                ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border border-emerald-500/20"
+                                : "bg-rose-500/10 text-rose-700 dark:text-rose-300 border border-rose-500/20"
+                            }`}
+                          >
+                            {itemStates[(block as any).id]?.feedback?.success ? (
+                              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                            ) : (
+                              <AlertCircle className="w-3.5 h-3.5 text-rose-600 shrink-0" />
+                            )}
+                            <span>{itemStates[(block as any).id]?.feedback?.message}</span>
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </CardContent>
                 </Card>
               );

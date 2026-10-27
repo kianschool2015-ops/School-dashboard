@@ -728,12 +728,12 @@ export function FridayReportClient({
                   )}
                 </div>
 
-                {/* Supervisor Notes if available */}
-                {selectedFeedbackReport.supervisorNotes && (
+                {/* Supervisor Notes if available (Only visible to Admin; strictly stripped for candidates) */}
+                {isAdmin && selectedFeedbackReport.supervisorNotes && (
                   <div className="rounded-2xl border border-emerald-200 dark:border-emerald-900/40 bg-emerald-50/50 dark:bg-emerald-950/20 p-5 space-y-2">
                     <div className="text-xs font-bold text-emerald-800 dark:text-emerald-300 flex items-center gap-2">
                       <ShieldCheck className="h-4 w-4 text-emerald-600" />
-                      <span>ملاحظات نظارتی سرپرست آموزشی مؤسسه</span>
+                      <span>ملاحظات نظارتی سرپرست آموزشی مؤسسه (ویژه مدیریت)</span>
                     </div>
                     <p className="text-xs text-foreground leading-relaxed bg-background/50 p-3 rounded-xl border border-emerald-100 dark:border-emerald-900/30">
                       {selectedFeedbackReport.supervisorNotes}

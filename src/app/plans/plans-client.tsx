@@ -382,10 +382,10 @@ export function PlansClient({ currentUser, templates: initialTemplates, students
                   {/* Plan Items List */}
                   <div className="space-y-3">
                     <div className="flex items-center justify-between">
-                      <span className="text-xs font-bold text-foreground">پارت‌های برنامه‌ریزی شده ({tailoredItems.length} پارت):</span>
+                      <span className="text-xs font-bold text-foreground">مباحث برنامه‌ریزی شده ({tailoredItems.length} مبحث):</span>
                       <Button size="sm" variant="outline" onClick={handleAddTailoredItem} className="text-xs h-7">
                         <Plus className="h-3 w-3 ms-1" />
-                        افزودن پارت مطالعاتی
+                        افزودن مبحث مطالعاتی
                       </Button>
                     </div>
 
@@ -478,14 +478,14 @@ export function PlansClient({ currentUser, templates: initialTemplates, students
                                   onChange={(e) => handleUpdateTailoredItem(idx, "isCatchup", e.target.checked)}
                                   className="rounded border-border"
                                 />
-                                <span>پارت جبرانی</span>
+                                <span>مبحث جبرانی</span>
                               </label>
 
                               <button
                                 type="button"
                                 onClick={() => handleRemoveTailoredItem(idx)}
                                 className="text-red-500 hover:text-red-700"
-                                title="حذف پارت"
+                                title="حذف مبحث"
                               >
                                 <Trash2 className="h-4 w-4" />
                               </button>
@@ -591,7 +591,7 @@ export function PlansClient({ currentUser, templates: initialTemplates, students
                 </CardHeader>
                 <CardContent className="p-4 space-y-2 text-xs">
                   <p className="text-muted-foreground font-medium">هدف اصلی: {t.weeklyMainGoal}</p>
-                  <p className="text-muted-foreground">شامل {t.items.length} پارت درسی شنبه تا جمعه</p>
+                  <p className="text-muted-foreground">شامل {t.items.length} مبحث درسی شنبه تا جمعه</p>
                 </CardContent>
               </Card>
             ))}

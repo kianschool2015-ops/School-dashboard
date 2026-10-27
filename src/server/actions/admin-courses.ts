@@ -11,7 +11,7 @@ import type { EntitledCourseRecord } from "@/types/models";
  * Get all configured entitled courses for Admin/Executive view
  */
 export async function getAdminEntitledCoursesAction(): Promise<EntitledCourseRecord[]> {
-  await requireRole(["CEO", "ADMIN"]);
+  await requireRole(["SUPERVISOR", "CEO", "ADMIN"]);
   try {
     await ensureDatabaseBootstrap().catch(() => {});
     const rows = await db
@@ -37,9 +37,11 @@ export async function saveEntitledCourseAction(payload: {
   garnetPurchaseUrl: string;
   hasSupport: boolean;
   supportTier?: string;
+  studyPlanStartDate?: string | null;
+  studyPlanEndDate?: string | null;
   isActive?: boolean;
 }): Promise<{ success: boolean; message: string; course?: EntitledCourseRecord }> {
-  await requireRole(["CEO", "ADMIN"]);
+  await requireRole(["SUPERVISOR", "CEO", "ADMIN"]);
 
   const normalizedCode = payload.courseCode.trim().toUpperCase();
   const courseId = payload.id || `crs_${normalizedCode.toLowerCase().replace(/[^a-z0-9]/g, "_")}`;
@@ -56,6 +58,8 @@ export async function saveEntitledCourseAction(payload: {
       garnetPurchaseUrl: payload.garnetPurchaseUrl.trim(),
       hasSupport: payload.hasSupport,
       supportTier: payload.supportTier || "GOLD",
+      studyPlanStartDate: payload.studyPlanStartDate?.trim() || null,
+      studyPlanEndDate: payload.studyPlanEndDate?.trim() || null,
       isActive: payload.isActive !== undefined ? payload.isActive : true,
       updatedAt: new Date(),
     };
@@ -72,6 +76,10 @@ export async function saveEntitledCourseAction(payload: {
       });
 
     revalidatePath("/executive");
+    revalidatePath("/settings");
+    revalidatePath("/plans");
+    revalidatePath("/student/dashboard");
+    revalidatePath("/student/study-plan");
     revalidatePath("/auth/no-support-access");
 
     return {
@@ -83,6 +91,46 @@ export async function saveEntitledCourseAction(payload: {
     return {
       success: false,
       message: "خطا در ثبت دوره در پایگاه داده.",
+    };
+  }
+}
+
+/**
+ * Update course timeline dates specifically (for Supervisor & Admin on /plans & /settings)
+ */
+export async function updateCourseStudyPlanTimelineAction(payload: {
+  courseCode: string;
+  studyPlanStartDate: string;
+  studyPlanEndDate?: string;
+}): Promise<{ success: boolean; message: string }> {
+  await requireRole(["SUPERVISOR", "CEO", "ADMIN"]);
+
+  try {
+    await ensureDatabaseBootstrap().catch(() => {});
+
+    const normalizedCode = payload.courseCode.trim().toUpperCase();
+    await db
+      .update(entitledCourses)
+      .set({
+        studyPlanStartDate: payload.studyPlanStartDate.trim(),
+        studyPlanEndDate: payload.studyPlanEndDate?.trim() || null,
+        updatedAt: new Date(),
+      })
+      .where(eq(entitledCourses.courseCode, normalizedCode));
+
+    revalidatePath("/plans");
+    revalidatePath("/settings");
+    revalidatePath("/student/dashboard");
+    revalidatePath("/student/study-plan");
+
+    return {
+      success: true,
+      message: `تقویم مطالعاتی دوره «${normalizedCode}» با موفقیت به‌روزرسانی شد.`,
+    };
+  } catch (error) {
+    return {
+      success: false,
+      message: error instanceof Error ? error.message : "خطا در به‌روزرسانی تقویم دوره.",
     };
   }
 }

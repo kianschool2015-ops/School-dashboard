@@ -103,6 +103,18 @@ export async function sendDirectMessageAction(payload: {
     }
   }
 
+  // Voice message gating (Requirement 10 / FIX 1: blocked for STUDENT, allowed for MENTOR, SUPERVISOR, ADMIN, CEO)
+  const isVoice =
+    payload.attachmentType === "voice" ||
+    payload.attachmentType?.startsWith("audio/") ||
+    payload.attachmentUrl?.startsWith("data:audio/");
+  if (isVoice && session.role === "STUDENT") {
+    return {
+      success: false,
+      message: "ارسال پیام صوتی برای داوطلبان مجاز نمی‌باشد و تنها کادر پشتیبانی، سرپرستان و مدیران مجاز به ارسال پیام صوتی هستند.",
+    };
+  }
+
   // Validate attachment size
   if (payload.attachmentSize && payload.attachmentSize > MAX_ATTACHMENT_SIZE) {
     return {

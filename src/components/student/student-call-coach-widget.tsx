@@ -88,22 +88,21 @@ export function StudentCallCoachWidget() {
               </div>
               <div className="min-w-0">
                 <CardTitle className="text-xs sm:text-sm font-bold text-foreground truncate">
-                  تماس با پشتیبان آموزشی
+                  {status?.mentorName && status.mentorName !== "در انتظار تخصیص پشتیبان"
+                    ? `پشتیبان اختصاصی شما: ${status.mentorName}`
+                    : "در انتظار تخصیص پشتیبان"}
                 </CardTitle>
                 <p className="text-[11px] text-muted-foreground truncate">
-                  پشتیبان:{" "}
-                  <span className="font-semibold text-foreground">
-                    {status?.mentorName || "در حال اتصال..."}
-                  </span>
+                  سامانه تماس امن و معکوس داوطلب با پشتیبان
                 </p>
               </div>
             </div>
 
             <Badge
               variant={status?.isOpen ? "green" : "outline"}
-              className="text-[10px] px-2 py-0.5 shrink-0"
+              className="text-[10px] px-2.5 py-0.5 shrink-0 font-medium"
             >
-              {status?.isOpen ? "در ساعت پاسخگویی" : "خارج از بازه پاسخگویی"}
+              {status?.isOpen ? "هم‌اکنون آنلاین و آماده مکالمه" : "خارج از بازه پاسخگویی"}
             </Badge>
           </div>
         </CardHeader>
@@ -113,13 +112,10 @@ export function StudentCallCoachWidget() {
           <div className="flex items-start gap-2.5 text-xs text-muted-foreground bg-muted/40 p-2.5 rounded-xl border border-border/80">
             <Clock className="w-4 h-4 text-[#004071] shrink-0 mt-0.5" />
             <div className="space-y-0.5 min-w-0">
-              <span className="font-semibold text-foreground text-[11px] block">
-                ساعات پاسخگویی تلفنی:
-              </span>
-              <span className="text-[11px] leading-relaxed block">
-                {status?.scheduleDescription
-                  ? toPersianDigits(status.scheduleDescription)
-                  : "در حال دریافت ساعات کاری پشتیبان..."}
+              <span className="font-semibold text-foreground text-[11px] block leading-relaxed">
+                {status?.scheduleDescription && status.scheduleDescription !== "در انتظار تخصیص پشتیبان"
+                  ? `روزها و ساعات پاسخگویی تلفنی پشتیبان: ${toPersianDigits(status.scheduleDescription)}`
+                  : "روزها و ساعات پاسخگویی تلفنی پشتیبان: در انتظار تخصیص پشتیبان"}
               </span>
             </div>
           </div>

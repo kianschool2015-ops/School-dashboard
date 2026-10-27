@@ -575,6 +575,8 @@ export async function runDatabaseBootstrap(client: postgres.Sql): Promise<void> 
       garnet_purchase_url text NOT NULL,
       has_support boolean DEFAULT true NOT NULL,
       support_tier varchar(50) DEFAULT 'GOLD' NOT NULL,
+      study_plan_start_date varchar(50),
+      study_plan_end_date varchar(50),
       is_active boolean DEFAULT true NOT NULL,
       created_at timestamp DEFAULT now() NOT NULL,
       updated_at timestamp DEFAULT now() NOT NULL
@@ -684,6 +686,7 @@ export async function runDatabaseBootstrap(client: postgres.Sql): Promise<void> 
     ALTER TABLE users ADD COLUMN IF NOT EXISTS can_create_exams boolean DEFAULT false NOT NULL;
     ALTER TABLE users ADD COLUMN IF NOT EXISTS garnet_user_id text;
     ALTER TABLE users ADD COLUMN IF NOT EXISTS garnet_username text;
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS supervisor_id text;
 
     -- Student profiles column migrations
     ALTER TABLE student_profiles ADD COLUMN IF NOT EXISTS enrolled_course_code text;
@@ -772,6 +775,22 @@ export async function runDatabaseBootstrap(client: postgres.Sql): Promise<void> 
 
     ALTER TABLE friday_reports ADD COLUMN IF NOT EXISTS status varchar(30) DEFAULT 'SUBMITTED';
     ALTER TABLE video_settings ADD COLUMN IF NOT EXISTS is_enabled boolean DEFAULT true NOT NULL;
+
+    -- Entitled courses timeline migrations (Module 1)
+    ALTER TABLE entitled_courses ADD COLUMN IF NOT EXISTS study_plan_start_date VARCHAR(50);
+    ALTER TABLE entitled_courses ADD COLUMN IF NOT EXISTS study_plan_end_date VARCHAR(50);
+
+    -- Student schedules timeline migrations (Module 1)
+    ALTER TABLE student_schedules ADD COLUMN IF NOT EXISTS week_start_date TEXT;
+    ALTER TABLE student_schedules ADD COLUMN IF NOT EXISTS week_end_date TEXT;
+
+    -- Schedule items per-item tracking migrations (Module 3)
+    ALTER TABLE schedule_items ADD COLUMN IF NOT EXISTS actual_duration_minutes INTEGER DEFAULT 0;
+    ALTER TABLE schedule_items ADD COLUMN IF NOT EXISTS student_note TEXT;
+    ALTER TABLE schedule_items ADD COLUMN IF NOT EXISTS completed_at TIMESTAMP;
+
+    -- Users supervisor hierarchy migration (Module 8)
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS supervisor_id TEXT;
   `);
 
   // 4. Create Indexes Idempotently

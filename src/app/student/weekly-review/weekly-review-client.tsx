@@ -139,7 +139,7 @@ export function WeeklyReviewClient({ studentProfileId }: WeeklyReviewClientProps
           rows={3}
           value={feedbackNote}
           onChange={(e) => setFeedbackNote(e.target.value)}
-          placeholder="مثال: لطفاً پارت تست‌زنی آیین دادرسی مدنی را در روزهای زوج قرار دهید..."
+          placeholder="مثال: لطفاً مبحث تست‌زنی آیین دادرسی مدنی را در روزهای زوج قرار دهید..."
           className="w-full text-xs rounded-lg border border-border bg-card p-3 text-foreground placeholder-muted-foreground/60 focus:border-indigo-500 focus:outline-none resize-none"
         />
       </Card>

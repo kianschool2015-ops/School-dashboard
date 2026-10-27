@@ -659,7 +659,7 @@ export function MentorStudentsClient({
                         <span className="inline-flex items-center gap-1 text-muted-foreground bg-muted px-2 py-0.5 rounded-md">
                           <BookOpen className="h-3.5 w-3.5 text-indigo-400" />
                           <span>
-                            برنامه هفتگی: {toPersianDigits(student.scheduleItemCount)} پارت مطالعه فعال
+                            برنامه هفتگی: {toPersianDigits(student.scheduleItemCount)} مبحث مطالعه فعال
                           </span>
                         </span>
 

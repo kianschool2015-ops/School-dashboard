@@ -492,10 +492,15 @@ export async function publishExamAction(
       return { success: false, message: "شما مجاز به تغییر وضعیت انتشار این آزمون نیستید." };
     }
 
-    if (isPublished && exam.totalQuestions === 0) {
+    const currentQuestions = await db
+      .select({ id: examQuestions.id })
+      .from(examQuestions)
+      .where(eq(examQuestions.examId, examId));
+
+    if (isPublished && currentQuestions.length === 0) {
       return {
         success: false,
-        message: "آزمون بدون حداقل یک سؤال طراحی‌شده قابلیت انتشار در سامانه را ندارد.",
+        message: "آزمون بدون حداقل یک سؤال طراحی‌شده قابلیت تایید و انتشار در سامانه را ندارد.",
       };
     }
 
@@ -503,18 +508,20 @@ export async function publishExamAction(
       .update(exams)
       .set({
         isPublished,
+        totalQuestions: currentQuestions.length,
         updatedAt: new Date(),
       })
       .where(eq(exams.id, examId));
 
     revalidatePath("/exams");
     revalidatePath("/student/exams");
+    revalidatePath("/student/dashboard");
     revalidatePath(`/exams/builder/${examId}`);
 
     return {
       success: true,
       message: isPublished
-        ? "آزمون با موفقیت نهایی و در کارتابل داوطلبان منتشر گردید."
+        ? `آزمون با موفقیت تایید و با ${currentQuestions.length} سؤال در کارتابل داوطلبان منتشر گردید.`
         : "آزمون از حالت انتشار خارج و به وضعیت پیش‌نویس تغییر یافت.",
     };
   } catch (error: unknown) {
@@ -1136,8 +1143,20 @@ export async function getSubmissionForReviewAction(submissionId: string) {
     if (!sub) return null;
 
     // H-05 IDOR Guard: Mentors can strictly inspect ONLY their assigned students' submissions
-    if (session.role === "MENTOR" && sub.submission.mentorId !== session.userId) {
-      return null;
+    if (session.role === "MENTOR") {
+      const isDirectMentor = sub.submission.mentorId === session.userId;
+      let isCurrentAssignedMentor = false;
+      if (!isDirectMentor && sub.submission.studentId) {
+        const [prof] = await db
+          .select({ mentorId: studentProfiles.mentorId })
+          .from(studentProfiles)
+          .where(eq(studentProfiles.userId, sub.submission.studentId))
+          .limit(1);
+        isCurrentAssignedMentor = prof?.mentorId === session.userId;
+      }
+      if (!isDirectMentor && !isCurrentAssignedMentor) {
+        return null;
+      }
     }
 
     // Fetch Questions
@@ -1185,8 +1204,20 @@ export async function publishExamResultToStudentAction(
       return { success: false, message: "پاسخنامه مورد نظر یافت نشد." };
     }
 
-    if (session.role === "MENTOR" && sub.mentorId !== session.userId) {
-      return { success: false, message: "شما پشتیبان مستقیم این داوطلب نیستید." };
+    if (session.role === "MENTOR") {
+      const isDirectMentor = sub.mentorId === session.userId;
+      let isCurrentAssignedMentor = false;
+      if (!isDirectMentor && sub.studentId) {
+        const [prof] = await db
+          .select({ mentorId: studentProfiles.mentorId })
+          .from(studentProfiles)
+          .where(eq(studentProfiles.userId, sub.studentId))
+          .limit(1);
+        isCurrentAssignedMentor = prof?.mentorId === session.userId;
+      }
+      if (!isDirectMentor && !isCurrentAssignedMentor) {
+        return { success: false, message: "شما پشتیبان مستقیم این داوطلب نیستید." };
+      }
     }
 
     const now = new Date();
@@ -1194,6 +1225,7 @@ export async function publishExamResultToStudentAction(
     await db
       .update(examSubmissions)
       .set({
+        mentorId: session.userId,
         status: "PUBLISHED_TO_STUDENT",
         mentorNotes: mentorNotes.trim(),
         reviewedAt: now,
@@ -1202,6 +1234,8 @@ export async function publishExamResultToStudentAction(
       .where(eq(examSubmissions.id, submissionId));
 
     revalidatePath("/student/exams");
+    revalidatePath("/student/dashboard");
+    revalidatePath("/exams");
     revalidatePath(`/student/exams/${sub.examId}`);
     revalidatePath("/mentor/students");
     revalidatePath(`/mentor/exams/review/${submissionId}`);

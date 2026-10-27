@@ -1335,6 +1335,46 @@ export function QuestionDesignerClient({
                 </CardContent>
               </Card>
             ))}
+
+            {/* Completion & Final Confirmation Banner */}
+            <div className="p-6 bg-gradient-to-r from-emerald-500/10 via-teal-500/10 to-primary/10 border-2 border-emerald-500/30 rounded-2xl flex flex-col md:flex-row items-center justify-between gap-4 shadow-sm mt-8">
+              <div className="flex items-center gap-4">
+                <div className="p-3 bg-emerald-500 text-white rounded-xl shadow-md">
+                  <CheckCircle2 className="h-6 w-6" />
+                </div>
+                <div className="space-y-1">
+                  <h4 className="text-sm font-bold text-foreground">
+                    طراحی سؤالات به پایان رسید؟ تایید نهایی و ایجاد آزمون در سامانه
+                  </h4>
+                  <p className="text-xs text-muted-foreground">
+                    تاکنون {toPersianDigits(questions.length)} سؤال طراحی و ثبت شده است. با کلیک بر روی این دکمه، آزمون تایید نهایی شده و جهت شرکت داوطلبان در سامانه منتشر می‌گردد.
+                  </p>
+                </div>
+              </div>
+
+              <Button
+                size="lg"
+                disabled={isPublishing || questions.length === 0}
+                onClick={handlePublishToggle}
+                className={`text-sm font-bold px-6 py-3 shadow-md flex items-center gap-2 shrink-0 ${
+                  exam.isPublished
+                    ? "bg-emerald-600 hover:bg-emerald-700 text-white"
+                    : "bg-primary hover:bg-primary/90 text-primary-foreground"
+                }`}
+              >
+                {exam.isPublished ? (
+                  <>
+                    <CheckCircle2 className="h-5 w-5" />
+                    <span>آزمون تایید و منتشر شده است (کلیک برای بازگشت به پیش‌نویس)</span>
+                  </>
+                ) : (
+                  <>
+                    <Send className="h-5 w-5" />
+                    <span>تایید نهایی، ایجاد و انتشار آزمون در سامانه</span>
+                  </>
+                )}
+              </Button>
+            </div>
           </div>
         )}
       </div>

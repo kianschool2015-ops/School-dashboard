@@ -923,11 +923,11 @@ export function SettingsClient({
                 <p className="text-base font-bold mt-1 flex items-center gap-1.5">
                   {currentUser.hasPassword ? (
                     <span className="text-emerald-600 flex items-center gap-1">
-                      <CheckCircle2 className="h-4 w-4" /> فعال (امکان لاگین بدون پیامک)
+                      <CheckCircle2 className="h-4 w-4" /> فعال (امکان ورود با رمز عبور بدون پیامک)
                     </span>
                   ) : (
                     <span className="text-amber-600 flex items-center gap-1">
-                      <Lock className="h-4 w-4" /> غیرفعال (فقط پیامک OTP)
+                      <Lock className="h-4 w-4" /> غیرفعال (فقط کد پیامکی یکبار مصرف)
                     </span>
                   )}
                 </p>
@@ -962,7 +962,7 @@ export function SettingsClient({
               تنظیم و تغییر کلمه عبور ثابت
             </CardTitle>
             <p className="text-xs text-muted-foreground">
-              با تنظیم کلمه عبور ثابت، می‌توانید در کنار رمز یکبار مصرف (OTP)، در هر زمان با شماره موبایل و این پسورد وارد پنل خود شوید.
+              با تنظیم کلمه عبور ثابت، می‌توانید در کنار کد پیامکی یکبار مصرف، در هر زمان با شماره موبایل و این رمز عبور وارد پنل خود شوید.
             </p>
           </CardHeader>
           <CardContent>
@@ -1711,7 +1711,7 @@ export function SettingsClient({
                   </div>
 
                   <div className="sm:col-span-2">
-                    <label className="block text-xs font-semibold mb-1">کلید امنیتی اتصال API (JWT / Token)</label>
+                    <label className="block text-xs font-semibold mb-1">کلید امنیتی اتصال و توکن احراز هویت وب‌سرویس</label>
                     <input
                       type="password"
                       value={videoSettings.apiKey}
@@ -1840,7 +1840,7 @@ export function SettingsClient({
 
                   <div className="space-y-1">
                     <label className="block text-xs font-semibold text-foreground">
-                      مسیر وب‌سرویس ورود با رمز (Login Endpoint)
+                      نشانی وب‌سرویس ورود با رمز عبور
                     </label>
                     <input
                       type="text"
@@ -1855,7 +1855,7 @@ export function SettingsClient({
 
                   <div className="space-y-1">
                     <label className="block text-xs font-semibold text-foreground">
-                      مسیر ارسال کد پیامکی مرحله ۱ (Send OTP)
+                      نشانی ارسال کد پیامکی مرحله ۱
                     </label>
                     <input
                       type="text"
@@ -1870,7 +1870,7 @@ export function SettingsClient({
 
                   <div className="space-y-1">
                     <label className="block text-xs font-semibold text-foreground">
-                      مسیر بررسی کد پیامکی مرحله ۲ (Verify OTP)
+                      نشانی بررسی و صحت‌سنجی کد پیامکی مرحله ۲
                     </label>
                     <input
                       type="text"
@@ -1885,7 +1885,7 @@ export function SettingsClient({
 
                   <div className="space-y-1">
                     <label className="block text-xs font-semibold text-foreground">
-                      مسیر استعلام دوره‌ها مرحله ۳ (Product List)
+                      نشانی استعلام دوره‌های خریداری‌شده مرحله ۳
                     </label>
                     <input
                       type="text"
@@ -2060,7 +2060,7 @@ export function SettingsClient({
                         : "bg-muted text-muted-foreground hover:bg-muted/80"
                     }`}
                   >
-                    مرحله ۱: ارسال پیامک کد (Send OTP)
+                    مرحله ۱: ارسال پیامک کد تایید
                   </button>
                   <button
                     type="button"
@@ -2071,7 +2071,7 @@ export function SettingsClient({
                         : "bg-muted text-muted-foreground hover:bg-muted/80"
                     }`}
                   >
-                    مرحله ۲: بررسی کد تایید (Verify OTP)
+                    مرحله ۲: بررسی و صحت‌سنجی کد تایید
                   </button>
                   <button
                     type="button"
@@ -2082,7 +2082,7 @@ export function SettingsClient({
                         : "bg-muted text-muted-foreground hover:bg-muted/80"
                     }`}
                   >
-                    مرحله ۳: استعلام دوره‌ها (Product List)
+                    مرحله ۳: استعلام دوره‌های فعال
                   </button>
                   <button
                     type="button"
@@ -2124,7 +2124,7 @@ export function SettingsClient({
                         className="h-10 text-xs font-bold bg-blue-600 hover:bg-blue-700 text-white flex items-center gap-2"
                       >
                         <Zap className="h-4 w-4" />
-                        {isTestingStage1 ? "در حال ارسال به وب‌سرویس..." : "تست ارسال پیامک (Stage 1)"}
+                        {isTestingStage1 ? "در حال ارسال به وب‌سرویس..." : "تست ارسال پیامک کد تایید (مرحله ۱)"}
                       </Button>
                     </div>
 
@@ -2196,7 +2196,7 @@ export function SettingsClient({
                           className="w-full h-10 text-xs font-bold bg-blue-600 hover:bg-blue-700 text-white flex items-center justify-center gap-2"
                         >
                           <Zap className="h-4 w-4" />
-                          {isTestingStage2 ? "در حال بررسی..." : "تست بررسی کد (Stage 2)"}
+                          {isTestingStage2 ? "در حال بررسی..." : "تست بررسی و صحت‌سنجی کد (مرحله ۲)"}
                         </Button>
                       </div>
                     </div>
@@ -2261,7 +2261,7 @@ export function SettingsClient({
                         className="h-10 text-xs font-bold bg-blue-600 hover:bg-blue-700 text-white flex items-center gap-2"
                       >
                         <Zap className="h-4 w-4" />
-                        {isTestingStage3 ? "در حال دریافت دوره‌ها..." : "استعلام فاکتورها (Stage 3)"}
+                        {isTestingStage3 ? "در حال دریافت دوره‌ها..." : "استعلام دوره‌ها و فاکتورها (مرحله ۳)"}
                       </Button>
                     </div>
 

@@ -610,7 +610,7 @@ export function ExecutiveInspectorTabs({
             <div className="flex items-center justify-between pb-2 border-b border-border">
               <h3 className="text-sm font-bold text-foreground flex items-center gap-2">
                 <Users className="h-4 w-4 text-purple-400" />
-                <span>ارزیابی رعایت SLA، ظرفیت پذیرش و تماس‌های امن Zoiper پشتیبانان</span>
+                <span>ارزیابی زمان‌بندی پاسخگویی، ظرفیت پذیرش و تماس‌های امن تلفنی پشتیبانان</span>
               </h3>
               <span className="text-xs text-muted-foreground font-mono">
                 کل پشتیبانان فعال: {toPersianDigits(mentors.length)} نفر
@@ -686,7 +686,7 @@ export function ExecutiveInspectorTabs({
                   {/* SLA Compliance Bar */}
                   <div className="space-y-1">
                     <div className="flex justify-between text-[11px]">
-                      <span className="text-muted-foreground">نرخ رعایت سقف زمانی SLA:</span>
+                      <span className="text-muted-foreground">نرخ رعایت سقف زمانی پاسخگویی:</span>
                       <span className="text-emerald-400 font-bold persian-nums">۹۶.۴٪</span>
                     </div>
                     <Progress value={96.4} className="h-1.5" indicatorClassName="bg-emerald-500" />
@@ -1017,10 +1017,10 @@ export function ExecutiveInspectorTabs({
                     onChange={(e) => setNewFeatIcon(e.target.value)}
                     className="h-9 px-3 text-xs border border-border rounded-lg bg-background"
                   >
-                    <option value="ShieldAlert">آیکون پایش و هدایت (ShieldAlert)</option>
-                    <option value="CalendarCheck">آیکون برنامه راهبردی (CalendarCheck)</option>
-                    <option value="BarChart3">آیکون آمار و گانت (BarChart3)</option>
-                    <option value="Headphones">آیکون مشاوره و تلفن (Headphones)</option>
+                    <option value="ShieldAlert">نماد پایش و نظارت</option>
+                    <option value="CalendarCheck">نماد برنامه راهبردی</option>
+                    <option value="BarChart3">نماد آمار و نمودار زمان‌بندی</option>
+                    <option value="Headphones">نماد مشاوره و تماس تلفنی</option>
                   </select>
                 </div>
                 <textarea

@@ -28,8 +28,10 @@ export default async function StudentExamSessionPage({ params }: PageProps) {
   }
 
   // 1. Fetch Exam and Submissions safely
-  let examRow: any = null;
-  let existingSub: any = null;
+  type ExamRow = typeof exams.$inferSelect;
+  type ExamSubRow = typeof examSubmissions.$inferSelect;
+  let examRow: ExamRow | null = null;
+  let existingSub: Partial<ExamSubRow> | null = null;
   let questions: ExamQuestion[] = [];
   let currentUser: { fullName: string; nationalId: string | null; phoneNumber: string | null } | null = null;
   let acceptedLegalTermsAt: Date | null = null;

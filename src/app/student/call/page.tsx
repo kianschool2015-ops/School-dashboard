@@ -123,14 +123,22 @@ export default function StudentCallPage() {
         <div className="bg-linear-to-l from-[#004071] to-[#002847] text-white p-6">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div className="space-y-1.5">
-              <span className="text-xs font-medium text-slate-300">پشتیبان علمی و مشاور شما</span>
+              <span className="text-xs font-medium text-slate-300">
+                {status?.mentorName && status.mentorName !== "در انتظار تخصیص پشتیبان"
+                  ? "پشتیبان اختصاصی و مشاور تحصیلی شما"
+                  : "وضعیت تخصیص پشتیبان"}
+              </span>
               <h2 className="text-lg sm:text-xl font-bold text-white flex items-center gap-2">
-                <span>{status?.mentorName || "در حال بارگذاری..."}</span>
+                <span>
+                  {status?.mentorName && status.mentorName !== "در انتظار تخصیص پشتیبان"
+                    ? `پشتیبان اختصاصی شما: ${status.mentorName}`
+                    : "در انتظار تخصیص پشتیبان"}
+                </span>
                 <Badge
                   variant={status?.isOpen ? "green" : "outline"}
-                  className="text-xs px-2.5 py-0.5 border-white/20 bg-white/10 text-white"
+                  className="text-xs px-2.5 py-0.5 border-white/20 bg-white/10 text-white font-medium"
                 >
-                  {status?.isOpen ? "هم‌اکنون آماده مکالمه" : "خارج از بازه پاسخگویی"}
+                  {status?.isOpen ? "هم‌اکنون آنلاین و آماده مکالمه" : "خارج از بازه پاسخگویی"}
                 </Badge>
               </h2>
             </div>
@@ -138,11 +146,15 @@ export default function StudentCallPage() {
             <div className="flex items-center gap-2 bg-white/10 px-4 py-2.5 rounded-xl backdrop-blur-xs border border-white/15">
               <Clock className="w-4 h-4 text-amber-300 shrink-0" />
               <div className="text-xs">
-                <span className="text-slate-300 block text-[10px]">ساعات کاری تعیین‌شده:</span>
-                <span className="font-semibold text-white font-mono">
-                  {status?.scheduleDescription
+                <span className="text-slate-300 block text-[10px]">
+                  {status?.scheduleDescription && status.scheduleDescription !== "در انتظار تخصیص پشتیبان"
+                    ? "روزها و ساعات پاسخگویی تلفنی پشتیبان:"
+                    : "وضعیت پاسخگویی تلفنی:"}
+                </span>
+                <span className="font-semibold text-white font-mono text-[11px] leading-relaxed">
+                  {status?.scheduleDescription && status.scheduleDescription !== "در انتظار تخصیص پشتیبان"
                     ? toPersianDigits(status.scheduleDescription)
-                    : "در حال دریافت..."}
+                    : "در انتظار تخصیص پشتیبان"}
                 </span>
               </div>
             </div>
