@@ -48,6 +48,13 @@ const defaultSmsSettings: SmsSettingsRecord = {
       description: "اطلاع‌رسانی به داوطلب پس از ثبت گزارش تماس",
       templateMessage: "گزارش مشاوره جدید توسط پشتیبان شما ({mentor}) در سامانه مشاهیر دانش ثبت گردید.",
     },
+    MENTOR_ASSIGNED: {
+      event: "MENTOR_ASSIGNED",
+      isEnabled: true,
+      title: "تعیین پشتیبان آموزشی اختصاصی",
+      description: "اطلاع‌رسانی به داوطلب پس از تخصیص پشتیبان توسط سرپرست",
+      templateMessage: "داوطلب گرامی {name}، پشتیبان اختصاصی شما ({mentor}) در سامانه مشاهیر دانش تعیین گردید.",
+    },
     TRIAGE_RESOLVED: {
       event: "TRIAGE_RESOLVED",
       isEnabled: true,

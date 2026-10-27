@@ -4,57 +4,82 @@ import React, { useEffect, useState } from "react";
 import { Sun, Moon } from "lucide-react";
 
 export function ThemeToggle() {
-  const [theme, setTheme] = useState<"dark" | "light">("dark");
+  const [theme, setTheme] = useState<"dark" | "light">("light");
   const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
     setMounted(true);
     const saved = localStorage.getItem("mashahir_theme") as "dark" | "light" | null;
-    const initialTheme = saved || "dark";
+    const initialTheme = saved === "dark" ? "dark" : "light";
     setTheme(initialTheme);
     document.documentElement.setAttribute("data-theme", initialTheme);
-    if (initialTheme === "light") {
-      document.documentElement.classList.add("light");
-      document.documentElement.classList.remove("dark");
-    } else {
+    if (initialTheme === "dark") {
       document.documentElement.classList.add("dark");
       document.documentElement.classList.remove("light");
+    } else {
+      document.documentElement.classList.add("light");
+      document.documentElement.classList.remove("dark");
     }
   }, []);
 
-  const toggleTheme = () => {
-    const nextTheme = theme === "dark" ? "light" : "dark";
-    setTheme(nextTheme);
-    localStorage.setItem("mashahir_theme", nextTheme);
-    document.documentElement.setAttribute("data-theme", nextTheme);
-    if (nextTheme === "light") {
-      document.documentElement.classList.add("light");
-      document.documentElement.classList.remove("dark");
-    } else {
+  const selectTheme = (newTheme: "dark" | "light") => {
+    setTheme(newTheme);
+    localStorage.setItem("mashahir_theme", newTheme);
+    document.documentElement.setAttribute("data-theme", newTheme);
+    if (newTheme === "dark") {
       document.documentElement.classList.add("dark");
       document.documentElement.classList.remove("light");
+    } else {
+      document.documentElement.classList.add("light");
+      document.documentElement.classList.remove("dark");
     }
   };
 
   if (!mounted) {
     return (
-      <div className="h-8 w-8 rounded-lg bg-muted border border-border" />
+      <div className="rounded-full p-1 bg-slate-800 border border-slate-300 dark:border-slate-700 flex items-center gap-1 w-[72px] h-[34px] animate-pulse" />
     );
   }
 
   return (
-    <button
-      type="button"
-      onClick={toggleTheme}
-      title={theme === "dark" ? "تغییر به حالت کاملاً روشن (Light Mode)" : "تغییر به حالت تاریک (Dark Mode)"}
-      className="p-1.5 rounded-lg border border-border bg-card text-muted-foreground hover:text-foreground hover:bg-muted transition-colors flex items-center justify-center shadow-xs"
-      aria-label="تغییر تم"
+    <div
+      role="radiogroup"
+      aria-label="تغییر پوسته کاربری"
+      className="rounded-full p-1 bg-slate-800 text-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 flex items-center gap-1 shadow-xs shrink-0"
     >
-      {theme === "dark" ? (
-        <Sun className="h-4 w-4 text-amber-400" />
-      ) : (
-        <Moon className="h-4 w-4 text-indigo-600" />
-      )}
-    </button>
+      {/* Light Mode Button (Sun) */}
+      <button
+        type="button"
+        role="radio"
+        aria-checked={theme === "light"}
+        onClick={() => selectTheme("light")}
+        title="پوسته روشن (حالت روز)"
+        className={`transition-all duration-150 flex items-center justify-center ${
+          theme === "light"
+            ? "bg-amber-400 text-slate-900 rounded-full p-1.5 shadow-sm"
+            : "text-slate-400 hover:text-white p-1.5 rounded-full"
+        }`}
+      >
+        <Sun className="h-3.5 w-3.5" />
+        <span className="sr-only">حالت روشن</span>
+      </button>
+
+      {/* Dark Mode Button (Moon) */}
+      <button
+        type="button"
+        role="radio"
+        aria-checked={theme === "dark"}
+        onClick={() => selectTheme("dark")}
+        title="پوسته تاریک (حالت شب)"
+        className={`transition-all duration-150 flex items-center justify-center ${
+          theme === "dark"
+            ? "bg-indigo-600 text-white rounded-full p-1.5 shadow-sm"
+            : "text-slate-400 hover:text-white p-1.5 rounded-full"
+        }`}
+      >
+        <Moon className="h-3.5 w-3.5" />
+        <span className="sr-only">حالت تاریک</span>
+      </button>
+    </div>
   );
 }

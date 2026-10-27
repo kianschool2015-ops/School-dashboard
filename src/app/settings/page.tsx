@@ -22,7 +22,11 @@ import type {
   EscalationTicketRecord,
   VoipAmiSettings,
   VideoConferenceSettings,
+  SsoApiSettingsRecord,
+  EntitledCourseRecord,
 } from "@/types/models";
+import { getSsoApiSettingsAction } from "@/server/actions/garnet";
+import { getAdminEntitledCoursesAction } from "@/server/actions/admin-courses";
 
 export default async function SettingsPage() {
   const session = await requireAuth();
@@ -46,8 +50,13 @@ export default async function SettingsPage() {
   let smsLogs: SmsLogRecord[] = [];
   let voipSettings: VoipAmiSettings | null = null;
   let videoSettings: VideoConferenceSettings | null = null;
+  let ssoSettings: SsoApiSettingsRecord | null = null;
+  let entitledCoursesList: EntitledCourseRecord[] = [];
 
   if (isManager) {
+    ssoSettings = await getSsoApiSettingsAction();
+    entitledCoursesList = await getAdminEntitledCoursesAction();
+
     const [sRow] = await db
       .select()
       .from(smsSettingsTable)
@@ -187,6 +196,8 @@ export default async function SettingsPage() {
         mentorsList={mentorsList}
         voipSettings={voipSettings}
         videoSettings={videoSettings}
+        ssoSettings={ssoSettings}
+        entitledCourses={entitledCoursesList}
       />
     </div>
   );

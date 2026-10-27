@@ -122,6 +122,16 @@ export const studentProfiles = pgTable(
     enrolledCourseCode: text("enrolled_course_code"),
     enrolledCourseName: text("enrolled_course_name"),
     hasActiveSupport: boolean("has_active_support").default(true).notNull(),
+    externalUserId: text("external_user_id"),
+    initialSyncCompleted: boolean("initial_sync_completed").default(false).notNull(),
+    initialSyncAt: timestamp("initial_sync_at"),
+    provisioningSource: varchar("provisioning_source", { length: 30 }).default("LOCAL").notNull(),
+    acceptedLegalTermsAt: timestamp("accepted_legal_terms_at"),
+    acceptedLegalTermsIp: varchar("accepted_legal_terms_ip", { length: 64 }),
+    isProbationary: boolean("is_probationary").default(true).notNull(),
+    lastEntitlementCheckAt: timestamp("last_entitlement_check_at"),
+    lastCentralCheckResult: text("last_central_check_result"),
+    suspensionReason: text("suspension_reason"),
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at").defaultNow().notNull(),
   },
@@ -300,8 +310,8 @@ export const mentorTriageCases = pgTable(
   "mentor_triage_cases",
   {
     id: text("id").primaryKey(),
-    studentProfileId: text("student_profile_id").references(() => studentProfiles.id).notNull(),
-    mentorId: text("mentor_id").references(() => users.id).notNull(),
+    studentProfileId: text("student_profile_id").references(() => studentProfiles.id, { onDelete: "cascade" }).notNull(),
+    mentorId: text("mentor_id").references(() => users.id, { onDelete: "set null" }),
     triggerCode: varchar("trigger_code", { length: 10 }).notNull(), // A01 - A09
     priorityTier: integer("priority_tier").notNull(), // 1 to 6
     description: text("description").notNull(),
@@ -390,10 +400,10 @@ export const hierarchyTasks = pgTable(
   "hierarchy_tasks",
   {
     id: text("id").primaryKey(),
-    senderId: text("sender_id").references(() => users.id).notNull(),
+    senderId: text("sender_id").references(() => users.id, { onDelete: "cascade" }).notNull(),
     senderRole: varchar("sender_role", { length: 20 }).notNull(),
     senderName: text("sender_name").notNull(),
-    receiverId: text("receiver_id").references(() => users.id).notNull(),
+    receiverId: text("receiver_id").references(() => users.id, { onDelete: "cascade" }).notNull(),
     receiverRole: varchar("receiver_role", { length: 20 }).notNull(),
     receiverName: text("receiver_name").notNull(),
     title: text("title").notNull(),
@@ -403,7 +413,7 @@ export const hierarchyTasks = pgTable(
     dueDate: varchar("due_date", { length: 30 }).notNull(),
     resolutionNotes: text("resolution_notes"),
     seenAt: timestamp("seen_at"),
-    reviewedBy: text("reviewed_by").references(() => users.id),
+    reviewedBy: text("reviewed_by").references(() => users.id, { onDelete: "set null" }),
     reviewedByName: text("reviewed_by_name"),
     reviewNotes: text("review_notes"),
     reviewedAt: timestamp("reviewed_at"),
@@ -423,10 +433,10 @@ export const directMessages = pgTable(
   {
     id: text("id").primaryKey(),
     threadId: varchar("thread_id", { length: 100 }).notNull(),
-    senderId: text("sender_id").references(() => users.id).notNull(),
+    senderId: text("sender_id").references(() => users.id, { onDelete: "cascade" }).notNull(),
     senderName: text("sender_name").notNull(),
     senderRole: varchar("sender_role", { length: 20 }).notNull(),
-    receiverId: text("receiver_id").references(() => users.id).notNull(),
+    receiverId: text("receiver_id").references(() => users.id, { onDelete: "cascade" }).notNull(),
     receiverName: text("receiver_name").notNull(),
     receiverRole: varchar("receiver_role", { length: 20 }).notNull(),
     message: text("message").notNull(),
@@ -580,7 +590,7 @@ export const examSubmissions = pgTable(
     id: text("id").primaryKey(), // "sub_{nanoid}"
     examId: text("exam_id").references(() => exams.id, { onDelete: "cascade" }).notNull(),
     studentId: text("student_id").references(() => users.id, { onDelete: "cascade" }).notNull(),
-    mentorId: text("mentor_id").references(() => users.id, { onDelete: "set null" }).notNull(),
+    mentorId: text("mentor_id").references(() => users.id, { onDelete: "set null" }),
     startedAt: timestamp("started_at").defaultNow().notNull(),
     submittedAt: timestamp("submitted_at"),
     answers: jsonb("answers").default({}).notNull(), // { [questionId]: selectedOptionNumber }
@@ -786,3 +796,53 @@ export const fridayReports = pgTable(
     fridayReportWeekIdx: index("friday_report_week_idx").on(table.weekNumber),
   })
 );
+
+// 33. Central SSO API Settings (Mashahir Danesh Central Account)
+export const ssoApiSettings = pgTable("sso_api_settings", {
+  id: text("id").primaryKey().default("default"),
+  isEnabled: boolean("is_enabled").default(true).notNull(),
+  serviceTitle: text("service_title").default("حساب کاربری مشاهیر دانش").notNull(),
+  baseUrl: text("base_url").default("https://mashahiredanesh.com/GarnetAPI").notNull(),
+  loginEndpoint: text("login_endpoint").default("/auth/loginMobile").notNull(),
+  coursesEndpoint: text("courses_endpoint").default("/user/courses").notNull(),
+  sendOtpEndpoint: text("send_otp_endpoint").default("/users/sendVerificationCodeByMobile").notNull(),
+  verifyOtpEndpoint: text("verify_otp_endpoint").default("/users/checkVerificationCode").notNull(),
+  productsEndpoint: text("products_endpoint").default("/invoices/productListByUser").notNull(),
+  codeCount: integer("code_count").default(5).notNull(),
+  apiKeyHeader: varchar("api_key_header", { length: 100 }).default("g-api-key").notNull(),
+  apiKeyValue: text("api_key_value").default("AEbk35zB9YfSqw8u9mjH7ykNK4xq2Yq5").notNull(),
+  mobileFieldName: varchar("mobile_field_name", { length: 50 }).default("mobile").notNull(),
+  passwordFieldName: varchar("password_field_name", { length: 50 }).default("password").notNull(),
+  successStatusCode: integer("success_status_code").default(2000).notNull(),
+  timeoutMs: integer("timeout_ms").default(8000).notNull(),
+  autoCreateStudent: boolean("auto_create_student").default(true).notNull(),
+  bypassCourseCheckIfNoEndpoint: boolean("bypass_course_check_if_no_endpoint").default(true).notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+// 34. System Audit Logs (Comprehensive audit trail for admin/executive oversight)
+export const systemAuditLogs = pgTable(
+  "system_audit_logs",
+  {
+    id: text("id").primaryKey(), // "sys_log_{nanoid}"
+    actorId: text("actor_id").notNull(),
+    actorName: text("actor_name").notNull(),
+    actorRole: varchar("actor_role", { length: 30 }).notNull(),
+    eventType: varchar("event_type", { length: 50 }).notNull(), // "AUTH" | "CHANNEL" | "COURSE" | "MESSAGE" | "VOICE" | "VOIP_CALL" | "STUDY_PLAN" | "EXAM" | "TASK" | "USER_MGMT"
+    action: text("action").notNull(),
+    targetEntity: varchar("target_entity", { length: 50 }).notNull(),
+    targetId: text("target_id"),
+    details: text("details"),
+    metadata: jsonb("metadata").default({}),
+    ipAddress: varchar("ip_address", { length: 45 }),
+    userAgent: text("user_agent"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    sysAuditActorIdx: index("sys_audit_actor_idx").on(table.actorId),
+    sysAuditEventIdx: index("sys_audit_event_idx").on(table.eventType),
+    sysAuditCreatedIdx: index("sys_audit_created_idx").on(table.createdAt),
+  })
+);
+
+

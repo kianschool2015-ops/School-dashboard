@@ -64,7 +64,7 @@ export function ExamBuilderDashboard({
 
   // Form State
   const [title, setTitle] = useState("");
-  const [courseCode, setCourseCode] = useState("GARNET-BAR-MASTER");
+  const [courseCode, setCourseCode] = useState("MASHAHIR-BAR-MASTER");
   const [category, setCategory] = useState<ExamCategory>("MOCK_BAR");
   const [durationMinutes, setDurationMinutes] = useState(120);
   const [hasNegativeMarking, setHasNegativeMarking] = useState(true);
@@ -84,10 +84,10 @@ export function ExamBuilderDashboard({
     targetCourses.length > 0
       ? targetCourses
       : [
-          { code: "GARNET-BAR-MASTER", name: "دوره جامع مستر وکالت" },
+          { code: "MASHAHIR-BAR-MASTER", name: "دوره جامع مستر وکالت" },
           { code: "CRASH-BAR", name: "دوره ضربتی آزمون وکالت" },
           { code: "SAVIOR-FALL-1405", name: "کلاس نجات پاییز ۱۴۰۵" },
-          { code: "GARNET-BAR-360", name: "دوره جامع آمادگی آزمون وکالت ۳۶۰" },
+          { code: "MASHAHIR-BAR-360", name: "دوره جامع آمادگی آزمون وکالت ۳۶۰" },
           { code: "DIAGNOSTIC-1405", name: "دوره سنجش و تعیین سطح وکالت ۱۴۰۵" },
         ];
 
@@ -400,7 +400,7 @@ export function ExamBuilderDashboard({
                     }`}
                   >
                     <div className="flex items-center justify-between mb-1.5">
-                      <span className="text-xs font-bold text-foreground">بر اساس کد دوره / کلاس گارنت</span>
+                      <span className="text-xs font-bold text-foreground">بر اساس کد دوره / کلاس مشاهیر دانش</span>
                       <input
                         type="radio"
                         name="targetAudience"
@@ -410,7 +410,7 @@ export function ExamBuilderDashboard({
                       />
                     </div>
                     <p className="text-[11px] leading-relaxed">
-                      تخصیص اختصاصی به داوطلبان ثبت‌نامی یک یا چند دوره خاص گارنت.
+                      تخصیص اختصاصی به داوطلبان ثبت‌نامی یک یا چند دوره خاص مشاهیر دانش.
                     </p>
                   </div>
 

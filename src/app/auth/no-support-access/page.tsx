@@ -55,9 +55,9 @@ export default async function NoSupportAccessPage() {
             داوطلب گرامی، بسته پشتیبانی ۳۶۰ درجه برای حساب شما فعال نیست
           </h2>
           <p className="text-sm md:text-base text-slate-600 max-w-2xl mx-auto leading-relaxed mb-6">
-            شما با موفقیت در سامانه گارنت احراز هویت شدید، اما دوره ثبت‌نامی شما فاقد بسته هدایت و
+            شما با موفقیت در حساب کاربری مشاهیر دانش احراز هویت شدید، اما دوره ثبت‌نامی شما فاقد بسته هدایت و
             پشتیبانی تحصیلی ۳۶۰ درجه است. برای ورود به داشبورد و ارتباط مستقیم با پشتیبان رتبه‌برتر،
-            می‌توانید یکی از دوره‌های ویژه زیر را در سامانه گارنت انتخاب و ثبت‌نام نمایید.
+            می‌توانید یکی از دوره‌های ویژه زیر را در سامانه مرکزی مشاهیر دانش انتخاب و ثبت‌نام نمایید.
           </p>
           <div className="inline-flex flex-wrap items-center justify-center gap-4 text-xs md:text-sm font-medium text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5">
             <span className="flex items-center gap-1.5 text-emerald-700 font-bold">
@@ -83,7 +83,7 @@ export default async function NoSupportAccessPage() {
             <div>
               <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2">
                 <GraduationCap className="w-5 h-5 text-[#004071]" />
-                دوره‌های دارای بسته پشتیبانی ۳۶۰ درجه مشاهیر دانش در گارنت
+                دوره‌های دارای بسته پشتیبانی ۳۶۰ درجه مشاهیر دانش
               </h3>
               <p className="text-xs md:text-sm text-slate-500 mt-1">
                 با تهیه هر یک از دوره‌های زیر، دسترسی حساب شما به این داشبورد بلافاصله فعال می‌گردد.
@@ -150,7 +150,7 @@ export default async function NoSupportAccessPage() {
                     rel="noopener noreferrer"
                     className="inline-flex items-center gap-2 bg-[#004071] hover:bg-blue-900 text-white font-bold text-xs md:text-sm px-4 py-2.5 rounded-xl shadow-sm transition-all"
                   >
-                    <span>ثبت‌نام در سامانه گارنت</span>
+                    <span>ثبت‌نام در سامانه مرکزی مشاهیر دانش</span>
                     <ExternalLink className="w-4 h-4" />
                   </a>
                 </div>

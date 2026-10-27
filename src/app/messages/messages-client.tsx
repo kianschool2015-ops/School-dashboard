@@ -30,6 +30,13 @@ import {
   ShieldCheck,
   GraduationCap,
   RefreshCw,
+  Mic,
+  Square,
+  Play,
+  Pause,
+  Trash2,
+  Edit3,
+  Volume2,
 } from "lucide-react";
 import { toPersianDigits } from "@/lib/jalali";
 import {
@@ -37,6 +44,7 @@ import {
   getThreadClosureStatusAction,
   toggleThreadClosureAction,
   pollDirectMessagesAction,
+  markDirectMessagesAsReadAction,
 } from "@/server/actions/messages";
 import {
   createConversationAction,
@@ -45,6 +53,8 @@ import {
   removeMemberFromConversationAction,
   toggleConversationGhostModeAction,
   bulkAddMembersByCourseAction,
+  editConversationAction,
+  deleteConversationAction,
 } from "@/server/actions/chat";
 import type {
   DirectMessageRecord,
@@ -166,10 +176,27 @@ export function MessagesClient({
         setIsThreadClosed(status.isClosed);
       }
     });
+
+    // Mark messages as read upon viewing thread (Section 6)
+    markDirectMessagesAsReadAction(selectedContact.id).then((res) => {
+      if (active && res.success && res.markedCount > 0) {
+        setDirectMessages((prev) =>
+          prev.map((m) =>
+            m.receiverId === currentUser.id && m.senderId === selectedContact.id
+              ? { ...m, isRead: true }
+              : m
+          )
+        );
+        if (typeof window !== "undefined") {
+          window.dispatchEvent(new CustomEvent("mashahir:notifications-updated"));
+        }
+      }
+    });
+
     return () => {
       active = false;
     };
-  }, [selectedContact?.id]);
+  }, [selectedContact?.id, currentUser.id]);
 
   // Real-time synchronization polling every 3.5 seconds (Requirement 4.3)
   useEffect(() => {
@@ -183,6 +210,26 @@ export function MessagesClient({
           if (typeof res.isThreadClosed === "boolean") {
             setIsThreadClosed(res.isThreadClosed);
           }
+          // If active contact sent messages that are unread, mark them read
+          if (
+            selectedContact &&
+            res.messages.some(
+              (m) =>
+                m.receiverId === currentUser.id &&
+                m.senderId === selectedContact.id &&
+                !m.isRead
+            )
+          ) {
+            markDirectMessagesAsReadAction(selectedContact.id).then((markRes) => {
+              if (markRes.success && markRes.markedCount > 0) {
+                if (typeof window !== "undefined") {
+                  window.dispatchEvent(
+                    new CustomEvent("mashahir:notifications-updated")
+                  );
+                }
+              }
+            });
+          }
         }
       } catch {
         // silent polling catch
@@ -190,7 +237,7 @@ export function MessagesClient({
     }, 3500);
 
     return () => clearInterval(intervalId);
-  }, [activeCategory, selectedContact?.id]);
+  }, [activeCategory, selectedContact?.id, currentUser.id]);
 
   // Auto-scroll ref (Requirement 4.1)
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -535,6 +582,168 @@ export function MessagesClient({
       alert("خطا در برقراری ارتباط با سرور.");
     } finally {
       setIsCreating(false);
+    }
+  };
+
+  // Voice Recording State (Requirement 10)
+  const [isRecording, setIsRecording] = useState(false);
+  const [recordingSeconds, setRecordingSeconds] = useState(0);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+  const recordingTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  const startVoiceRecording = async () => {
+    if (currentUser.role === "STUDENT") {
+      alert("ارسال پیام صوتی برای داوطلبان مجاز نمی‌باشد.");
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      audioChunksRef.current = [];
+      const mediaRecorder = new MediaRecorder(stream);
+      mediaRecorderRef.current = mediaRecorder;
+
+      mediaRecorder.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          audioChunksRef.current.push(event.data);
+        }
+      };
+
+      mediaRecorder.start();
+      setIsRecording(true);
+      setRecordingSeconds(0);
+
+      recordingTimerRef.current = setInterval(() => {
+        setRecordingSeconds((prev) => prev + 1);
+      }, 1000);
+    } catch {
+      alert("دسترسی به میکروفن برقرار نشد. لطفاً مجوز میکروفن را در مرورگر فعال فرمایید.");
+    }
+  };
+
+  const stopVoiceRecording = (sendImmediately = true) => {
+    if (!mediaRecorderRef.current) return;
+    const recorder = mediaRecorderRef.current;
+
+    recorder.onstop = async () => {
+      const audioBlob = new Blob(audioChunksRef.current, { type: "audio/webm" });
+      recorder.stream.getTracks().forEach((track) => track.stop());
+
+      if (sendImmediately && audioBlob.size > 0) {
+        const reader = new FileReader();
+        reader.onload = async () => {
+          const base64Audio = reader.result as string;
+          setIsSending(true);
+          try {
+            if (activeCategory === "DIRECT" && selectedContact) {
+              const res = await sendDirectMessageAction({
+                receiverId: selectedContact.id,
+                message: "🎙 پیام صوتی",
+                attachmentUrl: base64Audio,
+                attachmentName: `voice_${Date.now()}.webm`,
+                attachmentSize: audioBlob.size,
+                attachmentType: "audio/webm",
+              });
+              if (res.success && res.messageRecord) {
+                setDirectMessages((prev) => [...prev, res.messageRecord!]);
+              }
+            } else if (selectedConversation) {
+              const res = await sendMessageAction({
+                conversationId: selectedConversation.id,
+                message: "🎙 پیام صوتی",
+                attachmentUrl: base64Audio,
+                attachmentName: `voice_${Date.now()}.webm`,
+                attachmentSize: audioBlob.size,
+                attachmentType: "audio/webm",
+              });
+              if (res.success && res.messageRecord) {
+                setChatMessages((prev) => [...prev, res.messageRecord!]);
+              }
+            }
+          } catch {
+            alert("خطا در ارسال پیام صوتی.");
+          } finally {
+            setIsSending(false);
+          }
+        };
+        reader.readAsDataURL(audioBlob);
+      }
+    };
+
+    recorder.stop();
+    setIsRecording(false);
+    if (recordingTimerRef.current) {
+      clearInterval(recordingTimerRef.current);
+    }
+  };
+
+  const cancelVoiceRecording = () => {
+    if (!mediaRecorderRef.current) return;
+    const recorder = mediaRecorderRef.current;
+    recorder.onstop = () => {
+      recorder.stream.getTracks().forEach((track) => track.stop());
+    };
+    recorder.stop();
+    setIsRecording(false);
+    if (recordingTimerRef.current) {
+      clearInterval(recordingTimerRef.current);
+    }
+  };
+
+  // Edit / Delete conversation modal state (Requirement 15)
+  const [showEditConvModal, setShowEditConvModal] = useState(false);
+  const [editConvTitle, setEditConvTitle] = useState("");
+  const [editConvDesc, setEditConvDesc] = useState("");
+  const [editConvReadOnly, setEditConvReadOnly] = useState(false);
+
+  const openEditModal = (conv: ChatConversationRecord) => {
+    setEditConvTitle(conv.title);
+    setEditConvDesc(conv.description || "");
+    setEditConvReadOnly(Boolean(conv.isChannelReadOnlyForStudents));
+    setShowEditConvModal(true);
+  };
+
+  const handleEditConversation = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedConversation || !editConvTitle.trim()) return;
+    try {
+      const res = await editConversationAction({
+        conversationId: selectedConversation.id,
+        title: editConvTitle.trim(),
+        description: editConvDesc.trim(),
+        isChannelReadOnlyForStudents: editConvReadOnly,
+      });
+      if (res.success) {
+        const updated = {
+          ...selectedConversation,
+          title: editConvTitle.trim(),
+          description: editConvDesc.trim(),
+          isChannelReadOnlyForStudents: editConvReadOnly,
+        };
+        setSelectedConversation(updated);
+        setConversations((prev) => prev.map((c) => (c.id === updated.id ? updated : c)));
+        setShowEditConvModal(false);
+      } else {
+        alert(res.message);
+      }
+    } catch {
+      alert("خطا در ویرایش گفتگو.");
+    }
+  };
+
+  const handleDeleteConversation = async () => {
+    if (!selectedConversation) return;
+    if (!confirm(`آیا از حذف کامل «${selectedConversation.title}» اطمینان دارید؟ تمامی پیام‌ها حذف خواهند شد.`)) return;
+    try {
+      const res = await deleteConversationAction(selectedConversation.id);
+      if (res.success) {
+        setConversations((prev) => prev.filter((c) => c.id !== selectedConversation.id));
+        setSelectedConversation(null);
+      } else {
+        alert(res.message);
+      }
+    } catch {
+      alert("خطا در حذف گفتگو.");
     }
   };
 
@@ -1092,37 +1301,51 @@ export function MessagesClient({
                               <p className="leading-relaxed whitespace-pre-wrap">{msg.message}</p>
 
                               {msg.attachmentName && (
-                                <div
-                                  className={`p-2 rounded-lg border text-xs flex items-center justify-between gap-2 ${
-                                    isMe ? "bg-white/10 border-white/20 text-primary-foreground" : "bg-muted/40 border-border text-foreground"
-                                  }`}
-                                >
-                                  <div className="flex items-center gap-2 truncate">
-                                    {msg.attachmentType?.includes("image") ? (
-                                      <ImageIcon className="h-4 w-4 shrink-0" />
-                                    ) : msg.attachmentType?.includes("sheet") || msg.attachmentType?.includes("excel") ? (
-                                      <FileSpreadsheet className="h-4 w-4 shrink-0" />
-                                    ) : (
-                                      <FileText className="h-4 w-4 shrink-0" />
-                                    )}
-                                    <span className="truncate font-medium">{msg.attachmentName}</span>
-                                    {msg.attachmentSize && (
-                                      <span className="text-[10px] opacity-75 font-mono">
-                                        ({(msg.attachmentSize / 1024 / 1024).toFixed(2)} MB)
-                                      </span>
+                                msg.attachmentType?.startsWith("audio/") ||
+                                msg.attachmentName?.endsWith(".webm") ||
+                                msg.attachmentName?.endsWith(".mp3") ? (
+                                  <div className="p-2.5 rounded-xl bg-black/10 dark:bg-white/10 space-y-1.5 min-w-[220px]">
+                                    <div className="flex items-center gap-2">
+                                      <Volume2 className="h-4 w-4 text-primary shrink-0" />
+                                      <span className="text-[11px] font-bold">پیام صوتی</span>
+                                    </div>
+                                    <audio controls className="w-full h-8" src={msg.attachmentUrl}>
+                                      مرورگر شما از پخش صدا پشتیبانی نمی‌کند.
+                                    </audio>
+                                  </div>
+                                ) : (
+                                  <div
+                                    className={`p-2 rounded-lg border text-xs flex items-center justify-between gap-2 ${
+                                      isMe ? "bg-white/10 border-white/20 text-primary-foreground" : "bg-muted/40 border-border text-foreground"
+                                    }`}
+                                  >
+                                    <div className="flex items-center gap-2 truncate">
+                                      {msg.attachmentType?.includes("image") ? (
+                                        <ImageIcon className="h-4 w-4 shrink-0" />
+                                      ) : msg.attachmentType?.includes("sheet") || msg.attachmentType?.includes("excel") ? (
+                                        <FileSpreadsheet className="h-4 w-4 shrink-0" />
+                                      ) : (
+                                        <FileText className="h-4 w-4 shrink-0" />
+                                      )}
+                                      <span className="truncate font-medium">{msg.attachmentName}</span>
+                                      {msg.attachmentSize && (
+                                        <span className="text-[10px] opacity-75 font-mono">
+                                          ({(msg.attachmentSize / 1024 / 1024).toFixed(2)} MB)
+                                        </span>
+                                      )}
+                                    </div>
+                                    {msg.attachmentUrl && (
+                                      <a
+                                        href={msg.attachmentUrl}
+                                        download={msg.attachmentName}
+                                        className="p-1 hover:bg-black/10 rounded transition-colors"
+                                        title="دانلود فایل پیوست"
+                                      >
+                                        <Download className="h-3.5 w-3.5" />
+                                      </a>
                                     )}
                                   </div>
-                                  {msg.attachmentUrl && (
-                                    <a
-                                      href={msg.attachmentUrl}
-                                      download={msg.attachmentName}
-                                      className="p-1 hover:bg-black/10 rounded transition-colors"
-                                      title="دانلود فایل پیوست"
-                                    >
-                                      <Download className="h-3.5 w-3.5" />
-                                    </a>
-                                  )}
-                                </div>
+                                )
                               )}
                             </div>
                           </div>
@@ -1207,6 +1430,30 @@ export function MessagesClient({
                       </Button>
                     )}
 
+                    {/* Edit & Delete conversation buttons (Requirement 15: Full Admin CRUD) */}
+                    {canManageMembers && (
+                      <div className="flex items-center gap-1">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => openEditModal(selectedConversation)}
+                          className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground"
+                          title="ویرایش مشخصات"
+                        >
+                          <Edit3 className="h-3.5 w-3.5" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={handleDeleteConversation}
+                          className="h-7 w-7 p-0 text-muted-foreground hover:text-rose-600"
+                          title="حذف کانال/گروه"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </Button>
+                      </div>
+                    )}
+
                     <Badge variant="outline" className="text-[10px]">
                       {selectedConversation.type === "CHANNEL" ? "کانال اطلاع‌رسانی" : "گروه مباحثه"}
                     </Badge>
@@ -1242,37 +1489,51 @@ export function MessagesClient({
                             <p className="leading-relaxed whitespace-pre-wrap">{msg.message}</p>
 
                             {msg.attachmentName && (
-                              <div
-                                className={`p-2 rounded-lg border text-xs flex items-center justify-between gap-2 ${
-                                  isMe ? "bg-white/10 border-white/20 text-primary-foreground" : "bg-muted/40 border-border text-foreground"
-                                }`}
-                              >
-                                <div className="flex items-center gap-2 truncate">
-                                  {msg.attachmentType?.includes("image") ? (
-                                    <ImageIcon className="h-4 w-4 shrink-0" />
-                                  ) : msg.attachmentType?.includes("sheet") || msg.attachmentType?.includes("excel") ? (
-                                    <FileSpreadsheet className="h-4 w-4 shrink-0" />
-                                  ) : (
-                                    <FileText className="h-4 w-4 shrink-0" />
-                                  )}
-                                  <span className="truncate font-medium">{msg.attachmentName}</span>
-                                  {msg.attachmentSize && (
-                                    <span className="text-[10px] opacity-75 font-mono">
-                                      ({(msg.attachmentSize / 1024 / 1024).toFixed(2)} MB)
-                                    </span>
+                              msg.attachmentType?.startsWith("audio/") ||
+                              msg.attachmentName?.endsWith(".webm") ||
+                              msg.attachmentName?.endsWith(".mp3") ? (
+                                <div className="p-2.5 rounded-xl bg-black/10 dark:bg-white/10 space-y-1.5 min-w-[220px]">
+                                  <div className="flex items-center gap-2">
+                                    <Volume2 className="h-4 w-4 text-primary shrink-0" />
+                                    <span className="text-[11px] font-bold">پیام صوتی</span>
+                                  </div>
+                                  <audio controls className="w-full h-8" src={msg.attachmentUrl}>
+                                    مرورگر شما از پخش صدا پشتیبانی نمی‌کند.
+                                  </audio>
+                                </div>
+                              ) : (
+                                <div
+                                  className={`p-2 rounded-lg border text-xs flex items-center justify-between gap-2 ${
+                                    isMe ? "bg-white/10 border-white/20 text-primary-foreground" : "bg-muted/40 border-border text-foreground"
+                                  }`}
+                                >
+                                  <div className="flex items-center gap-2 truncate">
+                                    {msg.attachmentType?.includes("image") ? (
+                                      <ImageIcon className="h-4 w-4 shrink-0" />
+                                    ) : msg.attachmentType?.includes("sheet") || msg.attachmentType?.includes("excel") ? (
+                                      <FileSpreadsheet className="h-4 w-4 shrink-0" />
+                                    ) : (
+                                      <FileText className="h-4 w-4 shrink-0" />
+                                    )}
+                                    <span className="truncate font-medium">{msg.attachmentName}</span>
+                                    {msg.attachmentSize && (
+                                      <span className="text-[10px] opacity-75 font-mono">
+                                        ({(msg.attachmentSize / 1024 / 1024).toFixed(2)} MB)
+                                      </span>
+                                    )}
+                                  </div>
+                                  {msg.attachmentUrl && (
+                                    <a
+                                      href={msg.attachmentUrl}
+                                      download={msg.attachmentName}
+                                      className="p-1 hover:bg-black/10 rounded transition-colors"
+                                      title="دانلود فایل پیوست"
+                                    >
+                                      <Download className="h-3.5 w-3.5" />
+                                    </a>
                                   )}
                                 </div>
-                                {msg.attachmentUrl && (
-                                  <a
-                                    href={msg.attachmentUrl}
-                                    download={msg.attachmentName}
-                                    className="p-1 hover:bg-black/10 rounded transition-colors"
-                                    title="دانلود فایل پیوست"
-                                  >
-                                    <Download className="h-3.5 w-3.5" />
-                                  </a>
-                                )}
-                              </div>
+                              )
                             )}
                           </div>
                         </div>
@@ -1333,6 +1594,37 @@ export function MessagesClient({
               <Lock className="h-4 w-4 text-amber-500" />
               <span>این کانال به صورت یکطرفه و فقط جهت اطلاعیه‌های اساتید و سرپرستان تنظیم شده است.</span>
             </div>
+          ) : isRecording ? (
+            <div className="p-3 bg-rose-500/10 border-t border-rose-500/30 flex items-center justify-between gap-3 text-xs w-full">
+              <div className="flex items-center gap-2 text-rose-600 dark:text-rose-400 font-bold">
+                <span className="w-3 h-3 rounded-full bg-rose-600 animate-ping shrink-0" />
+                <span>در حال ضبط پیام صوتی:</span>
+                <span className="font-mono text-sm">
+                  {Math.floor(recordingSeconds / 60).toString().padStart(2, "0")}:
+                  {(recordingSeconds % 60).toString().padStart(2, "0")}
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={cancelVoiceRecording}
+                  className="text-xs text-muted-foreground h-8"
+                >
+                  لغو
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  onClick={() => stopVoiceRecording(true)}
+                  className="text-xs bg-rose-600 hover:bg-rose-700 text-white h-8"
+                >
+                  <Send className="h-3.5 w-3.5 ms-1.5" />
+                  <span>ارسال صدا</span>
+                </Button>
+              </div>
+            </div>
           ) : (
             <form onSubmit={handleSendMessage} className="p-3 bg-background border-t border-border flex items-center gap-2">
               <label className="cursor-pointer p-2 rounded-lg hover:bg-muted text-muted-foreground hover:text-primary transition-colors">
@@ -1340,10 +1632,21 @@ export function MessagesClient({
                 <input
                   type="file"
                   onChange={handleFileSelect}
-                  accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png"
+                  accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png,.webm,.mp3"
                   className="hidden"
                 />
               </label>
+
+              {currentUser.role !== "STUDENT" && (
+                <button
+                  type="button"
+                  onClick={startVoiceRecording}
+                  className="p-2 rounded-lg hover:bg-muted text-muted-foreground hover:text-rose-500 transition-colors"
+                  title="ضبط و ارسال پیام صوتی (وویس)"
+                >
+                  <Mic className="h-5 w-5" />
+                </button>
+              )}
 
               <input
                 type="text"
@@ -1434,6 +1737,66 @@ export function MessagesClient({
                   </Button>
                   <Button type="submit" size="sm" disabled={isCreating || !newTitle.trim()}>
                     {isCreating ? "در حال ایجاد..." : "ایجاد و انتشار"}
+                  </Button>
+                </div>
+              </form>
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
+      {/* Modal: Edit Channel or Group (Requirement 15: Full Admin CRUD) */}
+      {showEditConvModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+          <Card className="w-full max-w-md border border-border shadow-2xl bg-card">
+            <CardHeader className="flex flex-row items-center justify-between pb-3">
+              <CardTitle className="text-sm font-bold">ویرایش مشخصات کانال یا گروه</CardTitle>
+              <button onClick={() => setShowEditConvModal(false)} className="text-muted-foreground hover:text-foreground">
+                <X className="h-4 w-4" />
+              </button>
+            </CardHeader>
+            <CardContent>
+              <form onSubmit={handleEditConversation} className="space-y-4 text-xs">
+                <div>
+                  <label className="block font-semibold mb-1">عنوان گفتگو</label>
+                  <input
+                    type="text"
+                    value={editConvTitle}
+                    onChange={(e) => setEditConvTitle(e.target.value)}
+                    className="w-full px-3 py-2 text-xs border border-border rounded-lg bg-background"
+                    required
+                  />
+                </div>
+
+                <div>
+                  <label className="block font-semibold mb-1">توضیحات</label>
+                  <textarea
+                    rows={3}
+                    value={editConvDesc}
+                    onChange={(e) => setEditConvDesc(e.target.value)}
+                    className="w-full px-3 py-2 text-xs border border-border rounded-lg bg-background"
+                  />
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    id="editReadOnlyCheck"
+                    checked={editConvReadOnly}
+                    onChange={(e) => setEditConvReadOnly(e.target.checked)}
+                    className="rounded border-border text-primary"
+                  />
+                  <label htmlFor="editReadOnlyCheck" className="text-xs text-muted-foreground cursor-pointer">
+                    فقط خواندنی برای داوطلبان (ارسال پیام مسدود باشد)
+                  </label>
+                </div>
+
+                <div className="flex justify-end gap-2 pt-2">
+                  <Button type="button" variant="outline" size="sm" onClick={() => setShowEditConvModal(false)}>
+                    انصراف
+                  </Button>
+                  <Button type="submit" size="sm" disabled={!editConvTitle.trim()}>
+                    ذخیره تغییرات
                   </Button>
                 </div>
               </form>

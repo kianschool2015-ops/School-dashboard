@@ -192,3 +192,93 @@ export async function applyTailoredPlanToStudentAction(payload: {
     scheduleId: activeScheduleId,
   };
 }
+
+/**
+ * Edit Weekly Plan Template Metadata & Goals (Requirement 15: Admin Edit CRUD)
+ */
+export async function editWeeklyPlanTemplateAction(payload: {
+  templateId: string;
+  title: string;
+  targetCohort?: string;
+  weeklyMainGoal?: string;
+  items?: Omit<ScheduleItemRecord, "id" | "scheduleId">[];
+}): Promise<{ success: boolean; message: string }> {
+  try {
+    await requireRole(["SUPERVISOR", "CEO", "ADMIN"]);
+
+    const [tpl] = await db
+      .select()
+      .from(weeklyPlanTemplates)
+      .where(eq(weeklyPlanTemplates.id, payload.templateId))
+      .limit(1);
+
+    if (!tpl) {
+      return { success: false, message: "تمپلیت برنامه یافت نشد." };
+    }
+
+    const updates: Record<string, unknown> = {
+      title: payload.title.trim(),
+    };
+    if (payload.targetCohort !== undefined) {
+      updates.targetCohort = payload.targetCohort.trim();
+    }
+    if (payload.weeklyMainGoal !== undefined) {
+      updates.weeklyMainGoal = payload.weeklyMainGoal.trim();
+    }
+    if (payload.items !== undefined) {
+      updates.items = payload.items;
+    }
+
+    await db
+      .update(weeklyPlanTemplates)
+      .set(updates)
+      .where(eq(weeklyPlanTemplates.id, payload.templateId));
+
+    revalidatePath("/plans");
+    revalidatePath("/supervisor");
+
+    return {
+      success: true,
+      message: "تمپلیت برنامه هفتگی با موفقیت ویرایش شد.",
+    };
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : "خطا در ویرایش برنامه";
+    return { success: false, message: msg };
+  }
+}
+
+/**
+ * Delete Weekly Plan Template (Requirement 15: Admin Delete CRUD)
+ */
+export async function deleteWeeklyPlanTemplateAction(
+  templateId: string
+): Promise<{ success: boolean; message: string }> {
+  try {
+    await requireRole(["SUPERVISOR", "CEO", "ADMIN"]);
+
+    const [tpl] = await db
+      .select()
+      .from(weeklyPlanTemplates)
+      .where(eq(weeklyPlanTemplates.id, templateId))
+      .limit(1);
+
+    if (!tpl) {
+      return { success: false, message: "تمپلیت برنامه یافت نشد." };
+    }
+
+    await db
+      .delete(weeklyPlanTemplates)
+      .where(eq(weeklyPlanTemplates.id, templateId));
+
+    revalidatePath("/plans");
+    revalidatePath("/supervisor");
+
+    return {
+      success: true,
+      message: "تمپلیت برنامه هفتگی با موفقیت حذف گردید.",
+    };
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : "خطا در حذف برنامه";
+    return { success: false, message: msg };
+  }
+}

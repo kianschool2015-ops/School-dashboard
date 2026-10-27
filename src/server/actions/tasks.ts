@@ -302,3 +302,92 @@ export async function reviewHierarchyTaskAction(payload: {
   };
 }
 
+/**
+ * Edit Hierarchy Task (Requirement 15: Admin Edit CRUD)
+ */
+export async function editHierarchyTaskAction(payload: {
+  taskId: string;
+  title: string;
+  description: string;
+  priority: TaskPriority;
+  dueDate?: string;
+}): Promise<{ success: boolean; message: string }> {
+  try {
+    await requireRole(["SUPERVISOR", "CEO", "ADMIN"]);
+
+    const [task] = await db
+      .select()
+      .from(hierarchyTasks)
+      .where(eq(hierarchyTasks.id, payload.taskId))
+      .limit(1);
+
+    if (!task) {
+      return { success: false, message: "وظیفه مورد نظر یافت نشد." };
+    }
+
+    const updates: Record<string, unknown> = {
+      title: sanitizeTextContent(payload.title.trim()),
+      description: sanitizeTextContent(payload.description.trim()),
+      priority: payload.priority,
+      updatedAt: new Date(),
+    };
+    if (payload.dueDate) {
+      updates.dueDate = payload.dueDate;
+    }
+
+    await db
+      .update(hierarchyTasks)
+      .set(updates)
+      .where(eq(hierarchyTasks.id, payload.taskId));
+
+    revalidatePath("/tasks");
+    revalidatePath("/supervisor");
+    revalidatePath("/executive");
+
+    return {
+      success: true,
+      message: "مشخصات وظیفه سازمانی با موفقیت ویرایش گردید.",
+    };
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : "خطا در ویرایش وظیفه";
+    return { success: false, message: msg };
+  }
+}
+
+/**
+ * Delete Hierarchy Task (Requirement 15: Admin Delete CRUD)
+ */
+export async function deleteHierarchyTaskAction(
+  taskId: string
+): Promise<{ success: boolean; message: string }> {
+  try {
+    await requireRole(["SUPERVISOR", "CEO", "ADMIN"]);
+
+    const [task] = await db
+      .select()
+      .from(hierarchyTasks)
+      .where(eq(hierarchyTasks.id, taskId))
+      .limit(1);
+
+    if (!task) {
+      return { success: false, message: "وظیفه مورد نظر یافت نشد." };
+    }
+
+    await db
+      .delete(hierarchyTasks)
+      .where(eq(hierarchyTasks.id, taskId));
+
+    revalidatePath("/tasks");
+    revalidatePath("/supervisor");
+    revalidatePath("/executive");
+
+    return {
+      success: true,
+      message: "وظیفه سازمانی با موفقیت حذف گردید.",
+    };
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : "خطا در حذف وظیفه";
+    return { success: false, message: msg };
+  }
+}
+

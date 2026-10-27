@@ -362,6 +362,15 @@ export async function submitDailyStudyLogAction(payload: {
     });
   }
 
+  // Synchronize studentProfiles.currentDailyStudyHours across all views (Requirement 6)
+  await db
+    .update(studentProfiles)
+    .set({
+      currentDailyStudyHours: Math.max(1, Math.round(actualHours)),
+      updatedAt: new Date(),
+    })
+    .where(eq(studentProfiles.id, studentProfileId));
+
   // If helpRequested === true, alert mentor
   if (payload.helpRequested) {
     const [student] = await db
@@ -389,6 +398,8 @@ export async function submitDailyStudyLogAction(payload: {
 
   revalidatePath("/student/study-plan");
   revalidatePath("/student/dashboard");
+  revalidatePath("/student/friday-report");
+  revalidatePath("/student/friday-reports");
   revalidatePath(`/mentor/student/${studentProfileId}`);
 
   return {

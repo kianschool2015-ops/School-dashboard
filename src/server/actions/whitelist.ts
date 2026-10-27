@@ -2,7 +2,7 @@
 
 import { requireRole } from "../auth/guard";
 import { db } from "../db";
-import { studentWhitelist, users } from "../db/schema";
+import { studentWhitelist, users, studentProfiles } from "../db/schema";
 import { eq, or, desc } from "drizzle-orm";
 import { sendSystemSms } from "../services/sms";
 import { revalidatePath } from "next/cache";
@@ -66,19 +66,96 @@ export async function importStudentWhitelistAction(rows: WhitelistImportRow[]) {
       continue;
     }
 
+    // Direct Provisioning into PostgreSQL (Module 3)
+    const [existingUser] = await db
+      .select()
+      .from(users)
+      .where(or(eq(users.phoneNumber, cleanPhone), eq(users.nationalId, cleanNationalId)))
+      .limit(1);
+
+    const userId = existingUser?.id || `usr_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
+    const candidateName = row.fullName.trim();
+    const assignedMentorId = row.assignedMentorId || null;
+
+    if (!existingUser) {
+      await db.insert(users).values({
+        id: userId,
+        phoneNumber: cleanPhone,
+        fullName: candidateName,
+        nationalId: cleanNationalId,
+        username: cleanPhone,
+        role: "STUDENT",
+        mustChangePassword: true,
+        isActive: true,
+      });
+    }
+
+    const [existingProfile] = await db
+      .select()
+      .from(studentProfiles)
+      .where(eq(studentProfiles.userId, userId))
+      .limit(1);
+
+    const profileId = existingProfile?.id || `profile_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
+
+    if (existingProfile) {
+      await db
+        .update(studentProfiles)
+        .set({
+          hasActiveSupport: true,
+          initialSyncCompleted: true,
+          provisioningSource: "EXCEL_WHITELIST",
+          mentorId: existingProfile.mentorId || assignedMentorId,
+          enrolledCourseName: row.enrolledCourseName || "دوره جامع طلایی آمادگی آزمون وکالت ۳۶۰ درجه",
+          enrolledCourseCode: row.enrolledCourseCode || "MASHAHIR-BAR-360",
+          updatedAt: new Date(),
+        })
+        .where(eq(studentProfiles.id, existingProfile.id));
+    } else {
+      await db.insert(studentProfiles).values({
+        id: profileId,
+        userId,
+        mentorId: assignedMentorId, // null if unassigned -> populates supervisor queue!
+        employmentStatus: "UNEMPLOYED",
+        isStudent: false,
+        maritalStatus: "SINGLE",
+        hasChildren: false,
+        childrenCount: 0,
+        hasFamilyCareDuty: false,
+        workdayStudyHoursCap: 8,
+        holidayStudyHoursCap: 12,
+        bestStudyTime: "MORNING",
+        previousBarExamAttempts: 0,
+        currentDailyStudyHours: 6,
+        masterclassGoal: "قبولی در آزمون وکالت کانون و مرکز وکلا",
+        riskStatus: "GREEN",
+        riskReason: "داوطلب ثبت‌نام شده از طریق لیست سفید اکسل",
+        enrolledCourseCode: row.enrolledCourseCode || "MASHAHIR-BAR-360",
+        enrolledCourseName: row.enrolledCourseName || "دوره جامع طلایی آمادگی آزمون وکالت ۳۶۰ درجه",
+        hasActiveSupport: true,
+        initialSyncCompleted: true,
+        initialSyncAt: new Date(),
+        provisioningSource: "EXCEL_WHITELIST",
+        isProbationary: false,
+        lastEntitlementCheckAt: new Date(),
+        lastContactAt: new Date(),
+      });
+    }
+
     const id = `wl_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
 
     await db.insert(studentWhitelist).values({
       id,
-      fullName: row.fullName.trim(),
+      fullName: candidateName,
       nationalId: cleanNationalId,
       phoneNumber: cleanPhone,
-      assignedMentorId: row.assignedMentorId || "usr_mentor1",
-      assignedMentorName: row.assignedMentorName || "استاد علی کاظمی",
-      enrolledCourseName: row.enrolledCourseName || "دوره طلایی آمادگی آزمون وکالت ۳۶۰",
-      enrolledCourseCode: row.enrolledCourseCode || "BAR-360",
-      status: "PENDING",
+      assignedMentorId,
+      assignedMentorName: row.assignedMentorName || (assignedMentorId ? "پشتیبان آموزشی" : "در انتظار تعیین پشتیبان"),
+      enrolledCourseName: row.enrolledCourseName || "دوره جامع طلایی آمادگی آزمون وکالت ۳۶۰ درجه",
+      enrolledCourseCode: row.enrolledCourseCode || "MASHAHIR-BAR-360",
+      status: "REGISTERED",
       invitedAt: new Date(),
+      registeredAt: new Date(),
     });
 
     importedCount++;
@@ -144,7 +221,7 @@ export async function importStudentWhitelistFromFileAction(payload: {
     const mentorMap = new Map(allMentors.map((m) => [m.id, m.fullName]));
     const defaultMentorName = payload.defaultMentorId
       ? mentorMap.get(payload.defaultMentorId) || "پشتیبان آموزشی"
-      : allMentors[0]?.fullName || "استاد علی کاظمی";
+      : "در انتظار تعیین پشتیبان";
 
     let importedCount = 0;
     let skippedCount = 0;
@@ -157,9 +234,9 @@ export async function importStudentWhitelistFromFileAction(payload: {
       let fullName = "";
       let nationalId = "";
       let phone = "";
-      let courseName = payload.defaultCourseName || "دوره طلایی آمادگی آزمون وکالت ۳۶۰";
-      let courseCode = payload.defaultCourseCode || "BAR-360";
-      let mentorId = payload.defaultMentorId || (allMentors[0]?.id ?? "usr_mentor1");
+      let courseName = payload.defaultCourseName || "دوره جامع طلایی آمادگی آزمون وکالت ۳۶۰ درجه";
+      let courseCode = payload.defaultCourseCode || "MASHAHIR-BAR-360";
+      let mentorId: string | null = payload.defaultMentorId || null;
       let mentorName = defaultMentorName;
 
       for (const [rawKey, val] of Object.entries(row)) {
@@ -242,6 +319,80 @@ export async function importStudentWhitelistFromFileAction(payload: {
         continue;
       }
 
+      // Direct Provisioning into PostgreSQL (Module 3)
+      const [existingUser] = await db
+        .select()
+        .from(users)
+        .where(or(eq(users.phoneNumber, phone), eq(users.nationalId, nationalId)))
+        .limit(1);
+
+      const userId = existingUser?.id || `usr_${Date.now()}_${Math.floor(Math.random() * 10000)}_${i}`;
+
+      if (!existingUser) {
+        await db.insert(users).values({
+          id: userId,
+          phoneNumber: phone,
+          fullName: fullName.trim(),
+          nationalId,
+          username: phone,
+          role: "STUDENT",
+          mustChangePassword: true,
+          isActive: true,
+        });
+      }
+
+      const [existingProfile] = await db
+        .select()
+        .from(studentProfiles)
+        .where(eq(studentProfiles.userId, userId))
+        .limit(1);
+
+      const profileId = existingProfile?.id || `profile_${Date.now()}_${Math.floor(Math.random() * 10000)}_${i}`;
+
+      if (existingProfile) {
+        await db
+          .update(studentProfiles)
+          .set({
+            hasActiveSupport: true,
+            initialSyncCompleted: true,
+            provisioningSource: "EXCEL_WHITELIST",
+            mentorId: existingProfile.mentorId || mentorId,
+            enrolledCourseName: courseName,
+            enrolledCourseCode: courseCode,
+            updatedAt: new Date(),
+          })
+          .where(eq(studentProfiles.id, existingProfile.id));
+      } else {
+        await db.insert(studentProfiles).values({
+          id: profileId,
+          userId,
+          mentorId, // null if unassigned -> Enters supervisor queue & student waiting room!
+          employmentStatus: "UNEMPLOYED",
+          isStudent: false,
+          maritalStatus: "SINGLE",
+          hasChildren: false,
+          childrenCount: 0,
+          hasFamilyCareDuty: false,
+          workdayStudyHoursCap: 8,
+          holidayStudyHoursCap: 12,
+          bestStudyTime: "MORNING",
+          previousBarExamAttempts: 0,
+          currentDailyStudyHours: 6,
+          masterclassGoal: "قبولی در آزمون وکالت کانون و مرکز وکلا",
+          riskStatus: "GREEN",
+          riskReason: "داوطلب بارگذاری شده از فایل اکسل لیست سفید",
+          enrolledCourseCode: courseCode,
+          enrolledCourseName: courseName,
+          hasActiveSupport: true,
+          initialSyncCompleted: true,
+          initialSyncAt: new Date(),
+          provisioningSource: "EXCEL_WHITELIST",
+          isProbationary: false,
+          lastEntitlementCheckAt: new Date(),
+          lastContactAt: new Date(),
+        });
+      }
+
       const id = `wl_${Date.now()}_${Math.floor(Math.random() * 10000)}_${i}`;
 
       await db.insert(studentWhitelist).values({
@@ -253,8 +404,9 @@ export async function importStudentWhitelistFromFileAction(payload: {
         assignedMentorName: mentorName,
         enrolledCourseName: courseName,
         enrolledCourseCode: courseCode,
-        status: "PENDING",
+        status: "REGISTERED",
         invitedAt: new Date(),
+        registeredAt: new Date(),
       });
 
       importedCount++;

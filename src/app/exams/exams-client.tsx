@@ -383,46 +383,84 @@ export function ExamsClient({
                 تحلیل روند رشد و شاخص مقایسه‌ای دلتا (Longitudinal Progress)
               </CardTitle>
             </div>
-            {latestSub && (
-              <Badge variant="outline" className="border-emerald-300 bg-emerald-50 text-emerald-800 text-xs px-3 py-1">
-                رتبه تقریبی در دوره آموزشی: {latestSub.rank}
+            {currentUser.role === "STUDENT" ? (
+              latestSub && (
+                <Badge variant="outline" className="border-emerald-300 bg-emerald-50 text-emerald-800 text-xs px-3 py-1">
+                  رتبه تقریبی در دوره آموزشی: {latestSub.rank}
+                </Badge>
+              )
+            ) : (
+              <Badge variant="outline" className="border-primary/30 bg-primary/10 text-primary text-xs px-3 py-1 font-bold">
+                شاخص‌های تجمیعی دوره‌های آموزشی
               </Badge>
             )}
           </CardHeader>
 
           <CardContent className="p-4 space-y-4">
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-              <div className="p-4 bg-muted/30 rounded-xl border border-border">
-                <p className="text-xs text-muted-foreground">آخرین نمره تراز شده</p>
-                <p className="text-2xl font-black text-foreground mt-1 font-mono">
-                  {latestSub?.scorePercent || 0}٪
-                </p>
-              </div>
+            {currentUser.role === "STUDENT" ? (
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div className="p-4 bg-muted/30 rounded-xl border border-border">
+                  <p className="text-xs text-muted-foreground">آخرین نمره تراز شده</p>
+                  <p className="text-2xl font-black text-foreground mt-1 font-mono">
+                    {latestSub?.scorePercent || 0}٪
+                  </p>
+                </div>
 
-              <div className="p-4 bg-emerald-500/10 rounded-xl border border-emerald-500/20">
-                <p className="text-xs text-emerald-800 dark:text-emerald-300 font-medium">
-                  رشد نسبت به آزمون قبلی (Delta)
-                </p>
-                <p className="text-2xl font-black text-emerald-700 dark:text-emerald-400 mt-1 flex items-center gap-1 font-mono">
-                  <ArrowUpRight className="h-6 w-6" />
-                  {latestSub?.deltaFromPrevious && latestSub.deltaFromPrevious > 0
-                    ? `+${latestSub.deltaFromPrevious}`
-                    : latestSub?.deltaFromPrevious || 0}
-                  ٪
-                </p>
-              </div>
+                <div className="p-4 bg-emerald-500/10 rounded-xl border border-emerald-500/20">
+                  <p className="text-xs text-emerald-800 dark:text-emerald-300 font-medium">
+                    رشد نسبت به آزمون قبلی (Delta)
+                  </p>
+                  <p className="text-2xl font-black text-emerald-700 dark:text-emerald-400 mt-1 flex items-center gap-1 font-mono">
+                    <ArrowUpRight className="h-6 w-6" />
+                    {latestSub?.deltaFromPrevious && latestSub.deltaFromPrevious > 0
+                      ? `+${latestSub.deltaFromPrevious}`
+                      : latestSub?.deltaFromPrevious || 0}
+                    ٪
+                  </p>
+                </div>
 
-              <div className="p-4 bg-[#004071]/10 rounded-xl border border-[#004071]/20">
-                <p className="text-xs text-[#004071] dark:text-sky-300 font-medium">رشد از نقطه آغاز</p>
-                <p className="text-2xl font-black text-[#004071] dark:text-sky-400 mt-1 flex items-center gap-1 font-mono">
-                  <TrendingUp className="h-6 w-6" />
-                  {latestSub?.deltaFromBaseline && latestSub.deltaFromBaseline > 0
-                    ? `+${latestSub.deltaFromBaseline}`
-                    : latestSub?.deltaFromBaseline || 0}
-                  ٪
-                </p>
+                <div className="p-4 bg-[#004071]/10 rounded-xl border border-[#004071]/20">
+                  <p className="text-xs text-[#004071] dark:text-sky-300 font-medium">رشد از نقطه آغاز</p>
+                  <p className="text-2xl font-black text-[#004071] dark:text-sky-400 mt-1 flex items-center gap-1 font-mono">
+                    <TrendingUp className="h-6 w-6" />
+                    {latestSub?.deltaFromBaseline && latestSub.deltaFromBaseline > 0
+                      ? `+${latestSub.deltaFromBaseline}`
+                      : latestSub?.deltaFromBaseline || 0}
+                    ٪
+                  </p>
+                </div>
               </div>
-            </div>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div className="p-4 bg-muted/30 rounded-xl border border-border">
+                  <p className="text-xs text-muted-foreground">میانگین نمرات کل شرکت‌کنندگان</p>
+                  <p className="text-2xl font-black text-primary mt-1 font-mono">
+                    {submissions.length > 0
+                      ? Math.round(submissions.reduce((acc, s) => acc + (s.scorePercent || 0), 0) / submissions.length)
+                      : 0}
+                    ٪
+                  </p>
+                </div>
+
+                <div className="p-4 bg-emerald-500/10 rounded-xl border border-emerald-500/20">
+                  <p className="text-xs text-emerald-800 dark:text-emerald-300 font-medium">
+                    تعداد کل پاسخ‌نامه‌های ثبت‌شده
+                  </p>
+                  <p className="text-2xl font-black text-emerald-700 dark:text-emerald-400 mt-1 flex items-center gap-1 font-mono">
+                    <CheckCircle2 className="h-6 w-6" />
+                    {submissions.length} کارنامه
+                  </p>
+                </div>
+
+                <div className="p-4 bg-blue-500/10 rounded-xl border border-blue-500/20">
+                  <p className="text-xs text-blue-800 dark:text-blue-300 font-medium">تعداد داوطلبان دوره آموزشی</p>
+                  <p className="text-2xl font-black text-blue-700 dark:text-blue-400 mt-1 flex items-center gap-1 font-mono">
+                    <Users className="h-6 w-6" />
+                    {studentsList.length} نفر
+                  </p>
+                </div>
+              </div>
+            )}
           </CardContent>
         </Card>
       )}

@@ -8,7 +8,17 @@ import {
 } from "../db/schema";
 import { eq } from "drizzle-orm";
 import type { VoipAmiSettings, VoipCallRecord, MentorCallingWindowRecord } from "@/types/models";
-import { toPersianDigits, getPersianDayOfWeek, PERSIAN_WEEKDAYS } from "@/lib/jalali";
+import { toPersianDigits, getPersianDayOfWeek, PERSIAN_WEEKDAYS, getIranTimeInfo } from "@/lib/jalali";
+
+const WEEKDAY_TO_PERSIAN_INDEX: Record<string, number> = {
+  Saturday: 0,
+  Sunday: 1,
+  Monday: 2,
+  Tuesday: 3,
+  Wednesday: 4,
+  Thursday: 5,
+  Friday: 6,
+};
 
 /**
  * Mask phone number for zero-knowledge privacy:
@@ -653,12 +663,10 @@ export async function checkMentorCallingWindowAvailability(mentorId: string): Pr
       };
     }
 
-    const now = new Date();
-    // Get Tehran / local time components
-    const dayOfWeek = getPersianDayOfWeek(now); // 0 (Sat) - 6 (Fri)
-    const hours = now.getHours();
-    const minutes = now.getMinutes();
-    const currentMinutes = hours * 60 + minutes;
+    // Strict Asia/Tehran timezone calculation
+    const iranInfo = getIranTimeInfo(new Date());
+    const dayOfWeek = WEEKDAY_TO_PERSIAN_INDEX[iranInfo.weekday] ?? 0;
+    const currentMinutes = iranInfo.hour * 60 + iranInfo.minute;
 
     const [startH, startM] = windowData.startTime.split(":").map(Number);
     const [endH, endM] = windowData.endTime.split(":").map(Number);

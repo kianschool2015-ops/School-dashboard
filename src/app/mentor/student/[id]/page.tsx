@@ -8,6 +8,7 @@ import { CandidateDetailClient } from "./candidate-detail-client";
 import Link from "next/link";
 import { ArrowRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { sanitizeUserForClient } from "@/lib/sanitize";
 import type { StudentProfileRecord, UserRecord, MockExamRecord } from "@/types/models";
 
 interface CandidateDetailPageProps {
@@ -82,7 +83,7 @@ export default async function CandidateDetailPage({ params }: CandidateDetailPag
       {/* 360-Degree Candidate Profile Card */}
       <CandidateDetailClient
         student={student as unknown as StudentProfileRecord}
-        user={user as unknown as UserRecord}
+        user={sanitizeUserForClient(user, session.role) as unknown as UserRecord}
         mockExams={studentMockExams as unknown as MockExamRecord[]}
         activeCaseId={studentActiveCase?.id}
         activeTriggerCode={studentActiveCase?.triggerCode}

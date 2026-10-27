@@ -2,13 +2,15 @@
 
 import { getSession } from "../auth/guard";
 import { db } from "../db";
-import { directMessages, hierarchyTasks, fridayReports } from "../db/schema";
+import { directMessages, hierarchyTasks, fridayReports, studentProfiles, mentorTriageCases } from "../db/schema";
 import { count, eq, and, inArray, isNull } from "drizzle-orm";
 
 export interface NavbarNotificationCounts {
   unreadMessagesCount: number;
   pendingTasksCount: number;
   pendingReportsCount: number;
+  unassignedStudentsCount: number;
+  openTriageCasesCount: number;
 }
 
 /**
@@ -18,7 +20,13 @@ export interface NavbarNotificationCounts {
 export async function getNavbarNotificationCounts(): Promise<NavbarNotificationCounts> {
   const session = await getSession();
   if (!session) {
-    return { unreadMessagesCount: 0, pendingTasksCount: 0, pendingReportsCount: 0 };
+    return {
+      unreadMessagesCount: 0,
+      pendingTasksCount: 0,
+      pendingReportsCount: 0,
+      unassignedStudentsCount: 0,
+      openTriageCasesCount: 0,
+    };
   }
 
   try {
@@ -92,13 +100,81 @@ export async function getNavbarNotificationCounts(): Promise<NavbarNotificationC
       pendingReportsCount = repRes ? Number(repRes.count) : 0;
     }
 
+    // 4. Unassigned Students (Supervisor / CEO / Admin):
+    let unassignedStudentsCount = 0;
+    if (session.role === "SUPERVISOR" || session.role === "CEO" || session.role === "ADMIN") {
+      const [unassignedRes] = await db
+        .select({ count: count() })
+        .from(studentProfiles)
+        .where(
+          and(
+            eq(studentProfiles.hasActiveSupport, true),
+            isNull(studentProfiles.mentorId)
+          )
+        );
+      unassignedStudentsCount = unassignedRes ? Number(unassignedRes.count) : 0;
+    }
+
+    // 5. Open Triage Cases (Requirement 7: dynamic count to avoid false red dot)
+    let openTriageCasesCount = 0;
+    if (session.role === "MENTOR") {
+      const [triageRes] = await db
+        .select({ count: count() })
+        .from(mentorTriageCases)
+        .where(
+          and(
+            eq(mentorTriageCases.mentorId, session.userId),
+            eq(mentorTriageCases.isResolved, false)
+          )
+        );
+      openTriageCasesCount = triageRes ? Number(triageRes.count) : 0;
+    } else if (session.role === "SUPERVISOR" || session.role === "CEO" || session.role === "ADMIN") {
+      const [triageRes] = await db
+        .select({ count: count() })
+        .from(mentorTriageCases)
+        .where(eq(mentorTriageCases.isResolved, false));
+      openTriageCasesCount = triageRes ? Number(triageRes.count) : 0;
+    }
+
     return {
       unreadMessagesCount,
       pendingTasksCount,
       pendingReportsCount,
+      unassignedStudentsCount,
+      openTriageCasesCount,
     };
   } catch (err) {
     console.warn("[Navbar] Failed to fetch notification counts:", err);
-    return { unreadMessagesCount: 0, pendingTasksCount: 0, pendingReportsCount: 0 };
+    return {
+      unreadMessagesCount: 0,
+      pendingTasksCount: 0,
+      pendingReportsCount: 0,
+      unassignedStudentsCount: 0,
+      openTriageCasesCount: 0,
+    };
+  }
+}
+
+/**
+ * Fetch unassigned students count directly for supervisor sidebar badge
+ */
+export async function getUnassignedStudentsCountAction(): Promise<number> {
+  const session = await getSession();
+  if (!session || (session.role !== "SUPERVISOR" && session.role !== "CEO" && session.role !== "ADMIN")) {
+    return 0;
+  }
+  try {
+    const [res] = await db
+      .select({ count: count() })
+      .from(studentProfiles)
+      .where(
+        and(
+          eq(studentProfiles.hasActiveSupport, true),
+          isNull(studentProfiles.mentorId)
+        )
+      );
+    return res ? Number(res.count) : 0;
+  } catch {
+    return 0;
   }
 }

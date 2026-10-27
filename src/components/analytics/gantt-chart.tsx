@@ -14,6 +14,7 @@ import {
   ChevronRight,
   ChevronLeft,
 } from "lucide-react";
+import { toPersianDigits } from "@/lib/jalali";
 
 export type GanttTimeHorizon = "TODAY" | "THREE_DAYS" | "WEEK" | "MONTH" | "CUMULATIVE";
 
@@ -172,8 +173,8 @@ export function MultiHorizonGantt({
           <div>
             <div className="flex items-center gap-2">
               <BarChart3 className="h-5 w-5 text-primary" />
-              <CardTitle className="text-lg font-bold">
-                گانت‌چارت ۵ سطحی پیشرفت ({entityName})
+              <CardTitle className="text-base sm:text-lg font-bold">
+                برنامه مطالعاتی و کارنمای پیشرفت هفتگی
               </CardTitle>
               {readOnlyAuditorRole && (
                 <Badge variant="outline" className="border-amber-400 bg-amber-50 text-amber-800 text-xs">
@@ -238,21 +239,21 @@ export function MultiHorizonGantt({
           <div className="p-3 bg-muted/40 rounded-lg border border-border/60 flex items-center justify-between">
             <div>
               <p className="text-xs text-muted-foreground">میزان تعهد زمانی برنامه‌ریزی‌شده</p>
-              <p className="text-base font-bold mt-0.5">{totalPlanned.toFixed(1)} ساعت</p>
+              <p className="text-base font-bold mt-0.5">{toPersianDigits(totalPlanned.toFixed(1))} ساعت</p>
             </div>
             <Clock className="h-6 w-6 text-muted-foreground/60" />
           </div>
           <div className="p-3 bg-primary/5 rounded-lg border border-primary/20 flex items-center justify-between">
             <div>
               <p className="text-xs text-primary font-medium">ساعات تحقق‌یافته واقعی</p>
-              <p className="text-base font-bold text-primary mt-0.5">{totalActual.toFixed(1)} ساعت</p>
+              <p className="text-base font-bold text-primary mt-0.5">{toPersianDigits(totalActual.toFixed(1))} ساعت</p>
             </div>
             <CheckCircle2 className="h-6 w-6 text-primary" />
           </div>
           <div className="p-3 bg-emerald-50 dark:bg-emerald-950/20 rounded-lg border border-emerald-200 dark:border-emerald-800 flex items-center justify-between">
             <div>
               <p className="text-xs text-emerald-800 dark:text-emerald-300 font-medium">شاخص پایبندی و پیشرفت</p>
-              <p className="text-base font-bold text-emerald-700 dark:text-emerald-400 mt-0.5">{avgProgress}٪</p>
+              <p className="text-base font-bold text-emerald-700 dark:text-emerald-400 mt-0.5">٪{toPersianDigits(avgProgress)}</p>
             </div>
             <TrendingUp className="h-6 w-6 text-emerald-600" />
           </div>
@@ -318,7 +319,7 @@ export function MultiHorizonGantt({
                     <p className="font-semibold text-foreground truncate">{item.title}</p>
                     <div className="flex items-center gap-1.5 mt-0.5">
                       <span className="text-[10px] text-muted-foreground">{item.category}</span>
-                      <span className="text-[10px] text-emerald-600 font-medium">({item.actualDuration}h از {item.duration}h)</span>
+                      <span className="text-[10px] text-emerald-600 font-medium">({toPersianDigits(item.actualDuration)} ساعت از {toPersianDigits(item.duration)} ساعت)</span>
                     </div>
                   </div>
 
@@ -340,7 +341,7 @@ export function MultiHorizonGantt({
                       }}
                       className={`h-5 rounded-md ${statusColor} px-2 flex items-center justify-between shadow-xs transition-all`}
                     >
-                      <span className="text-[10px] font-bold truncate">{item.progressPercent}٪</span>
+                      <span className="text-[10px] font-bold truncate">٪{toPersianDigits(item.progressPercent)}</span>
                       {item.status === "COMPLETED" && <CheckCircle2 className="h-3 w-3 shrink-0" />}
                     </div>
                   </div>
@@ -364,7 +365,7 @@ export function MultiHorizonGantt({
               <Badge variant={selectedItem.status === "COMPLETED" ? "default" : "outline"}>
                 {selectedItem.status === "COMPLETED" ? "تکمیل شده" : selectedItem.status === "PARTIAL" ? "بخشی انجام شده" : "انجام نشده"}
               </Badge>
-              <span className="font-semibold text-primary">{selectedItem.progressPercent}٪ پیشرفت</span>
+              <span className="font-semibold text-primary">٪{toPersianDigits(selectedItem.progressPercent)} پیشرفت</span>
             </div>
           </div>
         )}

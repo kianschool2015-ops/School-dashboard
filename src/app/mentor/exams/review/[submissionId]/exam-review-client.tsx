@@ -32,7 +32,7 @@ interface ExamReviewClientProps {
     id: string;
     examId: string;
     studentId: string;
-    mentorId: string;
+    mentorId?: string | null;
     startedAt: Date | string;
     submittedAt?: Date | string | null;
     answers: Record<string, number>;

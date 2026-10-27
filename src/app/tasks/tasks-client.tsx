@@ -23,6 +23,8 @@ import {
   ShieldAlert,
   Eye,
   X,
+  Pencil,
+  Trash2,
 } from "lucide-react";
 import {
   assignHierarchyTaskAction,
@@ -30,6 +32,8 @@ import {
   completeHierarchyTaskByMentorAction,
   reviewHierarchyTaskAction,
   markTaskSeenAction,
+  editHierarchyTaskAction,
+  deleteHierarchyTaskAction,
 } from "@/server/actions/tasks";
 import { MultiHorizonGantt } from "@/components/analytics/gantt-chart";
 import { toPersianDigits } from "@/lib/jalali";
@@ -72,6 +76,14 @@ export function TasksClient({ currentUser, tasks: initialTasks, assignees }: Tas
   } | null>(null);
   const [reviewNote, setReviewNote] = useState("");
 
+  // Edit task state (Requirement 15: Admin Edit CRUD)
+  const [activeTaskForEdit, setActiveTaskForEdit] = useState<HierarchyTaskRecord | null>(null);
+  const [editTitle, setEditTitle] = useState("");
+  const [editDescription, setEditDescription] = useState("");
+  const [editPriority, setEditPriority] = useState<TaskPriority>("HIGH");
+  const [editDueDate, setEditDueDate] = useState("");
+  const [isEditingSubmitting, setIsEditingSubmitting] = useState(false);
+
   const isSupervisorOrAdmin =
     currentUser.role === "CEO" || currentUser.role === "ADMIN" || currentUser.role === "SUPERVISOR";
   const canAssign = isSupervisorOrAdmin;
@@ -93,6 +105,9 @@ export function TasksClient({ currentUser, tasks: initialTasks, assignees }: Tas
               ? { ...prev, status: "SEEN_IN_PROGRESS", seenAt: now }
               : prev
           );
+          if (typeof window !== "undefined") {
+            window.dispatchEvent(new CustomEvent("mashahir:notifications-updated"));
+          }
         }
       } catch (err) {
         console.error("Failed to mark task seen:", err);
@@ -128,6 +143,9 @@ export function TasksClient({ currentUser, tasks: initialTasks, assignees }: Tas
         setDescription("");
         setSelectedReceivers([]);
         setIsCreating(false);
+        if (typeof window !== "undefined") {
+          window.dispatchEvent(new CustomEvent("mashahir:notifications-updated"));
+        }
       } else {
         setBanner({ type: "error", text: res.message });
       }
@@ -152,6 +170,9 @@ export function TasksClient({ currentUser, tasks: initialTasks, assignees }: Tas
         );
         if (activeTaskDetails && activeTaskDetails.id === taskId) {
           setActiveTaskDetails((prev) => (prev ? { ...prev, status } : null));
+        }
+        if (typeof window !== "undefined") {
+          window.dispatchEvent(new CustomEvent("mashahir:notifications-updated"));
         }
       } else {
         setBanner({ type: "error", text: res.message });
@@ -218,6 +239,80 @@ export function TasksClient({ currentUser, tasks: initialTasks, assignees }: Tas
       }
     } catch {
       setBanner({ type: "error", text: "خطا در ثبت نتیجه بازبینی وظیفه." });
+    }
+  };
+
+  const handleStartEdit = (task: HierarchyTaskRecord) => {
+    setActiveTaskForEdit(task);
+    setEditTitle(task.title);
+    setEditDescription(task.description);
+    setEditPriority(task.priority);
+    setEditDueDate(task.dueDate || "1403-08-15");
+  };
+
+  const handleSaveEdit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!activeTaskForEdit) return;
+    if (!editTitle.trim() || !editDescription.trim()) {
+      setBanner({ type: "error", text: "عنوان و شرح وظیفه الزامی است." });
+      return;
+    }
+
+    setIsEditingSubmitting(true);
+    try {
+      const res = await editHierarchyTaskAction({
+        taskId: activeTaskForEdit.id,
+        title: editTitle,
+        description: editDescription,
+        priority: editPriority,
+        dueDate: editDueDate,
+      });
+
+      if (res.success) {
+        setBanner({ type: "success", text: res.message });
+        setTasksList((prev) =>
+          prev.map((t) =>
+            t.id === activeTaskForEdit.id
+              ? {
+                  ...t,
+                  title: editTitle.trim(),
+                  description: editDescription.trim(),
+                  priority: editPriority,
+                  dueDate: editDueDate,
+                  updatedAt: new Date(),
+                }
+              : t
+          )
+        );
+        setActiveTaskForEdit(null);
+      } else {
+        setBanner({ type: "error", text: res.message });
+      }
+    } catch {
+      setBanner({ type: "error", text: "خطا در ذخیره تغییرات وظیفه." });
+    } finally {
+      setIsEditingSubmitting(false);
+    }
+  };
+
+  const handleDeleteTask = async (taskId: string, taskTitle: string) => {
+    if (!confirm(`آیا از حذف قطعی وظیفه سازمانی «${taskTitle}» اطمینان دارید؟`)) {
+      return;
+    }
+
+    try {
+      const res = await deleteHierarchyTaskAction(taskId);
+      if (res.success) {
+        setBanner({ type: "success", text: res.message });
+        setTasksList((prev) => prev.filter((t) => t.id !== taskId));
+        if (activeTaskDetails && activeTaskDetails.id === taskId) {
+          setActiveTaskDetails(null);
+        }
+      } else {
+        setBanner({ type: "error", text: res.message });
+      }
+    } catch {
+      setBanner({ type: "error", text: "خطا در حذف وظیفه سازمانی." });
     }
   };
 
@@ -595,7 +690,21 @@ export function TasksClient({ currentUser, tasks: initialTasks, assignees }: Tas
                       <h3 className="font-bold text-sm text-foreground">{task.title}</h3>
                     </div>
 
-                    <div className="flex items-center gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
+                      {/* Seen Status Badge (Requirement 16) */}
+                      {task.seenAt ? (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border border-emerald-500/30">
+                          <span className="font-bold">✓✓ دیده شده</span>
+                          <span className="text-[9px] opacity-80">
+                            (سین در {new Date(task.seenAt).toLocaleDateString("fa-IR")} {new Date(task.seenAt).toLocaleTimeString("fa-IR", { hour: "2-digit", minute: "2-digit" })})
+                          </span>
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium bg-amber-500/10 text-amber-700 dark:text-amber-400 border border-amber-500/30">
+                          <span>⏳ هنوز دیده نشده</span>
+                        </span>
+                      )}
+
                       <span className="text-xs text-muted-foreground flex items-center gap-1 font-mono">
                         <Calendar className="h-3.5 w-3.5" />
                         مهلت: {task.dueDate}
@@ -716,6 +825,32 @@ export function TasksClient({ currentUser, tasks: initialTasks, assignees }: Tas
                             className="text-xs h-7 border-rose-500/40 text-rose-600"
                           >
                             رد
+                          </Button>
+                        </div>
+                      )}
+
+                      {/* Admin & Supervisor Edit/Delete Actions (Requirement 15) */}
+                      {isSupervisorOrAdmin && (
+                        <div className="flex items-center gap-1 border-s border-border ps-2 ms-1">
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => handleStartEdit(task)}
+                            className="text-xs h-7 px-2 text-muted-foreground hover:text-foreground gap-1"
+                            title="ویرایش وظیفه"
+                          >
+                            <Pencil className="h-3.5 w-3.5" />
+                            <span className="hidden sm:inline">ویرایش</span>
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => handleDeleteTask(task.id, task.title)}
+                            className="text-xs h-7 px-2 text-rose-600 hover:text-rose-700 hover:bg-rose-50 dark:hover:bg-rose-950/20 gap-1"
+                            title="حذف وظیفه"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                            <span className="hidden sm:inline">حذف</span>
                           </Button>
                         </div>
                       )}
@@ -905,14 +1040,19 @@ export function TasksClient({ currentUser, tasks: initialTasks, assignees }: Tas
                 </Badge>
               </div>
 
-              {activeTaskDetails.seenAt && (
-                <div className="text-[11px] text-blue-600 dark:text-blue-400 flex items-center gap-1.5 bg-blue-500/10 p-2 rounded-md border border-blue-500/20">
-                  <Eye className="h-3.5 w-3.5 shrink-0" />
+              {activeTaskDetails.seenAt ? (
+                <div className="text-[11px] text-emerald-700 dark:text-emerald-400 flex items-center gap-1.5 bg-emerald-500/10 p-2.5 rounded-md border border-emerald-500/20">
+                  <span className="font-bold">✓✓ وضعیت سین:</span>
                   <span>
                     مشاهده‌شده توسط مجری در تاریخ:{" "}
                     {new Date(activeTaskDetails.seenAt).toLocaleDateString("fa-IR")} ساعت{" "}
                     {new Date(activeTaskDetails.seenAt).toLocaleTimeString("fa-IR", { hour: "2-digit", minute: "2-digit" })}
                   </span>
+                </div>
+              ) : (
+                <div className="text-[11px] text-amber-700 dark:text-amber-400 flex items-center gap-1.5 bg-amber-500/10 p-2.5 rounded-md border border-amber-500/20">
+                  <Clock className="h-3.5 w-3.5 shrink-0" />
+                  <span>وضعیت سین: ⏳ هنوز توسط مجری دیده نشده است.</span>
                 </div>
               )}
 
@@ -951,6 +1091,96 @@ export function TasksClient({ currentUser, tasks: initialTasks, assignees }: Tas
                   بستن
                 </Button>
               </div>
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
+      {/* Edit Task Modal (Requirement 15: Admin Edit CRUD) */}
+      {activeTaskForEdit && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 z-50">
+          <Card className="w-full max-w-lg bg-background border border-border shadow-2xl">
+            <CardHeader className="flex flex-row items-center justify-between pb-3 border-b border-border">
+              <CardTitle className="text-base font-bold flex items-center gap-2">
+                <Pencil className="h-5 w-5 text-primary" />
+                ویرایش مشخصات وظیفه سازمانی
+              </CardTitle>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setActiveTaskForEdit(null)}
+                className="h-8 w-8 p-0"
+              >
+                <X className="h-4 w-4" />
+              </Button>
+            </CardHeader>
+            <CardContent className="p-4">
+              <form onSubmit={handleSaveEdit} className="space-y-4">
+                <div>
+                  <label className="block text-xs font-semibold mb-1">عنوان وظیفه</label>
+                  <input
+                    type="text"
+                    value={editTitle}
+                    onChange={(e) => setEditTitle(e.target.value)}
+                    className="w-full px-3 py-2 text-xs border border-border rounded-lg bg-background"
+                    required
+                  />
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-semibold mb-1">اولویت</label>
+                    <select
+                      value={editPriority}
+                      onChange={(e) => setEditPriority(e.target.value as TaskPriority)}
+                      className="w-full px-3 py-2 text-xs border border-border rounded-lg bg-background"
+                    >
+                      <option value="CRITICAL">بحرانی / فوری</option>
+                      <option value="HIGH">اولویت بالا</option>
+                      <option value="NORMAL">عادی</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold mb-1">مهلت اقدام</label>
+                    <input
+                      type="text"
+                      value={editDueDate}
+                      onChange={(e) => setEditDueDate(e.target.value)}
+                      placeholder="1403-08-15"
+                      className="w-full px-3 py-2 text-xs border border-border rounded-lg bg-background font-mono"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold mb-1">شرح وظیفه</label>
+                  <textarea
+                    rows={4}
+                    value={editDescription}
+                    onChange={(e) => setEditDescription(e.target.value)}
+                    className="w-full px-3 py-2 text-xs border border-border rounded-lg bg-background"
+                    required
+                  />
+                </div>
+
+                <div className="flex items-center justify-end gap-2 pt-2 border-t border-border">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => setActiveTaskForEdit(null)}
+                    className="text-xs"
+                  >
+                    انصراف
+                  </Button>
+                  <Button
+                    type="submit"
+                    disabled={isEditingSubmitting}
+                    className="text-xs bg-primary text-primary-foreground"
+                  >
+                    {isEditingSubmitting ? "در حال ذخیره..." : "ذخیره تغییرات"}
+                  </Button>
+                </div>
+              </form>
             </CardContent>
           </Card>
         </div>

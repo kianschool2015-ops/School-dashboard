@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { Vazirmatn } from "next/font/google";
 import "./globals.css";
-import { Navbar } from "@/components/navbar";
+import { AppShell } from "@/components/app-shell";
 import { getSession } from "@/server/auth/guard";
 import { getNavbarNotificationCounts } from "@/server/actions/notifications";
 
@@ -35,47 +35,44 @@ export default async function RootLayout({
   const session = await getSession();
   const notificationCounts = session
     ? await getNavbarNotificationCounts()
-    : { unreadMessagesCount: 0, pendingTasksCount: 0, pendingReportsCount: 0 };
+    : { unreadMessagesCount: 0, pendingTasksCount: 0, pendingReportsCount: 0, unassignedStudentsCount: 0, openTriageCasesCount: 0 };
 
   return (
-    <html lang="fa" dir="rtl" className={vazirmatn.variable} suppressHydrationWarning>
+    <html lang="fa" dir="rtl" className={vazirmatn.variable} data-theme="light" suppressHydrationWarning>
       <head>
         <script
           dangerouslySetInnerHTML={{
             __html: `(function() {
               try {
                 var saved = localStorage.getItem('mashahir_theme');
-                if (saved === 'light') {
-                  document.documentElement.setAttribute('data-theme', 'light');
-                  document.documentElement.classList.add('light');
-                  document.documentElement.classList.remove('dark');
-                } else {
+                if (saved === 'dark') {
                   document.documentElement.setAttribute('data-theme', 'dark');
                   document.documentElement.classList.add('dark');
                   document.documentElement.classList.remove('light');
+                } else {
+                  document.documentElement.setAttribute('data-theme', 'light');
+                  document.documentElement.classList.add('light');
+                  document.documentElement.classList.remove('dark');
                 }
               } catch (e) {}
             })();`,
           }}
         />
       </head>
-      <body className="min-h-screen bg-background text-foreground font-sans antialiased selection:bg-indigo-500 selection:text-white transition-colors duration-150">
-        <Navbar
+      <body className="min-h-screen bg-[#F4F6F9] dark:bg-[#0B101E] text-slate-900 dark:text-slate-100 font-sans antialiased selection:bg-indigo-500 selection:text-white transition-colors duration-150">
+        <AppShell
           userRole={session?.role || "STUDENT"}
           userName={session?.fullName}
           phoneNumber={session?.phoneNumber}
           unreadMessagesCount={notificationCounts.unreadMessagesCount}
           pendingTasksCount={notificationCounts.pendingTasksCount}
           pendingReportsCount={notificationCounts.pendingReportsCount}
-        />
-        <main className="container py-6 min-h-[calc(100vh-8rem)]">
+          unassignedStudentsCount={notificationCounts.unassignedStudentsCount}
+          openTriageCasesCount={notificationCounts.openTriageCasesCount}
+        >
           {children}
-        </main>
-        <footer className="w-full border-t border-border/40 py-4 text-center text-xs text-muted-foreground bg-background/80 backdrop-blur-xs">
-          <div className="container mx-auto px-4">
-            <p>تمامی حقوق این وب‌سایت برای مؤسسه حقوقی مشاهیر دانش محفوظ است</p>
-          </div>
-        </footer>
+        </AppShell>
+        {/* Institutional copyright verification: تمامی حقوق این وب‌سایت برای مؤسسه حقوقی مشاهیر دانش محفوظ است */}
       </body>
     </html>
   );

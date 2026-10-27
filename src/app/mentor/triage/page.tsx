@@ -4,18 +4,15 @@ import { redirect } from "next/navigation";
 import { db, ensureDatabaseBootstrap } from "@/server/db";
 import { triageCases, studentProfiles, users } from "@/server/db/schema";
 import { eq, inArray, desc } from "drizzle-orm";
-import { Card, CardContent } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
 import {
   ShieldAlert,
-  CheckCircle,
   AlertCircle,
   Clock,
   CheckCircle2,
 } from "lucide-react";
 import { toPersianDigits } from "@/lib/jalali";
 import { MentorTriageClient } from "./triage-client";
-import type { TriageCaseRecord, StudentProfileRecord, UserRecord } from "@/types/models";
+import type { TriageCaseRecord } from "@/types/models";
 
 export default async function MentorTriagePage() {
   const session = await getSession();
@@ -73,95 +70,89 @@ export default async function MentorTriagePage() {
 
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4 border-b border-border pb-6">
+      {/* Page Inner Sub-Header */}
+      <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4 pb-2 border-b border-slate-200/80 dark:border-slate-800/80">
         <div>
           <div className="flex items-center space-x-2.5 space-x-reverse">
-            <h1 className="text-xl font-bold text-foreground tracking-tight flex items-center space-x-2 space-x-reverse">
+            <h2 className="text-lg font-black text-slate-900 dark:text-white tracking-tight flex items-center space-x-2 space-x-reverse">
               <ShieldAlert className="h-5 w-5 text-rose-600 dark:text-rose-500" />
-              <span>سامانه شناسایی مشکلات مطالعاتی و هدایت تحصیلی</span>
-            </h1>
-            <Badge variant="red" className="persian-nums">
+              <span>سامانه شناسایی مشکلات مطالعاتی و تریاژ تحصیلی</span>
+            </h2>
+            <span className="bg-rose-100 text-rose-700 dark:bg-rose-500/20 dark:text-rose-300 border border-rose-200 dark:border-rose-500/30 text-xs px-2.5 py-0.5 rounded-full font-bold persian-nums">
               {toPersianDigits(activeCases.length)} پرونده باز
-            </Badge>
+            </span>
           </div>
-          <p className="text-xs text-muted-foreground mt-1">
-            داوطلبان سبز از فهرست روزانه پنهان شده‌اند تا تمرکز بر پیگیری داوطلبان نیازمند رسیدگی باشد.
+          <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+            داوطلبان سبز از کارتابل روزانه تفکیک شده‌اند تا تمرکز پشتیبان بر رسیدگی به موارد بحرانی و زرد باشد.
           </p>
         </div>
 
         <div className="flex items-center space-x-3 space-x-reverse text-xs">
-          <div className="flex items-center space-x-1.5 space-x-reverse">
+          <div className="flex items-center space-x-1.5 space-x-reverse bg-white dark:bg-slate-800/80 px-3 py-1.5 rounded-xl border border-slate-200/80 dark:border-slate-700/60 shadow-xs">
             <span className="w-2.5 h-2.5 rounded-full bg-emerald-500" />
-            <span className="text-muted-foreground">حل شده:</span>
-            <span className="font-bold text-foreground persian-nums">
-              {toPersianDigits(resolvedCases.length)}
+            <span className="text-slate-500 dark:text-slate-400">حل شده:</span>
+            <span className="font-bold text-slate-900 dark:text-white persian-nums">
+              {toPersianDigits(resolvedCases.length)} پرونده
             </span>
           </div>
         </div>
       </div>
 
-      {/* Tri-Color Risk Statistics (Strictly Separated Green, Yellow, Red) */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        {/* Green: Stable */}
-        <Card className="border-emerald-500/30 bg-emerald-500/5">
-          <CardContent className="p-4 flex items-center justify-between">
-            <div>
-              <span className="text-xs font-semibold text-emerald-700 dark:text-emerald-400 block">
-                داوطلبان سبز (پایدار)
-              </span>
-              <span className="text-2xl font-black text-emerald-600 dark:text-emerald-400 persian-nums">
-                {toPersianDigits(greenStudentsCount)} <span className="text-xs font-normal">داوطلب</span>
-              </span>
-              <span className="text-[11px] text-muted-foreground block mt-1">
-                روند عادی بدون نیاز به مداخله فوری
-              </span>
+      {/* Tri-Color KPI Status Cards (Green Right, Yellow Center, Red Left in RTL) */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        {/* 1. Green Card (Right in RTL) */}
+        <div className="rounded-2xl p-5 border transition-all bg-[#E3F9ED] border-[#A7F3D0] text-[#065F46] dark:bg-[#0D2824]/90 dark:border-[#10B981]/50 dark:text-emerald-400 dark:shadow-[inset_0_0_25px_rgba(16,185,129,0.08)] flex items-center justify-between shadow-xs">
+          <div className="space-y-1">
+            <span className="text-xs font-bold block opacity-90">
+              داوطلبان سبز (پایدار)
+            </span>
+            <div className="text-2xl font-black font-mono">
+              {toPersianDigits(greenStudentsCount)} <span className="text-xs font-normal">داوطلب</span>
             </div>
-            <div className="h-10 w-10 rounded-xl bg-emerald-500/15 flex items-center justify-center text-emerald-600 dark:text-emerald-400">
-              <CheckCircle className="h-5 w-5" />
-            </div>
-          </CardContent>
-        </Card>
+            <p className="text-[11px] opacity-80">
+              روند عادی بدون نیاز به مداخله فوری
+            </p>
+          </div>
+          <div className="w-12 h-12 rounded-xl bg-white/70 dark:bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center text-[#065F46] dark:text-emerald-300 shrink-0 shadow-xs">
+            <CheckCircle2 className="h-6 w-6" />
+          </div>
+        </div>
 
-        {/* Yellow: Attention Needed */}
-        <Card className="border-amber-500/30 bg-amber-500/5">
-          <CardContent className="p-4 flex items-center justify-between">
-            <div>
-              <span className="text-xs font-semibold text-amber-700 dark:text-amber-400 block">
-                داوطلبان زرد (نیازمند توجه)
-              </span>
-              <span className="text-2xl font-black text-amber-600 dark:text-amber-400 persian-nums">
-                {toPersianDigits(yellowStudentsCount)} <span className="text-xs font-normal">داوطلب</span>
-              </span>
-              <span className="text-[11px] text-muted-foreground block mt-1">
-                افت ساعت مطالعه یا نرسیدن به سرفصل
-              </span>
+        {/* 2. Yellow Card (Center in RTL) */}
+        <div className="rounded-2xl p-5 border transition-all bg-[#FEF5D8] border-[#FDE68A] text-[#92400E] dark:bg-[#2A2112]/90 dark:border-[#F59E0B]/50 dark:text-amber-400 dark:shadow-[inset_0_0_25px_rgba(245,158,11,0.08)] flex items-center justify-between shadow-xs">
+          <div className="space-y-1">
+            <span className="text-xs font-bold block opacity-90">
+              داوطلبان زرد (هشدار)
+            </span>
+            <div className="text-2xl font-black font-mono">
+              {toPersianDigits(yellowStudentsCount)} <span className="text-xs font-normal">داوطلب</span>
             </div>
-            <div className="h-10 w-10 rounded-xl bg-amber-500/15 flex items-center justify-center text-amber-600 dark:text-amber-400">
-              <AlertCircle className="h-5 w-5" />
-            </div>
-          </CardContent>
-        </Card>
+            <p className="text-[11px] opacity-80">
+              کاهش نسبی ساعات یا عدم ثبت گزارش
+            </p>
+          </div>
+          <div className="w-12 h-12 rounded-xl bg-white/70 dark:bg-amber-500/20 border border-amber-500/30 flex items-center justify-center text-[#92400E] dark:text-amber-300 shrink-0 shadow-xs">
+            <Clock className="h-6 w-6" />
+          </div>
+        </div>
 
-        {/* Red: Critical */}
-        <Card className="border-rose-500/30 bg-rose-500/5">
-          <CardContent className="p-4 flex items-center justify-between">
-            <div>
-              <span className="text-xs font-semibold text-rose-700 dark:text-rose-400 block">
-                داوطلبان قرمز (بحرانی)
-              </span>
-              <span className="text-2xl font-black text-rose-600 dark:text-rose-400 persian-nums">
-                {toPersianDigits(redStudentsCount)} <span className="text-xs font-normal">داوطلب</span>
-              </span>
-              <span className="text-[11px] text-muted-foreground block mt-1">
-                بحران افت تراز، عدم پاسخگویی یا توقف برنامه
-              </span>
+        {/* 3. Red Card (Left in RTL) */}
+        <div className="rounded-2xl p-5 border transition-all bg-[#FCE8E8] border-[#FECACA] text-[#991B1B] dark:bg-[#2C1219]/90 dark:border-[#F43F5E]/50 dark:text-rose-400 dark:shadow-[inset_0_0_25px_rgba(244,63,94,0.08)] flex items-center justify-between shadow-xs">
+          <div className="space-y-1">
+            <span className="text-xs font-bold block opacity-90">
+              داوطلبان قرمز (بحرانی)
+            </span>
+            <div className="text-2xl font-black font-mono">
+              {toPersianDigits(redStudentsCount)} <span className="text-xs font-normal">داوطلب</span>
             </div>
-            <div className="h-10 w-10 rounded-xl bg-rose-500/15 flex items-center justify-center text-rose-600 dark:text-rose-400">
-              <ShieldAlert className="h-5 w-5" />
-            </div>
-          </CardContent>
-        </Card>
+            <p className="text-[11px] opacity-80">
+              افت شدید، عدم پاسخگویی یا تعارض جدی
+            </p>
+          </div>
+          <div className="w-12 h-12 rounded-xl bg-white/70 dark:bg-rose-500/20 border border-rose-500/30 flex items-center justify-center text-[#991B1B] dark:text-rose-300 shrink-0 shadow-xs">
+            <AlertCircle className="h-6 w-6" />
+          </div>
+        </div>
       </div>
 
       {/* Main Triage Interactive List & Workflows */}

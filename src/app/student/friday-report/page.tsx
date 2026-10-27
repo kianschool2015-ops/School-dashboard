@@ -4,7 +4,14 @@ import { fridayReports } from "@/server/db/schema";
 import { eq, desc } from "drizzle-orm";
 import { FridayReportClient } from "./friday-report-client";
 import type { FridayReportRecord } from "@/types/models";
-import { isIranFriday, getStudyWeekBoundaries } from "@/lib/jalali";
+import {
+  isIranFriday,
+  getStudyWeekBoundaries,
+  getIranTimeInfo,
+  gregorianToJalali,
+  toPersianDigits,
+  PERSIAN_MONTHS,
+} from "@/lib/jalali";
 
 export default async function StudentFridayReportPage() {
   const session = await requireRole(["STUDENT", "ADMIN"]);
@@ -16,8 +23,23 @@ export default async function StudentFridayReportPage() {
     .where(eq(fridayReports.studentId, session.userId))
     .orderBy(desc(fridayReports.weekNumber));
 
-  const isFriday = isIranFriday();
+  const iranTime = getIranTimeInfo(new Date());
+  const isFriday = iranTime.isFriday;
   const currentWeekNumber = getStudyWeekBoundaries().jalaliWeekNumber;
+
+  const jalali = gregorianToJalali(iranTime.year, iranTime.month, iranTime.day);
+  const weekdayMap: Record<string, string> = {
+    Saturday: "شنبه",
+    Sunday: "یکشنبه",
+    Monday: "دوشنبه",
+    Tuesday: "سه‌شنبه",
+    Wednesday: "چهارشنبه",
+    Thursday: "پنج‌شنبه",
+    Friday: "جمعه",
+  };
+  const persianWeekdayName = weekdayMap[iranTime.weekday] || "امروز";
+  const persianMonthName = PERSIAN_MONTHS[jalali.jm - 1] || "";
+  const persianDateStr = `${toPersianDigits(jalali.jd)} ${persianMonthName} ${toPersianDigits(jalali.jy)}`;
 
   const reports: FridayReportRecord[] = rows.map((r) => ({
     id: r.id,
@@ -52,6 +74,8 @@ export default async function StudentFridayReportPage() {
         isFriday={isFriday}
         currentWeekNumber={currentWeekNumber}
         isAdmin={session.role === "ADMIN"}
+        persianWeekdayName={persianWeekdayName}
+        persianDateStr={persianDateStr}
       />
     </div>
   );

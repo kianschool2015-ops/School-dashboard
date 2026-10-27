@@ -33,6 +33,8 @@ interface FridayReportClientProps {
   isFriday?: boolean;
   currentWeekNumber?: number;
   isAdmin?: boolean;
+  persianWeekdayName?: string;
+  persianDateStr?: string;
 }
 
 export function FridayReportClient({
@@ -41,6 +43,8 @@ export function FridayReportClient({
   isFriday = false,
   currentWeekNumber = 1,
   isAdmin = false,
+  persianWeekdayName = "امروز",
+  persianDateStr = "",
 }: FridayReportClientProps) {
   const [reports, setReports] = useState<FridayReportRecord[]>(initialReports);
   const [activeTab, setActiveTab] = useState<"FORM" | "FEEDBACK">("FORM");
@@ -182,8 +186,8 @@ export function FridayReportClient({
         </div>
       </div>
 
-      {/* Temporal Notice Alert if Not Friday */}
-      {!isFriday && !isAdmin && (
+      {/* Temporal Notice Alert: Friday active vs Non-Friday locked */}
+      {!isFriday && !isAdmin ? (
         <div className="rounded-2xl bg-amber-500/10 border border-amber-500/20 p-4 flex items-start gap-3 text-amber-900 dark:text-amber-200">
           <AlertCircle className="h-5 w-5 text-amber-500 shrink-0 mt-0.5" />
           <div className="space-y-1 text-xs leading-relaxed">
@@ -191,7 +195,19 @@ export function FridayReportClient({
               ثبت گزارش خودارزیابی منحصراً در روزهای جمعه فعال است.
             </div>
             <div>
-              امروز روز غیرجمعه است و سامانه در حالت مشاهده سوابق (Read-Only) قرار دارد. شما می‌توانید گزارش‌های ثبت‌شده قبلی و بازخوردهای ارائه‌شده توسط پشتیبان علمی را از بخش «بازخورد و ارزیابی پشتیبان علمی» مطالعه فرمایید.
+              امروز <span className="font-bold">{persianWeekdayName}</span> {persianDateStr ? `(${persianDateStr})` : ""} است و سامانه در حالت مشاهده سوابق (Read-Only) قرار دارد. ثبت و ویرایش کارنامه خودارزیابی صرفاً در روزهای جمعه (از ساعت ۰۰:۰۰ الی ۲۳:۵۹ به وقت ایران) امکان‌پذیر است. شما می‌توانید گزارش‌های ثبت‌شده قبلی و بازخوردهای ارائه‌شده توسط پشتیبان علمی را از بخش «بازخورد و ارزیابی پشتیبان علمی» مطالعه فرمایید.
+            </div>
+          </div>
+        </div>
+      ) : (
+        <div className="rounded-2xl bg-emerald-500/10 border border-emerald-500/20 p-4 flex items-start gap-3 text-emerald-900 dark:text-emerald-200">
+          <CheckCircle2 className="h-5 w-5 text-emerald-600 shrink-0 mt-0.5" />
+          <div className="space-y-1 text-xs leading-relaxed">
+            <div className="font-bold text-sm">
+              درگاه ثبت خودارزیابی جمعه فعال است
+            </div>
+            <div>
+              امروز جمعه {persianDateStr ? `(${persianDateStr})` : ""} است. لطفاً ساعات مطالعه دروس و تست‌های این هفته را به دقت وارد کرده و ثبت نهایی نمایید تا توسط پشتیبان و سرپرست آموزشی بررسی شود.
             </div>
           </div>
         </div>

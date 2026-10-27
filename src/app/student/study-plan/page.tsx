@@ -9,13 +9,15 @@ import {
   dailyCheckins,
   users,
 } from "@/server/db/schema";
-import { eq, and, desc } from "drizzle-orm";
+import { eq, and, desc, lte } from "drizzle-orm";
 import {
   getStudyWeekBoundaries,
   getPersianDayOfWeek,
   formatJalaliDate,
 } from "@/lib/jalali";
 import { StudyPlanClient } from "./study-plan-client";
+import { ForensicWatermark } from "@/components/security/forensic-watermark";
+import { LegalConsentModal } from "@/components/security/legal-consent-modal";
 import type { ScheduleItemRecord, DailyCheckinRecord } from "@/types/models";
 
 export default async function StudentStudyPlanPage() {
@@ -31,9 +33,25 @@ export default async function StudentStudyPlanPage() {
   let mentorName = "پشتیبان علمی مشاهیر دانش";
   let weeklyMainGoal = "";
   let todayCheckin: DailyCheckinRecord | null = null;
+  let currentUser: { fullName: string; nationalId: string | null; phoneNumber: string | null } | null = null;
+
+  const { weekStartDate, weekEndDate, jalaliYear, jalaliWeekNumber } = getStudyWeekBoundaries();
+  const currentDayOfWeek = getPersianDayOfWeek(new Date());
 
   try {
     await ensureDatabaseBootstrap().catch(() => {});
+
+    // Fetch user details for forensic watermarking
+    const [u] = await db
+      .select({
+        fullName: users.fullName,
+        nationalId: users.nationalId,
+        phoneNumber: users.phoneNumber,
+      })
+      .from(users)
+      .where(eq(users.id, session.userId))
+      .limit(1);
+    currentUser = u || null;
 
     if (studentProfileId) {
       const [found] = await db
@@ -79,7 +97,7 @@ export default async function StudentStudyPlanPage() {
           riskStatus: "GREEN",
           riskReason: "داوطلب فعال سامانه مشاهیر دانش",
           hasActiveSupport: true,
-          enrolledCourseCode: "GARNET-BAR-360",
+          enrolledCourseCode: "MASHAHIR-BAR-360",
           enrolledCourseName: "دوره جامع آمادگی آزمون وکالت",
           lastContactAt: new Date(),
         })
@@ -101,12 +119,18 @@ export default async function StudentStudyPlanPage() {
         }
       }
 
-      // Find student schedule for current week or latest
+      // Layer 4 DRM: Drip-feed content - strictly restrict to active Jalali week (hide future weeks)
       const [studentSchedule] = await db
         .select()
         .from(studentSchedules)
-        .where(eq(studentSchedules.studentProfileId, student.id))
-        .orderBy(desc(studentSchedules.id))
+        .where(
+          and(
+            eq(studentSchedules.studentProfileId, student.id),
+            eq(studentSchedules.jalaliYear, jalaliYear),
+            lte(studentSchedules.jalaliWeekNumber, jalaliWeekNumber)
+          )
+        )
+        .orderBy(desc(studentSchedules.jalaliWeekNumber))
         .limit(1);
 
       if (studentSchedule) {
@@ -162,22 +186,30 @@ export default async function StudentStudyPlanPage() {
     console.warn("[StudentStudyPlan] DB query error:", err);
   }
 
-  const { weekStartDate, weekEndDate, jalaliYear, jalaliWeekNumber } = getStudyWeekBoundaries();
-  const currentDayOfWeek = getPersianDayOfWeek(new Date());
-
   return (
-    <StudyPlanClient
-      studentProfileId={studentProfileId || ""}
-      studentName={session.fullName}
-      mentorName={mentorName}
-      weekStartDate={weekStartDate}
-      weekEndDate={weekEndDate}
-      jalaliYear={jalaliYear}
-      jalaliWeekNumber={jalaliWeekNumber}
-      currentDayOfWeek={currentDayOfWeek}
-      items={items}
-      todayCheckin={todayCheckin}
-      weeklyMainGoal={weeklyMainGoal}
-    />
+    <ForensicWatermark
+      userFullName={currentUser?.fullName || session.fullName}
+      nationalId={currentUser?.nationalId || "••••••••••"}
+      phoneNumber={currentUser?.phoneNumber || "۰۹•••••••••"}
+    >
+      <LegalConsentModal
+        isOpen={session.role === "STUDENT" && !student?.acceptedLegalTermsAt}
+        studentName={currentUser?.fullName || session.fullName}
+        nationalId={currentUser?.nationalId || ""}
+      />
+      <StudyPlanClient
+        studentProfileId={studentProfileId || ""}
+        studentName={session.fullName}
+        mentorName={mentorName}
+        weekStartDate={weekStartDate}
+        weekEndDate={weekEndDate}
+        jalaliYear={jalaliYear}
+        jalaliWeekNumber={jalaliWeekNumber}
+        currentDayOfWeek={currentDayOfWeek}
+        items={items}
+        todayCheckin={todayCheckin}
+        weeklyMainGoal={weeklyMainGoal}
+      />
+    </ForensicWatermark>
   );
 }

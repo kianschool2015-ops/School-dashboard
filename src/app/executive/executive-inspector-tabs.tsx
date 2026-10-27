@@ -106,7 +106,7 @@ export function ExecutiveInspectorTabs({
   initialEntitledCourses,
 }: ExecutiveInspectorTabsProps) {
   const [activeTab, setActiveTab] = useState<
-    "MACRO" | "SUPERVISORS" | "MENTORS" | "CRITICAL_STUDENTS" | "LANDING_CMS" | "GARNET_COURSES"
+    "MACRO" | "SUPERVISORS" | "MENTORS" | "CRITICAL_STUDENTS" | "LANDING_CMS" | "MASHAHIR_COURSES"
   >("MACRO");
   const [riskFilter, setRiskFilter] = useState<"ALL" | "RED" | "YELLOW">("ALL");
   const [selectedCourse, setSelectedCourse] = useState<string>("ALL");
@@ -130,7 +130,7 @@ export function ExecutiveInspectorTabs({
   const [newCourseName, setNewCourseName] = useState("");
   const [newCourseDesc, setNewCourseDesc] = useState("");
   const [newCoursePrice, setNewCoursePrice] = useState("۵,۸۰۰,۰۰۰ تومان");
-  const [newCourseUrl, setNewCourseUrl] = useState("https://garnet.mashahir.com/courses/");
+  const [newCourseUrl, setNewCourseUrl] = useState("https://mashahiredanesh.com/courses/");
   const [newCourseHasSupport, setNewCourseHasSupport] = useState(true);
   const [isSavingCourse, setIsSavingCourse] = useState(false);
   const [courseFeedback, setCourseFeedback] = useState<string | null>(null);
@@ -148,7 +148,7 @@ export function ExecutiveInspectorTabs({
         courseName: newCourseName.trim(),
         description: newCourseDesc.trim() || undefined,
         priceFormatted: newCoursePrice.trim() || "۵,۸۰۰,۰۰۰ تومان",
-        garnetPurchaseUrl: newCourseUrl.trim() || "https://garnet.mashahir.com",
+        garnetPurchaseUrl: newCourseUrl.trim() || "https://mashahiredanesh.com",
         hasSupport: newCourseHasSupport,
         isActive: true,
       });
@@ -165,7 +165,7 @@ export function ExecutiveInspectorTabs({
               courseName: newCourseName.trim(),
               description: newCourseDesc.trim() || null,
               priceFormatted: newCoursePrice.trim() || "۵,۸۰۰,۰۰۰ تومان",
-              garnetPurchaseUrl: newCourseUrl.trim() || "https://garnet.mashahir.com",
+              garnetPurchaseUrl: newCourseUrl.trim() || "https://mashahiredanesh.com",
               hasSupport: newCourseHasSupport,
               supportTier: "GOLD",
               isActive: true,
@@ -400,17 +400,17 @@ export function ExecutiveInspectorTabs({
               <span>مدیریت صفحه اصلی (CMS)</span>
             </button>
 
-            {/* Tab 6: Garnet LMS Entitled Courses */}
+            {/* Tab 6: Mashahir Entitled Courses */}
             <button
-              onClick={() => setActiveTab("GARNET_COURSES")}
+              onClick={() => setActiveTab("MASHAHIR_COURSES")}
               className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors flex items-center gap-1.5 ${
-                activeTab === "GARNET_COURSES"
+                activeTab === "MASHAHIR_COURSES"
                   ? "bg-emerald-600 text-white shadow-xs"
                   : "text-muted-foreground hover:text-foreground"
               }`}
             >
               <GraduationCap className="h-3.5 w-3.5" />
-              <span>دوره‌های مجاز گارنت LMS ({toPersianDigits(coursesList.length)})</span>
+              <span>دوره‌های آموزشی مشاهیر دانش ({toPersianDigits(coursesList.length)})</span>
             </button>
           </div>
         </div>
@@ -1388,19 +1388,19 @@ export function ExecutiveInspectorTabs({
         )}
 
         {/* ==================================================================== */}
-        {/* TAB 6: GARNET LMS ENTITLED COURSES MANAGEMENT                        */}
+        {/* TAB 6: MASHAHIR ENTITLED COURSES MANAGEMENT                          */}
         {/* ==================================================================== */}
-        {activeTab === "GARNET_COURSES" && (
+        {activeTab === "MASHAHIR_COURSES" && (
           <div className="space-y-6">
             {/* Header & Instructions */}
             <div className="p-4 rounded-2xl border border-emerald-500/20 bg-emerald-500/5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
               <div className="space-y-1">
                 <h3 className="text-sm font-bold text-foreground flex items-center gap-2">
                   <GraduationCap className="h-5 w-5 text-emerald-600" />
-                  <span>پیکربندی دوره‌های دارای بسته پشتیبانی ۳۶۰ درجه گارنت LMS</span>
+                  <span>پیکربندی دوره‌های دارای بسته پشتیبانی ۳۶۰ درجه مشاهیر دانش</span>
                 </h3>
                 <p className="text-xs text-muted-foreground leading-relaxed">
-                  کدهای دوره‌هایی که در سامانه آموزش گارنت ثبت‌نام می‌شوند در این بخش تنظیم می‌گردند. در صورتی که دوره خریداری‌شده داوطلب در این فهرست با پرچم پشتیبانی فعال ثبت شده باشد، دسترسی به داشبورد پشتیبانی به وی اعطا می‌شود؛ در غیر این صورت به صفحه خرید بسته هدایت می‌گردد.
+                  کدهای دوره‌هایی که در سامانه مرکزی مشاهیر دانش ثبت‌نام می‌شوند در این بخش تنظیم می‌گردند. در صورتی که دوره خریداری‌شده داوطلب در این فهرست با پرچم پشتیبانی فعال ثبت شده باشد، دسترسی به داشبورد پشتیبانی به وی اعطا می‌شود؛ در غیر این صورت به صفحه راهنمای ارتقا هدایت می‌گردد.
                 </p>
               </div>
               <Badge variant="green" className="shrink-0 text-xs px-3 py-1">
@@ -1425,20 +1425,20 @@ export function ExecutiveInspectorTabs({
             <Card className="border border-border bg-card p-5 rounded-2xl space-y-4 shadow-sm">
               <h4 className="text-sm font-bold text-foreground flex items-center gap-2 border-b border-border pb-3">
                 <Plus className="h-4 w-4 text-emerald-600" />
-                <span>افزودن یا به‌روزرسانی کد دوره گارنت</span>
+                <span>افزودن یا به‌روزرسانی کد دوره مشاهیر دانش</span>
               </h4>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
                 <div className="space-y-1.5">
                   <label className="text-xs font-semibold text-foreground block">
-                    کد دوره در گارنت (Course Code):
+                    کد دوره مشاهیر دانش (Course Code):
                   </label>
                   <input
                     type="text"
                     dir="ltr"
                     value={newCourseCode}
                     onChange={(e) => setNewCourseCode(e.target.value)}
-                    placeholder="مثال: GARNET-BAR-360"
+                    placeholder="مثال: MASHAHIR-BAR-360"
                     className="w-full h-10 px-3 text-xs font-mono border border-border rounded-xl bg-background text-foreground"
                     required
                   />
@@ -1446,7 +1446,7 @@ export function ExecutiveInspectorTabs({
 
                 <div className="space-y-1.5 sm:col-span-2">
                   <label className="text-xs font-semibold text-foreground block">
-                    عنوان کامل دوره در گارنت:
+                    عنوان کامل دوره مشاهیر دانش:
                   </label>
                   <input
                     type="text"
@@ -1486,14 +1486,14 @@ export function ExecutiveInspectorTabs({
 
                 <div className="space-y-1.5 sm:col-span-2">
                   <label className="text-xs font-semibold text-foreground block">
-                    لینک ثبت‌نام دوره در وب‌سایت گارنت:
+                    لینک ثبت‌نام دوره در وب‌سایت مشاهیر دانش:
                   </label>
                   <input
                     type="url"
                     dir="ltr"
                     value={newCourseUrl}
                     onChange={(e) => setNewCourseUrl(e.target.value)}
-                    placeholder="https://garnet.mashahir.com/courses/bar-exam"
+                    placeholder="https://mashahiredanesh.com/courses/bar-exam"
                     className="w-full h-10 px-3 text-xs border border-border rounded-xl bg-background text-foreground"
                     required
                   />
@@ -1568,7 +1568,7 @@ export function ExecutiveInspectorTabs({
                           rel="noreferrer"
                           className="text-[#004071] hover:underline inline-flex items-center gap-1 font-medium"
                         >
-                          <span>مشاهده در گارنت</span>
+                          <span>مشاهده در سامانه مشاهیر دانش</span>
                           <ExternalLink className="w-3 h-3" />
                         </a>
                       </div>

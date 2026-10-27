@@ -13,7 +13,7 @@ export async function GET(request: NextRequest) {
 
   if (!token) {
     return NextResponse.redirect(
-      new URL("/auth/login?error=" + encodeURIComponent("توکن ورود گارنت یافت نشد."), request.url)
+      new URL("/auth/login?error=" + encodeURIComponent("توکن ورود حساب کاربری مشاهیر دانش یافت نشد."), request.url)
     );
   }
 
@@ -29,7 +29,7 @@ export async function GET(request: NextRequest) {
 
   return NextResponse.redirect(
     new URL(
-      "/auth/login?error=" + encodeURIComponent(result.message || "خطا در احراز هویت گارنت."),
+      "/auth/login?error=" + encodeURIComponent(result.message || "خطا در احراز هویت با حساب کاربری مشاهیر دانش."),
       request.url
     )
   );
@@ -42,7 +42,7 @@ export async function POST(request: NextRequest) {
 
     if (!token) {
       return NextResponse.json(
-        { success: false, message: "توکن ورود گارنت ارسال نشده است." },
+        { success: false, message: "توکن ورود ارسال نشده است." },
         { status: 400 }
       );
     }
@@ -51,7 +51,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json(result);
   } catch (error) {
     return NextResponse.json(
-      { success: false, message: "خطای پردازش داده در وب‌سرویس گارنت." },
+      { success: false, message: "خطای پردازش داده در وب‌سرویس احراز هویت مشاهیر دانش." },
       { status: 500 }
     );
   }

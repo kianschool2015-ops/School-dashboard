@@ -26,6 +26,21 @@ import {
   PhoneOutgoing,
   Server,
   Wifi,
+  Eye,
+  EyeOff,
+  Copy,
+  Check,
+  Globe,
+  RefreshCw,
+  Zap,
+  Activity,
+  ShieldCheck,
+  Plus,
+  BookOpen,
+  ListChecks,
+  ExternalLink,
+  ToggleLeft,
+  ToggleRight,
 } from "lucide-react";
 import { changePasswordAction } from "@/server/actions/auth";
 import { saveSmsSettingsAction, testSmsDispatchAction } from "@/server/actions/sms";
@@ -33,7 +48,20 @@ import { importStudentWhitelistAction, removeWhitelistRecordAction } from "@/ser
 import { submitEscalationTicketAction } from "@/server/actions/messages";
 import { saveVoipSettingsAction, testVoipConnectionAction } from "@/server/actions/voip";
 import { saveVideoSettingsAction } from "@/server/actions/video";
+import {
+  updateSsoApiSettingsAction,
+  testMashahirSsoConnectionAction,
+  testSendSsoOtpAction,
+  testVerifySsoOtpAction,
+  testFetchUserProductsAction,
+} from "@/server/actions/garnet";
+import {
+  saveEntitledCourseAction,
+  toggleEntitledCourseStatusAction,
+  deleteEntitledCourseAction,
+} from "@/server/actions/admin-courses";
 import { BulkExcelImport } from "@/components/supervisor/bulk-excel-import";
+import { toPersianDigits } from "@/lib/jalali";
 import type {
   SmsSettingsRecord,
   SmsLogRecord,
@@ -42,6 +70,8 @@ import type {
   SmsTriggerEvent,
   VoipAmiSettings,
   VideoConferenceSettings,
+  SsoApiSettingsRecord,
+  EntitledCourseRecord,
 } from "@/types/models";
 
 interface SettingsClientProps {
@@ -61,6 +91,8 @@ interface SettingsClientProps {
   mentorsList: Array<{ id: string; fullName: string }>;
   voipSettings: VoipAmiSettings | null;
   videoSettings: VideoConferenceSettings | null;
+  ssoSettings?: SsoApiSettingsRecord | null;
+  entitledCourses?: EntitledCourseRecord[];
 }
 
 export function SettingsClient({
@@ -73,9 +105,11 @@ export function SettingsClient({
   mentorsList,
   voipSettings: initialVoipSettings,
   videoSettings: initialVideoSettings,
+  ssoSettings: initialSsoSettings,
+  entitledCourses: initialEntitledCourses = [],
 }: SettingsClientProps) {
-  // Tabs: "PROFILE" | "PASSWORD" | "ESCALATION" | "WHITELIST" | "SMS"
-  const defaultTab = currentUser.role === "CEO" || currentUser.role === "ADMIN" ? "SMS" : "PROFILE";
+  // Tabs: "PROFILE" | "PASSWORD" | "ESCALATION" | "WHITELIST" | "SMS" | "VOIP" | "VIDEO" | "SSO"
+  const defaultTab = currentUser.role === "CEO" || currentUser.role === "ADMIN" ? "SSO" : "PROFILE";
   const [activeTab, setActiveTab] = useState<string>(defaultTab);
 
   // Status message banners
@@ -291,6 +325,13 @@ export function SettingsClient({
           isEnabled: true,
           templateMessage: "داوطلب گرامی، پروفایل شما در سامانه پشتیبانی مشاهیر دانش فعال گردید. جهت ورود: {link}",
         },
+        MENTOR_ASSIGNED: {
+          event: "MENTOR_ASSIGNED",
+          title: "تخصیص پشتیبان",
+          description: "اطلاع‌رسانی تعیین پشتیبان اختصاصی به داوطلب",
+          isEnabled: true,
+          templateMessage: "داوطلب گرامی {name}، پشتیبان اختصاصی شما ({mentor}) در مشاهیر دانش تعیین گردید.",
+        },
       },
       updatedAt: new Date(),
     }
@@ -420,6 +461,305 @@ export function SettingsClient({
     }
   };
 
+  // 6. Central SSO API Settings State (CEO/ADMIN Only)
+  const [ssoSettings, setSsoSettings] = useState<SsoApiSettingsRecord>(
+    initialSsoSettings || {
+      id: "default",
+      isEnabled: true,
+      serviceTitle: "حساب کاربری مشاهیر دانش",
+      baseUrl: "https://mashahiredanesh.com/GarnetAPI",
+      loginEndpoint: "/auth/loginMobile",
+      coursesEndpoint: "/user/courses",
+      sendOtpEndpoint: "/users/sendVerificationCodeByMobile",
+      verifyOtpEndpoint: "/users/checkVerificationCode",
+      productsEndpoint: "/invoices/productListByUser",
+      codeCount: 5,
+      apiKeyHeader: "x-api-key",
+      apiKeyValue: "d41d8cd98f00b204e9800998ecf8427e",
+      mobileFieldName: "mobile",
+      passwordFieldName: "password",
+      successStatusCode: 2000,
+      timeoutMs: 8000,
+      autoCreateStudent: true,
+      bypassCourseCheckIfNoEndpoint: true,
+      updatedAt: new Date(),
+    }
+  );
+
+  const [showApiKey, setShowApiKey] = useState(false);
+  const [copiedApiKey, setCopiedApiKey] = useState(false);
+  const [isSavingSso, setIsSavingSso] = useState(false);
+
+  // 3-Stage Live API Connection Tester State
+  const [testStageTab, setTestStageTab] = useState<"STAGE1_OTP" | "STAGE2_VERIFY" | "STAGE3_PRODUCTS" | "PASSWORD">("STAGE1_OTP");
+  const [testSsoMobile, setTestSsoMobile] = useState("09123445103");
+  const [testSsoPassword, setTestSsoPassword] = useState("");
+  const [testOtpCode, setTestOtpCode] = useState("");
+  const [isTestingSso, setIsTestingSso] = useState(false);
+  const [isTestingStage1, setIsTestingStage1] = useState(false);
+  const [isTestingStage2, setIsTestingStage2] = useState(false);
+  const [isTestingStage3, setIsTestingStage3] = useState(false);
+
+  const [stage1Result, setStage1Result] = useState<{
+    success: boolean;
+    message: string;
+    latencyMs: number;
+    rawPreview?: string;
+  } | null>(null);
+
+  const [stage2Result, setStage2Result] = useState<{
+    success: boolean;
+    message: string;
+    latencyMs: number;
+    token?: string;
+    userInfo?: unknown;
+    rawPreview?: string;
+  } | null>(null);
+
+  const [stage3Result, setStage3Result] = useState<{
+    success: boolean;
+    message: string;
+    latencyMs: number;
+    productsCount: number;
+    products?: unknown[];
+    rawPreview?: string;
+  } | null>(null);
+
+  const [ssoTestResult, setSsoTestResult] = useState<{
+    success: boolean;
+    message: string;
+    latencyMs: number;
+    statusCode?: number;
+    extractedUser?: {
+      id?: string;
+      fullName?: string;
+      nationalId?: string;
+      mobile?: string;
+      email?: string;
+    };
+    coursesCount?: number;
+    rawPreview?: string;
+  } | null>(null);
+
+  // 7. Entitled Courses Management State (CEO/ADMIN Only)
+  const [courses, setCourses] = useState<EntitledCourseRecord[]>(initialEntitledCourses);
+  const [newCourseCode, setNewCourseCode] = useState("");
+  const [newCourseName, setNewCourseName] = useState("");
+  const [newCourseDescription, setNewCourseDescription] = useState("");
+  const [newCoursePrice, setNewCoursePrice] = useState("۵,۸۰۰,۰۰۰ تومان");
+  const [newCoursePurchaseUrl, setNewCoursePurchaseUrl] = useState("https://mashahiredanesh.com/courses/");
+  const [newCourseHasSupport, setNewCourseHasSupport] = useState(true);
+  const [isSavingCourse, setIsSavingCourse] = useState(false);
+  const [courseActionLoading, setCourseActionLoading] = useState<Record<string, boolean>>({});
+
+  const handleSaveSsoSettings = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsSavingSso(true);
+    setFeedback(null);
+    try {
+      const res = await updateSsoApiSettingsAction(ssoSettings);
+      if (res.success) {
+        setFeedback({ type: "success", text: res.message });
+        if (res.settings) {
+          setSsoSettings(res.settings);
+        }
+      } else {
+        setFeedback({ type: "error", text: res.message });
+      }
+    } catch {
+      setFeedback({ type: "error", text: "خطا در ذخیره تنظیمات وب‌سرویس مشاهیر دانش." });
+    } finally {
+      setIsSavingSso(false);
+    }
+  };
+
+  const handleTestSsoConnection = async () => {
+    if (!testSsoMobile.trim()) {
+      alert("لطفاً شماره موبایل تست را وارد نمایید.");
+      return;
+    }
+    if (!testSsoPassword) {
+      alert("لطفاً رمز عبور حساب تست را وارد نمایید.");
+      return;
+    }
+    setIsTestingSso(true);
+    setSsoTestResult(null);
+    try {
+      const res = await testMashahirSsoConnectionAction(
+        testSsoMobile.trim(),
+        testSsoPassword,
+        ssoSettings
+      );
+      setSsoTestResult(res);
+    } catch (err: unknown) {
+      setSsoTestResult({
+        success: false,
+        message: (err as Error)?.message || "خطا در برقراری ارتباط با وب‌سرویس",
+        latencyMs: 0,
+      });
+    } finally {
+      setIsTestingSso(false);
+    }
+  };
+
+  const handleTestStage1 = async () => {
+    if (!testSsoMobile.trim()) {
+      alert("لطفاً شماره موبایل تست را وارد نمایید.");
+      return;
+    }
+    setIsTestingStage1(true);
+    setStage1Result(null);
+    try {
+      const res = await testSendSsoOtpAction(testSsoMobile.trim(), ssoSettings);
+      setStage1Result(res);
+    } catch (err: unknown) {
+      setStage1Result({
+        success: false,
+        message: (err as Error)?.message || "خطا در تست ارسال پیامک",
+        latencyMs: 0,
+      });
+    } finally {
+      setIsTestingStage1(false);
+    }
+  };
+
+  const handleTestStage2 = async () => {
+    if (!testSsoMobile.trim() || !testOtpCode.trim()) {
+      alert("لطفاً شماره موبایل و کد تایید پیامکی را وارد نمایید.");
+      return;
+    }
+    setIsTestingStage2(true);
+    setStage2Result(null);
+    try {
+      const res = await testVerifySsoOtpAction(testSsoMobile.trim(), testOtpCode.trim(), ssoSettings);
+      setStage2Result(res);
+      if (res.token) {
+        // Auto-feed into stage 3 if successful
+      }
+    } catch (err: unknown) {
+      setStage2Result({
+        success: false,
+        message: (err as Error)?.message || "خطا در تست بررسی کد پیامکی",
+        latencyMs: 0,
+      });
+    } finally {
+      setIsTestingStage2(false);
+    }
+  };
+
+  const handleTestStage3 = async () => {
+    if (!testSsoMobile.trim()) {
+      alert("لطفاً شماره موبایل تست را وارد نمایید.");
+      return;
+    }
+    setIsTestingStage3(true);
+    setStage3Result(null);
+    try {
+      const res = await testFetchUserProductsAction(testSsoMobile.trim(), ssoSettings);
+      setStage3Result(res);
+    } catch (err: unknown) {
+      setStage3Result({
+        success: false,
+        message: (err as Error)?.message || "خطا در تست استعلام دوره‌ها",
+        latencyMs: 0,
+        productsCount: 0,
+      });
+    } finally {
+      setIsTestingStage3(false);
+    }
+  };
+
+  const handleSaveCourse = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newCourseCode.trim() || !newCourseName.trim()) {
+      setFeedback({ type: "error", text: "کد دوره و عنوان دوره الزامی هستند." });
+      return;
+    }
+    setIsSavingCourse(true);
+    setFeedback(null);
+    try {
+      const res = await saveEntitledCourseAction({
+        courseCode: newCourseCode.trim(),
+        courseName: newCourseName.trim(),
+        description: newCourseDescription.trim(),
+        priceFormatted: newCoursePrice.trim(),
+        garnetPurchaseUrl: newCoursePurchaseUrl.trim(),
+        hasSupport: newCourseHasSupport,
+      });
+      if (res.success) {
+        setFeedback({ type: "success", text: res.message });
+        const normalizedCode = newCourseCode.trim().toUpperCase();
+        setCourses((prev) => {
+          const idx = prev.findIndex((c) => c.courseCode === normalizedCode);
+          const newRec: EntitledCourseRecord = {
+            id: `crs_${normalizedCode.toLowerCase()}`,
+            courseCode: normalizedCode,
+            courseName: newCourseName.trim(),
+            description: newCourseDescription.trim() || null,
+            priceFormatted: newCoursePrice.trim(),
+            garnetPurchaseUrl: newCoursePurchaseUrl.trim(),
+            hasSupport: newCourseHasSupport,
+            supportTier: "FULL_360",
+            isActive: true,
+            createdAt: new Date(),
+            updatedAt: new Date(),
+          };
+          if (idx >= 0) {
+            const next = [...prev];
+            next[idx] = newRec;
+            return next;
+          }
+          return [newRec, ...prev];
+        });
+        setNewCourseCode("");
+        setNewCourseName("");
+        setNewCourseDescription("");
+      } else {
+        setFeedback({ type: "error", text: res.message });
+      }
+    } catch {
+      setFeedback({ type: "error", text: "خطا در ذخیره دوره." });
+    } finally {
+      setIsSavingCourse(false);
+    }
+  };
+
+  const handleToggleCourse = async (courseId: string, currentActive: boolean) => {
+    setCourseActionLoading((prev) => ({ ...prev, [courseId]: true }));
+    try {
+      const res = await toggleEntitledCourseStatusAction(courseId, !currentActive);
+      if (res.success) {
+        setCourses((prev) =>
+          prev.map((c) => (c.id === courseId ? { ...c, isActive: !currentActive } : c))
+        );
+      }
+    } finally {
+      setCourseActionLoading((prev) => ({ ...prev, [courseId]: false }));
+    }
+  };
+
+  const handleDeleteCourse = async (courseId: string) => {
+    if (!confirm("آیا از حذف این دوره از فهرست دوره‌های مجاز اطمینان دارید؟")) return;
+    setCourseActionLoading((prev) => ({ ...prev, [courseId]: true }));
+    try {
+      const res = await deleteEntitledCourseAction(courseId);
+      if (res.success) {
+        setCourses((prev) => prev.filter((c) => c.id !== courseId));
+        setFeedback({ type: "success", text: res.message });
+      }
+    } finally {
+      setCourseActionLoading((prev) => ({ ...prev, [courseId]: false }));
+    }
+  };
+
+  const handleCopyApiKey = () => {
+    if (typeof navigator !== "undefined" && navigator.clipboard) {
+      navigator.clipboard.writeText(ssoSettings.apiKeyValue);
+      setCopiedApiKey(true);
+      setTimeout(() => setCopiedApiKey(false), 2000);
+    }
+  };
+
   const isManager = currentUser.role === "CEO" || currentUser.role === "ADMIN";
   const isSupervisorOrAbove = isManager || currentUser.role === "SUPERVISOR";
   const isStudent = currentUser.role === "STUDENT";
@@ -502,6 +842,26 @@ export function SettingsClient({
 
         {isManager && (
           <>
+            <button
+              onClick={() => { setActiveTab("SSO"); setFeedback(null); }}
+              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-colors ${
+                activeTab === "SSO" ? "bg-primary text-primary-foreground shadow-xs" : "text-muted-foreground hover:bg-muted"
+              }`}
+            >
+              <Globe className="h-4 w-4" />
+              وب‌سرویس احراز هویت (حساب کاربری مشاهیر دانش)
+            </button>
+
+            <button
+              onClick={() => { setActiveTab("COURSES"); setFeedback(null); }}
+              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-colors ${
+                activeTab === "COURSES" ? "bg-primary text-primary-foreground shadow-xs" : "text-muted-foreground hover:bg-muted"
+              }`}
+            >
+              <BookOpen className="h-4 w-4" />
+              دوره‌های مجاز پشتیبانی ۳۶۰ درجه
+            </button>
+
             <button
               onClick={() => { setActiveTab("SMS"); setFeedback(null); }}
               className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-colors ${
@@ -1378,6 +1738,892 @@ export function SettingsClient({
                   {isSubmitting ? "در حال ذخیره..." : "ذخیره تنظیمات سامانه کلاس مجازی"}
                 </Button>
               </form>
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
+      {/* TAB 7: CENTRAL MASHAHIR DANESH SSO API SETTINGS & LIVE TESTER (Manager Only) */}
+      {isManager && activeTab === "SSO" && (
+        <div className="space-y-6">
+          <Card className="shadow-sm border border-border">
+            <CardHeader>
+              <CardTitle className="text-lg font-bold flex items-center justify-between">
+                <span className="flex items-center gap-2">
+                  <Globe className="h-5 w-5 text-sky-500" />
+                  تنظیمات وب‌سرویس احراز هویت (حساب کاربری مشاهیر دانش)
+                </span>
+                <Badge variant={ssoSettings.isEnabled ? "default" : "secondary"}>
+                  {ssoSettings.isEnabled ? "وب‌سرویس فعال" : "وب‌سرویس غیرفعال"}
+                </Badge>
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-6">
+              {/* Architecture & Security Notice */}
+              <div className="p-4 bg-sky-50/70 dark:bg-sky-950/20 border border-sky-200 dark:border-sky-800 rounded-xl space-y-2 text-xs text-foreground">
+                <div className="flex items-center gap-2 text-sky-700 dark:text-sky-400 font-bold text-sm">
+                  <ShieldCheck className="h-4 w-4" />
+                  معماری ورود یکپارچه سازمانی و اتصال زنده به وب‌سرویس مشاهیر دانش
+                </div>
+                <p className="leading-relaxed">
+                  احراز هویت داوطلبان و مدیران در این پرتال به صورت مستقیم و بدون واسطه از طریق وب‌سرویس مرکزی مشاهیر دانش انجام می‌شود. کلیه درخواست‌ها به صورت خودکار به پروتکل امن <strong>HTTPS</strong> ارتقا یافته و شماره‌های تلفن همراه به صورت استاندارد ۱۱ رقمی (شروع با ۰۹) نرمال‌سازی می‌گردند.
+                </p>
+                <div className="flex flex-wrap items-center gap-4 text-[11px] text-muted-foreground pt-1">
+                  <span className="flex items-center gap-1 text-emerald-600 dark:text-emerald-400 font-semibold">
+                    <CheckCircle2 className="h-3.5 w-3.5" />
+                    ارتقای خودکار به TLS / HTTPS
+                  </span>
+                  <span>•</span>
+                  <span className="flex items-center gap-1 text-emerald-600 dark:text-emerald-400 font-semibold">
+                    <CheckCircle2 className="h-3.5 w-3.5" />
+                    نرمال‌سازی ارقام فارسی و عربی به ۰۹...
+                  </span>
+                  <span>•</span>
+                  <span className="flex items-center gap-1 text-emerald-600 dark:text-emerald-400 font-semibold">
+                    <CheckCircle2 className="h-3.5 w-3.5" />
+                    اعتبارسنجی هدر کلید امنیتی اختصاصی
+                  </span>
+                </div>
+              </div>
+
+              {/* Main SSO Configuration Form */}
+              <form onSubmit={handleSaveSsoSettings} className="space-y-5">
+                <div className="flex items-center justify-between p-3.5 rounded-xl border border-border bg-muted/20">
+                  <div>
+                    <label className="text-xs font-bold text-foreground block">
+                      وضعیت وب‌سرویس احراز هویت
+                    </label>
+                    <span className="text-[11px] text-muted-foreground">
+                      در صورت فعال بودن، کاربران می‌توانند با شماره موبایل و رمز حساب کاربری مشاهیر دانش خود وارد شوند.
+                    </span>
+                  </div>
+                  <label className="relative inline-flex items-center cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={ssoSettings.isEnabled}
+                      onChange={(e) => setSsoSettings({ ...ssoSettings, isEnabled: e.target.checked })}
+                      className="sr-only peer"
+                    />
+                    <div className="w-11 h-6 bg-muted peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-border after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
+                  </label>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                  <div className="space-y-1">
+                    <label className="block text-xs font-semibold text-foreground">
+                      عنوان نمایشی سرویس در صفحه ورود
+                    </label>
+                    <input
+                      type="text"
+                      value={ssoSettings.serviceTitle}
+                      onChange={(e) => setSsoSettings({ ...ssoSettings, serviceTitle: e.target.value })}
+                      placeholder="حساب کاربری مشاهیر دانش"
+                      className="w-full h-10 px-3 text-xs border border-border rounded-xl bg-background text-foreground"
+                      required
+                    />
+                  </div>
+
+                  <div className="space-y-1 sm:col-span-2">
+                    <label className="block text-xs font-semibold text-foreground">
+                      آدرس پایه وب‌سرویس (Base URL)
+                    </label>
+                    <input
+                      type="url"
+                      dir="ltr"
+                      value={ssoSettings.baseUrl}
+                      onChange={(e) => setSsoSettings({ ...ssoSettings, baseUrl: e.target.value })}
+                      placeholder="https://mashahiredanesh.com/GarnetAPI"
+                      className="w-full h-10 px-3 text-xs font-mono border border-border rounded-xl bg-background text-foreground"
+                      required
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="block text-xs font-semibold text-foreground">
+                      مسیر وب‌سرویس ورود با رمز (Login Endpoint)
+                    </label>
+                    <input
+                      type="text"
+                      dir="ltr"
+                      value={ssoSettings.loginEndpoint}
+                      onChange={(e) => setSsoSettings({ ...ssoSettings, loginEndpoint: e.target.value })}
+                      placeholder="/auth/loginMobile"
+                      className="w-full h-10 px-3 text-xs font-mono border border-border rounded-xl bg-background text-foreground"
+                      required
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="block text-xs font-semibold text-foreground">
+                      مسیر ارسال کد پیامکی مرحله ۱ (Send OTP)
+                    </label>
+                    <input
+                      type="text"
+                      dir="ltr"
+                      value={ssoSettings.sendOtpEndpoint || "/users/sendVerificationCodeByMobile"}
+                      onChange={(e) => setSsoSettings({ ...ssoSettings, sendOtpEndpoint: e.target.value })}
+                      placeholder="/users/sendVerificationCodeByMobile"
+                      className="w-full h-10 px-3 text-xs font-mono border border-border rounded-xl bg-background text-foreground"
+                      required
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="block text-xs font-semibold text-foreground">
+                      مسیر بررسی کد پیامکی مرحله ۲ (Verify OTP)
+                    </label>
+                    <input
+                      type="text"
+                      dir="ltr"
+                      value={ssoSettings.verifyOtpEndpoint || "/users/checkVerificationCode"}
+                      onChange={(e) => setSsoSettings({ ...ssoSettings, verifyOtpEndpoint: e.target.value })}
+                      placeholder="/users/checkVerificationCode"
+                      className="w-full h-10 px-3 text-xs font-mono border border-border rounded-xl bg-background text-foreground"
+                      required
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="block text-xs font-semibold text-foreground">
+                      مسیر استعلام دوره‌ها مرحله ۳ (Product List)
+                    </label>
+                    <input
+                      type="text"
+                      dir="ltr"
+                      value={ssoSettings.productsEndpoint || "/invoices/productListByUser"}
+                      onChange={(e) => setSsoSettings({ ...ssoSettings, productsEndpoint: e.target.value })}
+                      placeholder="/invoices/productListByUser"
+                      className="w-full h-10 px-3 text-xs font-mono border border-border rounded-xl bg-background text-foreground"
+                      required
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="block text-xs font-semibold text-foreground">
+                      تعداد ارقام کد پیامکی (Code Length)
+                    </label>
+                    <input
+                      type="number"
+                      dir="ltr"
+                      value={ssoSettings.codeCount || 5}
+                      onChange={(e) => setSsoSettings({ ...ssoSettings, codeCount: parseInt(e.target.value, 10) || 5 })}
+                      placeholder="5"
+                      className="w-full h-10 px-3 text-xs font-mono border border-border rounded-xl bg-background text-foreground"
+                      required
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="block text-xs font-semibold text-foreground">
+                      نام هدر کلید امنیتی (Header Name)
+                    </label>
+                    <input
+                      type="text"
+                      dir="ltr"
+                      value={ssoSettings.apiKeyHeader}
+                      onChange={(e) => setSsoSettings({ ...ssoSettings, apiKeyHeader: e.target.value })}
+                      placeholder="x-api-key"
+                      className="w-full h-10 px-3 text-xs font-mono border border-border rounded-xl bg-background text-foreground"
+                      required
+                    />
+                  </div>
+
+                  <div className="space-y-1 sm:col-span-3">
+                    <label className="block text-xs font-semibold text-foreground">
+                      مقدار کلید امنیتی (API Key)
+                    </label>
+                    <div className="relative flex items-center">
+                      <input
+                        type={showApiKey ? "text" : "password"}
+                        dir="ltr"
+                        value={ssoSettings.apiKeyValue}
+                        onChange={(e) => setSsoSettings({ ...ssoSettings, apiKeyValue: e.target.value })}
+                        placeholder="d41d8cd98f00b204e9800998ecf8427e"
+                        className="w-full h-10 ps-3 pe-24 text-xs font-mono border border-border rounded-xl bg-background text-foreground tracking-wider"
+                        required
+                      />
+                      <div className="absolute end-1.5 flex items-center gap-1">
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => setShowApiKey(!showApiKey)}
+                          className="h-7 px-2 text-xs text-muted-foreground hover:text-foreground"
+                          title={showApiKey ? "مخفی‌سازی کلید" : "نمایش کلید"}
+                        >
+                          {showApiKey ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          onClick={handleCopyApiKey}
+                          className="h-7 px-2 text-xs text-muted-foreground hover:text-foreground"
+                          title="کپی در حافظه"
+                        >
+                          {copiedApiKey ? (
+                            <Check className="h-3.5 w-3.5 text-emerald-500" />
+                          ) : (
+                            <Copy className="h-3.5 w-3.5" />
+                          )}
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="block text-xs font-semibold text-foreground">
+                      کد وضعیت موفقیت (Success Status Code)
+                    </label>
+                    <input
+                      type="number"
+                      dir="ltr"
+                      value={ssoSettings.successStatusCode}
+                      onChange={(e) => setSsoSettings({ ...ssoSettings, successStatusCode: parseInt(e.target.value, 10) || 2000 })}
+                      placeholder="2000"
+                      className="w-full h-10 px-3 text-xs font-mono border border-border rounded-xl bg-background text-foreground"
+                      required
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="block text-xs font-semibold text-foreground">
+                      مهلت زمانی پاسخ وب‌سرویس (میلی‌ثانیه)
+                    </label>
+                    <input
+                      type="number"
+                      dir="ltr"
+                      value={ssoSettings.timeoutMs}
+                      onChange={(e) => setSsoSettings({ ...ssoSettings, timeoutMs: parseInt(e.target.value, 10) || 8000 })}
+                      placeholder="8000"
+                      className="w-full h-10 px-3 text-xs font-mono border border-border rounded-xl bg-background text-foreground"
+                      required
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-2.5 pt-2 border-t border-border">
+                  <label className="flex items-center gap-2 cursor-pointer text-xs font-semibold text-foreground">
+                    <input
+                      type="checkbox"
+                      checked={ssoSettings.autoCreateStudent}
+                      onChange={(e) => setSsoSettings({ ...ssoSettings, autoCreateStudent: e.target.checked })}
+                      className="w-4 h-4 rounded border-border text-primary focus:ring-primary"
+                    />
+                    <span>ساخت خودکار حساب کاربری داوطلب در اولین ورود موفق در پایگاه داده پرتال</span>
+                  </label>
+
+                  <label className="flex items-center gap-2 cursor-pointer text-xs font-semibold text-foreground">
+                    <input
+                      type="checkbox"
+                      checked={ssoSettings.bypassCourseCheckIfNoEndpoint}
+                      onChange={(e) => setSsoSettings({ ...ssoSettings, bypassCourseCheckIfNoEndpoint: e.target.checked })}
+                      className="w-4 h-4 rounded border-border text-primary focus:ring-primary"
+                    />
+                    <span>نادیده‌گرفتن بررسی دوره در صورت عدم تعریف اندپوینت دوره‌ها یا کاربران مجاز</span>
+                  </label>
+                </div>
+
+                <div className="pt-2">
+                  <Button type="submit" disabled={isSavingSso} className="px-6 h-10 text-xs font-bold">
+                    {isSavingSso ? "در حال ذخیره..." : "ذخیره تغییرات وب‌سرویس"}
+                  </Button>
+                </div>
+              </form>
+
+              {/* Multi-Stage Live Connection Tester Card */}
+              <div className="mt-8 p-5 bg-card border border-border rounded-2xl space-y-4 shadow-sm">
+                <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 border-b border-border pb-3">
+                  <div className="flex items-center gap-2">
+                    <div className="w-8 h-8 rounded-lg bg-amber-500/10 text-amber-600 flex items-center justify-center font-bold">
+                      <Zap className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <h4 className="text-sm font-bold text-foreground">
+                        آزمایشگاه تست زنده ۳ مرحله‌ای وب‌سرویس مشاهیر دانش
+                      </h4>
+                      <p className="text-xs text-muted-foreground">
+                        ارزیابی مرحله‌به‌مرحله مراحل احراز هویت پیامکی، اعتبارسنجی توکن و دریافت فاکتورهای دوره‌های داوطلب
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Sub-Tabs for Stage Testing */}
+                <div className="flex flex-wrap gap-2 border-b border-border pb-2 text-xs">
+                  <button
+                    type="button"
+                    onClick={() => setTestStageTab("STAGE1_OTP")}
+                    className={`px-3 py-1.5 rounded-lg font-semibold transition ${
+                      testStageTab === "STAGE1_OTP"
+                        ? "bg-blue-600 text-white shadow-xs"
+                        : "bg-muted text-muted-foreground hover:bg-muted/80"
+                    }`}
+                  >
+                    مرحله ۱: ارسال پیامک کد (Send OTP)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setTestStageTab("STAGE2_VERIFY")}
+                    className={`px-3 py-1.5 rounded-lg font-semibold transition ${
+                      testStageTab === "STAGE2_VERIFY"
+                        ? "bg-blue-600 text-white shadow-xs"
+                        : "bg-muted text-muted-foreground hover:bg-muted/80"
+                    }`}
+                  >
+                    مرحله ۲: بررسی کد تایید (Verify OTP)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setTestStageTab("STAGE3_PRODUCTS")}
+                    className={`px-3 py-1.5 rounded-lg font-semibold transition ${
+                      testStageTab === "STAGE3_PRODUCTS"
+                        ? "bg-blue-600 text-white shadow-xs"
+                        : "bg-muted text-muted-foreground hover:bg-muted/80"
+                    }`}
+                  >
+                    مرحله ۳: استعلام دوره‌ها (Product List)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setTestStageTab("PASSWORD")}
+                    className={`px-3 py-1.5 rounded-lg font-semibold transition ${
+                      testStageTab === "PASSWORD"
+                        ? "bg-blue-600 text-white shadow-xs"
+                        : "bg-muted text-muted-foreground hover:bg-muted/80"
+                    }`}
+                  >
+                    روش جایگزین: ورود با رمز عبور
+                  </button>
+                </div>
+
+                {/* STAGE 1: SEND OTP */}
+                {testStageTab === "STAGE1_OTP" && (
+                  <div className="space-y-4">
+                    <p className="text-xs text-muted-foreground">
+                      ارسال درخواست به مسیر <code>{ssoSettings.sendOtpEndpoint || "/users/sendVerificationCodeByMobile"}</code> جهت تولید و ارسال کد ۵ رقمی پیامکی به تلفن همراه داوطلب.
+                    </p>
+                    <div className="flex flex-col sm:flex-row items-stretch sm:items-end gap-3">
+                      <div className="space-y-1 flex-1">
+                        <label className="block text-xs font-semibold text-foreground">
+                          شماره تلفن همراه تست
+                        </label>
+                        <input
+                          type="tel"
+                          dir="ltr"
+                          value={testSsoMobile}
+                          onChange={(e) => setTestSsoMobile(e.target.value)}
+                          placeholder="09123445103"
+                          className="w-full h-10 px-3 text-xs font-mono border border-border rounded-xl bg-background text-foreground"
+                        />
+                      </div>
+                      <Button
+                        type="button"
+                        onClick={handleTestStage1}
+                        disabled={isTestingStage1}
+                        className="h-10 text-xs font-bold bg-blue-600 hover:bg-blue-700 text-white flex items-center gap-2"
+                      >
+                        <Zap className="h-4 w-4" />
+                        {isTestingStage1 ? "در حال ارسال به وب‌سرویس..." : "تست ارسال پیامک (Stage 1)"}
+                      </Button>
+                    </div>
+
+                    {stage1Result && (
+                      <div
+                        className={`p-4 rounded-xl border text-xs space-y-2 ${
+                          stage1Result.success
+                            ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-800 dark:text-emerald-200"
+                            : "bg-rose-500/10 border-rose-500/30 text-rose-800 dark:text-rose-200"
+                        }`}
+                      >
+                        <div className="flex items-center justify-between">
+                          <span className="font-bold flex items-center gap-1.5">
+                            {stage1Result.success ? <CheckCircle2 className="h-4 w-4 text-emerald-600" /> : <AlertTriangle className="h-4 w-4 text-rose-600" />}
+                            {stage1Result.message}
+                          </span>
+                          <Badge variant="outline" className="border-current/30 text-current font-mono">
+                            {toPersianDigits(stage1Result.latencyMs)} میلی‌ثانیه
+                          </Badge>
+                        </div>
+                        {stage1Result.rawPreview && (
+                          <pre dir="ltr" className="p-2.5 bg-black/80 text-emerald-400 font-mono text-[11px] rounded-lg overflow-x-auto max-h-36">
+                            {stage1Result.rawPreview}
+                          </pre>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* STAGE 2: VERIFY OTP */}
+                {testStageTab === "STAGE2_VERIFY" && (
+                  <div className="space-y-4">
+                    <p className="text-xs text-muted-foreground">
+                      ارسال شماره همراه و کد تایید دریافتی به مسیر <code>{ssoSettings.verifyOtpEndpoint || "/users/checkVerificationCode"}</code> جهت دریافت توکن احراز هویت.
+                    </p>
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                      <div className="space-y-1">
+                        <label className="block text-xs font-semibold text-foreground">
+                          شماره موبایل
+                        </label>
+                        <input
+                          type="tel"
+                          dir="ltr"
+                          value={testSsoMobile}
+                          onChange={(e) => setTestSsoMobile(e.target.value)}
+                          placeholder="09123445103"
+                          className="w-full h-10 px-3 text-xs font-mono border border-border rounded-xl bg-background text-foreground"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <label className="block text-xs font-semibold text-foreground">
+                          کد ۵ رقمی دریافتی
+                        </label>
+                        <input
+                          type="text"
+                          dir="ltr"
+                          value={testOtpCode}
+                          onChange={(e) => setTestOtpCode(e.target.value)}
+                          placeholder="12345"
+                          className="w-full h-10 px-3 text-xs font-mono border border-border rounded-xl bg-background text-foreground tracking-widest text-center"
+                        />
+                      </div>
+                      <div className="flex items-end">
+                        <Button
+                          type="button"
+                          onClick={handleTestStage2}
+                          disabled={isTestingStage2}
+                          className="w-full h-10 text-xs font-bold bg-blue-600 hover:bg-blue-700 text-white flex items-center justify-center gap-2"
+                        >
+                          <Zap className="h-4 w-4" />
+                          {isTestingStage2 ? "در حال بررسی..." : "تست بررسی کد (Stage 2)"}
+                        </Button>
+                      </div>
+                    </div>
+
+                    {stage2Result && (
+                      <div
+                        className={`p-4 rounded-xl border text-xs space-y-2 ${
+                          stage2Result.success
+                            ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-800 dark:text-emerald-200"
+                            : "bg-rose-500/10 border-rose-500/30 text-rose-800 dark:text-rose-200"
+                        }`}
+                      >
+                        <div className="flex items-center justify-between">
+                          <span className="font-bold flex items-center gap-1.5">
+                            {stage2Result.success ? <CheckCircle2 className="h-4 w-4 text-emerald-600" /> : <AlertTriangle className="h-4 w-4 text-rose-600" />}
+                            {stage2Result.message}
+                          </span>
+                          <Badge variant="outline" className="border-current/30 text-current font-mono">
+                            {toPersianDigits(stage2Result.latencyMs)} میلی‌ثانیه
+                          </Badge>
+                        </div>
+                        {stage2Result.token && (
+                          <div className="p-2 bg-background/80 rounded-lg border border-current/20">
+                            <span className="text-[10px] text-muted-foreground block font-bold">توکن احراز هویت دریافتی:</span>
+                            <span className="font-mono text-[11px] break-all text-foreground">{stage2Result.token}</span>
+                          </div>
+                        )}
+                        {stage2Result.rawPreview && (
+                          <pre dir="ltr" className="p-2.5 bg-black/80 text-emerald-400 font-mono text-[11px] rounded-lg overflow-x-auto max-h-36">
+                            {stage2Result.rawPreview}
+                          </pre>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* STAGE 3: FETCH PRODUCTS */}
+                {testStageTab === "STAGE3_PRODUCTS" && (
+                  <div className="space-y-4">
+                    <p className="text-xs text-muted-foreground">
+                      ارسال درخواست به مسیر <code>{ssoSettings.productsEndpoint || "/invoices/productListByUser"}</code> جهت استعلام سبد خرید و دوره‌های خریداری‌شده داوطلب.
+                    </p>
+                    <div className="flex flex-col sm:flex-row items-stretch sm:items-end gap-3">
+                      <div className="space-y-1 flex-1">
+                        <label className="block text-xs font-semibold text-foreground">
+                          شماره موبایل یا شناسه کاربر
+                        </label>
+                        <input
+                          type="text"
+                          dir="ltr"
+                          value={testSsoMobile}
+                          onChange={(e) => setTestSsoMobile(e.target.value)}
+                          placeholder="09123445103"
+                          className="w-full h-10 px-3 text-xs font-mono border border-border rounded-xl bg-background text-foreground"
+                        />
+                      </div>
+                      <Button
+                        type="button"
+                        onClick={handleTestStage3}
+                        disabled={isTestingStage3}
+                        className="h-10 text-xs font-bold bg-blue-600 hover:bg-blue-700 text-white flex items-center gap-2"
+                      >
+                        <Zap className="h-4 w-4" />
+                        {isTestingStage3 ? "در حال دریافت دوره‌ها..." : "استعلام فاکتورها (Stage 3)"}
+                      </Button>
+                    </div>
+
+                    {stage3Result && (
+                      <div
+                        className={`p-4 rounded-xl border text-xs space-y-2 ${
+                          stage3Result.success
+                            ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-800 dark:text-emerald-200"
+                            : "bg-rose-500/10 border-rose-500/30 text-rose-800 dark:text-rose-200"
+                        }`}
+                      >
+                        <div className="flex items-center justify-between">
+                          <span className="font-bold flex items-center gap-1.5">
+                            {stage3Result.success ? <CheckCircle2 className="h-4 w-4 text-emerald-600" /> : <AlertTriangle className="h-4 w-4 text-rose-600" />}
+                            {stage3Result.message} ({toPersianDigits(stage3Result.productsCount)} دوره یافت شد)
+                          </span>
+                          <Badge variant="outline" className="border-current/30 text-current font-mono">
+                            {toPersianDigits(stage3Result.latencyMs)} میلی‌ثانیه
+                          </Badge>
+                        </div>
+                        {stage3Result.rawPreview && (
+                          <pre dir="ltr" className="p-2.5 bg-black/80 text-emerald-400 font-mono text-[11px] rounded-lg overflow-x-auto max-h-48">
+                            {stage3Result.rawPreview}
+                          </pre>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* PASSWORD LOGIN TEST */}
+                {testStageTab === "PASSWORD" && (
+                  <div className="space-y-4">
+                    <p className="text-xs text-muted-foreground">
+                      تست زنده احراز هویت با نام کاربری/موبایل و رمز عبور مستقیم در مسیر <code>{ssoSettings.loginEndpoint}</code>
+                    </p>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                      <div className="space-y-1">
+                        <label className="block text-xs font-semibold text-foreground">
+                          شماره موبایل
+                        </label>
+                        <input
+                          type="tel"
+                          dir="ltr"
+                          value={testSsoMobile}
+                          onChange={(e) => setTestSsoMobile(e.target.value)}
+                          placeholder="09123445103"
+                          className="w-full h-10 px-3 text-xs font-mono border border-border rounded-xl bg-background text-foreground"
+                        />
+                      </div>
+
+                      <div className="space-y-1">
+                        <label className="block text-xs font-semibold text-foreground">
+                          رمز عبور
+                        </label>
+                        <input
+                          type="password"
+                          value={testSsoPassword}
+                          onChange={(e) => setTestSsoPassword(e.target.value)}
+                          placeholder="رمز عبور حساب مشاهیر دانش"
+                          className="w-full h-10 px-3 text-xs border border-border rounded-xl bg-background text-foreground"
+                        />
+                      </div>
+
+                      <div className="flex items-end">
+                        <Button
+                          type="button"
+                          onClick={handleTestSsoConnection}
+                          disabled={isTestingSso}
+                          className="w-full h-10 text-xs font-bold bg-[#004071] hover:bg-blue-900 text-white flex items-center justify-center gap-2 shadow-sm"
+                        >
+                          <Zap className="h-4 w-4" />
+                          {isTestingSso ? "در حال اتصال..." : "تست ورود با رمز عبور"}
+                        </Button>
+                      </div>
+                    </div>
+
+                    {ssoTestResult && (
+                      <div
+                        className={`p-4 rounded-xl border text-xs space-y-3 ${
+                          ssoTestResult.success
+                            ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-800 dark:text-emerald-200"
+                            : "bg-rose-500/10 border-rose-500/30 text-rose-800 dark:text-rose-200"
+                        }`}
+                      >
+                        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-current/20 pb-2.5">
+                          <div className="flex items-center gap-2 font-bold text-sm">
+                            {ssoTestResult.success ? (
+                              <CheckCircle2 className="h-5 w-5 text-emerald-600 dark:text-emerald-400" />
+                            ) : (
+                              <AlertTriangle className="h-5 w-5 text-rose-600 dark:text-rose-400" />
+                            )}
+                            <span>{ssoTestResult.message}</span>
+                          </div>
+
+                          <div className="flex items-center gap-2 font-mono text-xs">
+                            <Badge variant="outline" className="border-current/30 text-current">
+                              تاخیر: {toPersianDigits(ssoTestResult.latencyMs)} میلی‌ثانیه
+                            </Badge>
+                            {ssoTestResult.statusCode && (
+                              <Badge variant="outline" className="border-current/30 text-current">
+                                وضعیت: {toPersianDigits(ssoTestResult.statusCode)}
+                              </Badge>
+                            )}
+                          </div>
+                        </div>
+
+                        {ssoTestResult.extractedUser && (
+                          <div className="p-3 bg-background/80 rounded-xl border border-current/20 space-y-2 text-foreground">
+                            <h5 className="font-bold text-xs text-foreground flex items-center gap-1.5">
+                              <User className="h-3.5 w-3.5 text-primary" />
+                              مشخصات کاربر استخراج‌شده:
+                            </h5>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5 text-xs pt-1">
+                              <div className="p-2 bg-muted/40 rounded-lg">
+                                <span className="text-[10px] text-muted-foreground block">نام و نام خانوادگی:</span>
+                                <strong className="text-foreground">{ssoTestResult.extractedUser.fullName || "---"}</strong>
+                              </div>
+                              <div className="p-2 bg-muted/40 rounded-lg">
+                                <span className="text-[10px] text-muted-foreground block">کد ملی:</span>
+                                <strong className="font-mono text-foreground">{toPersianDigits(ssoTestResult.extractedUser.nationalId || "---")}</strong>
+                              </div>
+                              <div className="p-2 bg-muted/40 rounded-lg">
+                                <span className="text-[10px] text-muted-foreground block">شماره موبایل:</span>
+                                <strong className="font-mono text-foreground">{toPersianDigits(ssoTestResult.extractedUser.mobile || "---")}</strong>
+                              </div>
+                              <div className="p-2 bg-muted/40 rounded-lg">
+                                <span className="text-[10px] text-muted-foreground block">شناسه یکتا:</span>
+                                <strong className="font-mono text-foreground">{toPersianDigits(ssoTestResult.extractedUser.id || "---")}</strong>
+                              </div>
+                              <div className="p-2 bg-muted/40 rounded-lg">
+                                <span className="text-[10px] text-muted-foreground block">تعداد دوره‌ها:</span>
+                                <strong className="text-foreground">{toPersianDigits(ssoTestResult.coursesCount ?? 0)} دوره</strong>
+                              </div>
+                            </div>
+                          </div>
+                        )}
+
+                        {ssoTestResult.rawPreview && (
+                          <pre dir="ltr" className="p-2.5 bg-black/80 text-emerald-400 font-mono text-[11px] rounded-lg overflow-x-auto max-h-48 text-start">
+                            {ssoTestResult.rawPreview}
+                          </pre>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
+      {/* TAB 8: ENTITLED COURSES MANAGEMENT (Manager Only) */}
+      {isManager && activeTab === "COURSES" && (
+        <div className="space-y-6">
+          {/* Header Card */}
+          <Card className="shadow-sm border border-border">
+            <CardHeader>
+              <CardTitle className="text-lg font-bold flex items-center justify-between">
+                <span className="flex items-center gap-2">
+                  <BookOpen className="h-5 w-5 text-blue-600" />
+                  مدیریت کدهای دوره دارای بسته پشتیبانی ۳۶۰ درجه
+                </span>
+                <Badge variant="outline" className="font-mono">
+                  {toPersianDigits(courses.length)} دوره تعریف‌شده
+                </Badge>
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-6">
+              <div className="p-4 bg-blue-50/70 dark:bg-blue-950/20 border border-blue-200 dark:border-blue-800 rounded-xl text-xs space-y-1.5 text-foreground">
+                <div className="flex items-center gap-2 font-bold text-blue-700 dark:text-blue-400 text-sm">
+                  <ShieldCheck className="h-4 w-4" />
+                  منطق دروازه دسترسی و تطبیق دوره (Course Entitlement Gate)
+                </div>
+                <p className="leading-relaxed">
+                  هنگامی که داوطلب جدید از طریق حساب کاربری مشاهیر دانش لاگین می‌کند، فهرست دوره‌های ثبت‌نامی وی از مسیر <code>/invoices/productListByUser</code> استعلام شده و با کدهای فعال جدول زیر تطبیق داده می‌شود. در صورت انطباق، حساب به صورت آنی فعال شده و وارد صف تخصیص پشتیبان می‌گردد.
+                </p>
+              </div>
+
+              {/* Add New Course Form */}
+              <form onSubmit={handleSaveCourse} className="p-4 bg-muted/20 border border-border rounded-xl space-y-4">
+                <h4 className="text-xs font-bold text-foreground flex items-center gap-1.5">
+                  <Plus className="w-3.5 h-3.5 text-blue-600" />
+                  افزودن دوره جدید دارای پشتیبانی ۳۶۰
+                </h4>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                  <div className="space-y-1">
+                    <label className="block text-xs font-semibold text-foreground">
+                      کد دوره (Course Code)
+                    </label>
+                    <input
+                      type="text"
+                      dir="ltr"
+                      value={newCourseCode}
+                      onChange={(e) => setNewCourseCode(e.target.value)}
+                      placeholder="e.g. MASHAHIR-BAR-360"
+                      className="w-full h-9 px-3 text-xs font-mono border border-border rounded-lg bg-background text-foreground uppercase"
+                      required
+                    />
+                  </div>
+
+                  <div className="space-y-1 sm:col-span-2">
+                    <label className="block text-xs font-semibold text-foreground">
+                      عنوان کامل دوره آموزشی
+                    </label>
+                    <input
+                      type="text"
+                      value={newCourseName}
+                      onChange={(e) => setNewCourseName(e.target.value)}
+                      placeholder="دوره جامع طلایی آمادگی آزمون وکالت ۳۶۰ درجه"
+                      className="w-full h-9 px-3 text-xs border border-border rounded-lg bg-background text-foreground"
+                      required
+                    />
+                  </div>
+
+                  <div className="space-y-1 sm:col-span-3">
+                    <label className="block text-xs font-semibold text-foreground">
+                      توضیحات تکمیلی دوره
+                    </label>
+                    <input
+                      type="text"
+                      value={newCourseDescription}
+                      onChange={(e) => setNewCourseDescription(e.target.value)}
+                      placeholder="شامل هدایت تحصیلی هفتگی، آزمون‌های آزمایشی و جلسات تماس تلفنی"
+                      className="w-full h-9 px-3 text-xs border border-border rounded-lg bg-background text-foreground"
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="block text-xs font-semibold text-foreground">
+                      مبلغ دوره جهت نمایش
+                    </label>
+                    <input
+                      type="text"
+                      value={newCoursePrice}
+                      onChange={(e) => setNewCoursePrice(e.target.value)}
+                      placeholder="۵,۸۰۰,۰۰۰ تومان"
+                      className="w-full h-9 px-3 text-xs border border-border rounded-lg bg-background text-foreground"
+                    />
+                  </div>
+
+                  <div className="space-y-1 sm:col-span-2">
+                    <label className="block text-xs font-semibold text-foreground">
+                      لینک خرید / ارتقا در سایت مشاهیر دانش
+                    </label>
+                    <input
+                      type="url"
+                      dir="ltr"
+                      value={newCoursePurchaseUrl}
+                      onChange={(e) => setNewCoursePurchaseUrl(e.target.value)}
+                      placeholder="https://mashahiredanesh.com/courses/bar-360"
+                      className="w-full h-9 px-3 text-xs font-mono border border-border rounded-lg bg-background text-foreground"
+                      required
+                    />
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-between pt-2">
+                  <label className="flex items-center gap-2 cursor-pointer text-xs font-semibold text-foreground">
+                    <input
+                      type="checkbox"
+                      checked={newCourseHasSupport}
+                      onChange={(e) => setNewCourseHasSupport(e.target.checked)}
+                      className="w-4 h-4 rounded border-border text-primary focus:ring-primary"
+                    />
+                    <span>شامل بسته پشتیبانی آموزشی ۳۶۰ درجه مشاهیر دانش است</span>
+                  </label>
+
+                  <Button type="submit" disabled={isSavingCourse} className="h-9 px-4 text-xs font-bold bg-blue-600 hover:bg-blue-700 text-white">
+                    {isSavingCourse ? "در حال ثبت..." : "افزودن دوره به فهرست مجاز"}
+                  </Button>
+                </div>
+              </form>
+
+              {/* Courses Table */}
+              <div className="border border-border rounded-xl overflow-hidden">
+                <table className="w-full text-start text-xs">
+                  <thead className="bg-muted/40 text-muted-foreground border-b border-border font-semibold">
+                    <tr>
+                      <th className="py-3 px-4 text-start">کد دوره</th>
+                      <th className="py-3 px-4 text-start">عنوان دوره</th>
+                      <th className="py-3 px-4 text-start">وضعیت پشتیبانی</th>
+                      <th className="py-3 px-4 text-start">لینک خرید</th>
+                      <th className="py-3 px-4 text-start">وضعیت</th>
+                      <th className="py-3 px-4 text-start">عملیات</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border">
+                    {courses.map((c) => {
+                      const isLoading = !!courseActionLoading[c.id];
+                      return (
+                        <tr key={c.id} className="hover:bg-muted/20 transition">
+                          <td className="py-3 px-4 font-mono font-bold text-foreground">
+                            {c.courseCode}
+                          </td>
+                          <td className="py-3 px-4">
+                            <div className="font-semibold text-foreground">{c.courseName}</div>
+                            {c.description && (
+                              <div className="text-[11px] text-muted-foreground mt-0.5">{c.description}</div>
+                            )}
+                          </td>
+                          <td className="py-3 px-4">
+                            {c.hasSupport ? (
+                              <Badge className="bg-emerald-600 text-white text-[10px]">
+                                پشتیبانی ۳۶۰ فعال
+                              </Badge>
+                            ) : (
+                              <Badge variant="secondary" className="text-[10px]">
+                                فاقد پشتیبانی
+                              </Badge>
+                            )}
+                          </td>
+                          <td className="py-3 px-4">
+                            <a
+                              href={c.garnetPurchaseUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="text-blue-600 hover:underline flex items-center gap-1 font-mono text-[11px]"
+                            >
+                              <span>مشاهده</span>
+                              <ExternalLink className="w-3 h-3" />
+                            </a>
+                          </td>
+                          <td className="py-3 px-4">
+                            <button
+                              type="button"
+                              onClick={() => handleToggleCourse(c.id, c.isActive)}
+                              disabled={isLoading}
+                              className="flex items-center gap-1 text-xs"
+                            >
+                              {c.isActive ? (
+                                <span className="text-emerald-600 font-semibold flex items-center gap-1">
+                                  <ToggleRight className="w-5 h-5" />
+                                  فعال
+                                </span>
+                              ) : (
+                                <span className="text-muted-foreground flex items-center gap-1">
+                                  <ToggleLeft className="w-5 h-5" />
+                                  غیرفعال
+                                </span>
+                              )}
+                            </button>
+                          </td>
+                          <td className="py-3 px-4">
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteCourse(c.id)}
+                              disabled={isLoading}
+                              className="p-1.5 rounded-lg text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/40 transition"
+                              title="حذف دوره"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
             </CardContent>
           </Card>
         </div>

@@ -12,6 +12,7 @@ import {
   entitledCourses,
   users,
   triageCases,
+  auditLogs,
 } from "../db/schema";
 import { eq, and, desc, asc, ne, isNotNull } from "drizzle-orm";
 import { sendSystemSms } from "../services/sms";
@@ -20,7 +21,7 @@ import { getRedisClient } from "../redis";
 import { enqueueExamSubmission } from "../queue/exam-queue";
 import { revalidatePath } from "next/cache";
 import { evaluateStudentRisk, calculateSlaDueAt } from "../services/alert-engine";
-import { sanitizeUserForClient } from "@/lib/sanitize";
+import { sanitizeUserForClient, maskPhoneNumber } from "@/lib/sanitize";
 import type {
   EvaluationExamRecord,
   ExamSubmissionRecord,
@@ -55,6 +56,37 @@ async function verifyExamAuthorPermission(session: { role: string; userId: strin
     }
   }
   throw new Error("UNAUTHORIZED: شما مجوز لازم برای طراحی و بارگذاری آزمون را ندارید.");
+}
+
+/**
+ * Ensures exam record exists in PostgreSQL before submission insert (Requirement 2)
+ */
+async function ensureExamExists(examId: string, examTitle?: string) {
+  if (!examId) return;
+  try {
+    const existing = await db
+      .select({ id: exams.id })
+      .from(exams)
+      .where(eq(exams.id, examId))
+      .limit(1);
+
+    if (existing.length === 0) {
+      await db
+        .insert(exams)
+        .values({
+          id: examId,
+          title: examTitle || "آزمون شبیه‌ساز وکالت",
+          category: "MOCK_BAR",
+          durationMinutes: 120,
+          createdById: "usr_admin1",
+          isPublished: true,
+          targetAudience: "ALL",
+        })
+        .onConflictDoNothing();
+    }
+  } catch (err) {
+    console.warn("[ensureExamExists] Warning ensuring exam exists in actions:", err);
+  }
 }
 
 // ============================================================================
@@ -363,31 +395,34 @@ export async function deleteProductionExamQuestionAction(
       return { success: false, message: "شما مجاز به حذف سؤالات این آزمون نیستید." };
     }
 
-    await db.delete(examQuestions).where(eq(examQuestions.id, questionId));
+    // [M-12] Atomic transactional question deletion and re-indexing
+    await db.transaction(async (tx) => {
+      await tx.delete(examQuestions).where(eq(examQuestions.id, questionId));
 
-    // Re-index remaining question numbers
-    const remaining = await db
-      .select()
-      .from(examQuestions)
-      .where(eq(examQuestions.examId, examId))
-      .orderBy(asc(examQuestions.questionNumber));
+      // Re-index remaining question numbers
+      const remaining = await tx
+        .select()
+        .from(examQuestions)
+        .where(eq(examQuestions.examId, examId))
+        .orderBy(asc(examQuestions.questionNumber));
 
-    for (let i = 0; i < remaining.length; i++) {
-      if (remaining[i].questionNumber !== i + 1) {
-        await db
-          .update(examQuestions)
-          .set({ questionNumber: i + 1 })
-          .where(eq(examQuestions.id, remaining[i].id));
+      for (let i = 0; i < remaining.length; i++) {
+        if (remaining[i].questionNumber !== i + 1) {
+          await tx
+            .update(examQuestions)
+            .set({ questionNumber: i + 1 })
+            .where(eq(examQuestions.id, remaining[i].id));
+        }
       }
-    }
 
-    await db
-      .update(exams)
-      .set({
-        totalQuestions: remaining.length,
-        updatedAt: new Date(),
-      })
-      .where(eq(exams.id, examId));
+      await tx
+        .update(exams)
+        .set({
+          totalQuestions: remaining.length,
+          updatedAt: new Date(),
+        })
+        .where(eq(exams.id, examId));
+    });
 
     revalidatePath(`/exams/builder/${examId}`);
     revalidatePath(`/student/exams/${examId}`);
@@ -412,17 +447,20 @@ export async function reorderExamQuestionsAction(
     const session = await requireAuth();
     await verifyExamAuthorPermission(session);
 
-    for (let i = 0; i < questionIdsInOrder.length; i++) {
-      await db
-        .update(examQuestions)
-        .set({ questionNumber: i + 1 })
-        .where(
-          and(
-            eq(examQuestions.id, questionIdsInOrder[i]),
-            eq(examQuestions.examId, examId)
-          )
-        );
-    }
+    // [M-12] Atomic transactional question reordering
+    await db.transaction(async (tx) => {
+      for (let i = 0; i < questionIdsInOrder.length; i++) {
+        await tx
+          .update(examQuestions)
+          .set({ questionNumber: i + 1 })
+          .where(
+            and(
+              eq(examQuestions.id, questionIdsInOrder[i]),
+              eq(examQuestions.examId, examId)
+            )
+          );
+      }
+    });
 
     revalidatePath(`/exams/builder/${examId}`);
     return { success: true, message: "ترتیب سؤالات با موفقیت ذخیره گردید." };
@@ -493,7 +531,7 @@ export async function publishExamAction(
  */
 export async function getExamWithQuestionsAction(examId: string) {
   try {
-    const session = await getSession();
+    const session = await requireAuth();
     const [exam] = await db.select().from(exams).where(eq(exams.id, examId)).limit(1);
     if (!exam) return null;
 
@@ -530,7 +568,7 @@ export async function getExamWithQuestionsAction(examId: string) {
  */
 export async function listAllExamsAction() {
   try {
-    const session = await getSession();
+    const session = await requireAuth();
     const rows = await db
       .select({
         exam: exams,
@@ -729,6 +767,8 @@ export async function startExamAttemptAction(examId: string): Promise<{
     const mentorId = studentProfile?.mentorId || exam.createdById;
     const submissionId = `sub_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
     const now = new Date();
+
+    await ensureExamExists(exam.id, exam.title);
 
     await db.insert(examSubmissions).values({
       id: submissionId,
@@ -971,6 +1011,8 @@ export async function submitExamAction(payload: {
         })
         .where(eq(examSubmissions.id, existingSub.id));
     } else {
+      await ensureExamExists(exam.id, exam.title);
+
       await db.insert(examSubmissions).values({
         id: submissionId,
         examId: exam.id,
@@ -1093,6 +1135,11 @@ export async function getSubmissionForReviewAction(submissionId: string) {
 
     if (!sub) return null;
 
+    // H-05 IDOR Guard: Mentors can strictly inspect ONLY their assigned students' submissions
+    if (session.role === "MENTOR" && sub.submission.mentorId !== session.userId) {
+      return null;
+    }
+
     // Fetch Questions
     const questions = await db
       .select()
@@ -1192,10 +1239,15 @@ export async function getPendingMentorReviewsAction() {
       .orderBy(desc(examSubmissions.submittedAt));
 
     const rows = await query;
-    if (session.role === "MENTOR") {
-      return rows.filter((r) => r.submission.mentorId === session.userId);
-    }
-    return rows;
+    const isPrivileged = session.role === "CEO" || session.role === "ADMIN";
+    const filteredRows = session.role === "MENTOR"
+      ? rows.filter((r) => r.submission.mentorId === session.userId)
+      : rows;
+
+    return filteredRows.map((r) => ({
+      ...r,
+      studentPhone: isPrivileged ? r.studentPhone : maskPhoneNumber(r.studentPhone),
+    }));
   } catch {
     return [];
   }
@@ -1624,49 +1676,29 @@ export async function submitEvaluationExamAction(payload: {
 
   const submissionId = `sub_${Date.now()}`;
 
-  try {
-    await enqueueExamSubmission({
-      submissionId,
-      examId: exam.id,
-      studentProfileId: targetStudentId,
-      studentName: session.fullName,
-      answers: payload.subjectScores,
-      subjectScores: payload.subjectScores || {},
-      correctCount: payload.correctCount || 0,
-      wrongCount: payload.wrongCount || 0,
-      unansweredCount: payload.unansweredCount || 0,
-      overallScorePercent: scorePercent,
-      submittedAt: new Date().toISOString(),
-    });
-  } catch {}
-
-  await db
-    .insert(examSubmissions)
-    .values({
-      id: submissionId,
-      examId: exam.id,
-      studentId: session.userId,
-      mentorId: exam.creatorId,
-      examTitle: exam.title,
-      studentProfileId: targetStudentId,
-      scorePercent,
-      subjectScores: payload.subjectScores,
-      correctCount: payload.correctCount,
-      incorrectCount: payload.wrongCount,
-      unansweredCount: payload.unansweredCount,
-      rank: Math.floor(Math.random() * 200) + 15,
-      deltaFromPrevious,
-      deltaFromBaseline,
-      answers: payload.subjectScores,
-      status: "PUBLISHED_TO_STUDENT",
-    })
-    .onConflictDoNothing();
+  const queueResult = await enqueueExamSubmission({
+    submissionId,
+    examId: exam.id,
+    studentId: session.userId,
+    mentorId: exam.creatorId,
+    studentProfileId: targetStudentId,
+    studentName: session.fullName,
+    answers: payload.subjectScores,
+    subjectScores: payload.subjectScores || {},
+    correctCount: payload.correctCount || 0,
+    wrongCount: payload.wrongCount || 0,
+    unansweredCount: payload.unansweredCount || 0,
+    overallScorePercent: scorePercent,
+    deltaFromPrevious,
+    deltaFromBaseline,
+    submittedAt: new Date().toISOString(),
+  });
 
   return {
-    success: true,
-    statusCode: 202,
-    trackingId: submissionId,
-    message: "پاسخنامه آزمون با موفقیت در صف پردازش ثبت شد و شاخص رشد نسبت به آزمون‌های قبلی محاسبه گردید.",
+    success: queueResult.success,
+    statusCode: queueResult.statusCode,
+    trackingId: queueResult.trackingId || submissionId,
+    message: queueResult.message || "پاسخنامه آزمون با موفقیت در صف پردازش ثبت شد و شاخص رشد نسبت به آزمون‌های قبلی محاسبه گردید.",
     scorePercent,
     deltaFromPrevious,
     deltaFromBaseline,
@@ -1804,3 +1836,176 @@ export async function updateExamAudienceAction(examId: string, assignedStudentId
     message: "جامعه هدف و دسترسی داوطلبان به این آزمون با موفقیت ذخیره شد.",
   };
 }
+
+/**
+ * Layer 4 DRM: Report Suspicious Exam Activity (Scraping Tripwire)
+ * Flags student riskStatus to 'RED', inserts security audit log and creates
+ * a high-priority triage case when velocity exceeds human reading limits (>12 questions in <25s).
+ */
+export async function reportSuspiciousExamActivityAction(
+  examId: string,
+  reason: string
+): Promise<{ success: boolean; message: string }> {
+  try {
+    const session = await requireAuth();
+    if (session.role !== "STUDENT") {
+      return { success: true, message: "Ignored for non-student roles" };
+    }
+
+    const [profile] = await db
+      .select()
+      .from(studentProfiles)
+      .where(eq(studentProfiles.userId, session.userId))
+      .limit(1);
+
+    if (profile) {
+      // Flag student risk as RED
+      await db
+        .update(studentProfiles)
+        .set({
+          riskStatus: "RED",
+          riskReason: "شناسایی رفتار مشکوک به اسکرپینگ یا مرور فوق‌سریع سوالات در آزمون آنلاین (سپر DRM)",
+          updatedAt: new Date(),
+        })
+        .where(eq(studentProfiles.id, profile.id));
+
+      // Create a security triage case
+      const triageId = `triage_scraping_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+      await db.insert(triageCases).values({
+        id: triageId,
+        studentProfileId: profile.id,
+        mentorId: profile.mentorId || "usr_mentor1",
+        triggerCode: "EXAM_SCRAPING_SUSPECTED",
+        priorityTier: 2,
+        description: `هشدار سپر ضدجاسوسی (DRM): داوطلب در آزمون شناسه ${examId} اقدام به مرور غیرعادی و سریع بیش از ۱۲ سوال در کمتر از ۲۵ ثانیه نموده است. آزمون موقتاً متوقف و پرونده جهت ارزیابی امنیتی ثبت گردید.`,
+        isResolved: false,
+        slaDueAt: new Date(Date.now() + 4 * 3600 * 1000),
+      });
+
+      // Insert audit log
+      await db.insert(auditLogs).values({
+        id: `audit_scraping_${Date.now()}`,
+        actorId: session.userId,
+        action: "EXAM_ANTI_SCRAPING_TRIPWIRE_TRIGGERED",
+        targetEntity: "EXAM",
+        targetId: examId,
+        metadata: {
+          userId: session.userId,
+          studentProfileId: profile.id,
+          reason,
+          timestamp: new Date().toISOString(),
+        },
+      });
+    }
+
+    return {
+      success: true,
+      message: "هشدار امنیتی با موفقیت ثبت شد.",
+    };
+  } catch (err: any) {
+    console.error("[Anti-Scraping Tripwire Error]:", err);
+    return { success: false, message: "خطا در ثبت هشدار امنیتی." };
+  }
+}
+
+/**
+ * Edit Evaluation Exam Metadata (Requirement 15: Admin Edit CRUD)
+ */
+export async function editEvaluationExamAction(payload: {
+  examId: string;
+  title: string;
+  durationMinutes?: number;
+  passingScore?: number;
+  targetCohort?: string;
+  isPublished?: boolean;
+}): Promise<{ success: boolean; message: string }> {
+  try {
+    await requireRole(["SUPERVISOR", "CEO", "ADMIN"]);
+
+    const [exam] = await db
+      .select()
+      .from(evaluationExams)
+      .where(eq(evaluationExams.id, payload.examId))
+      .limit(1);
+
+    if (!exam) {
+      return { success: false, message: "آزمون مورد نظر یافت نشد." };
+    }
+
+    const updates: Record<string, unknown> = {
+      title: payload.title.trim(),
+    };
+    if (payload.durationMinutes !== undefined) {
+      updates.durationMinutes = Number(payload.durationMinutes);
+    }
+    if (payload.passingScore !== undefined) {
+      updates.passingScore = Number(payload.passingScore);
+    }
+    if (payload.targetCohort !== undefined) {
+      updates.targetCohort = payload.targetCohort.trim();
+    }
+    if (payload.isPublished !== undefined) {
+      updates.isPublished = payload.isPublished;
+    }
+
+    await db
+      .update(evaluationExams)
+      .set(updates)
+      .where(eq(evaluationExams.id, payload.examId));
+
+    revalidatePath("/exams");
+    revalidatePath("/student/exams");
+
+    return {
+      success: true,
+      message: "مشخصات آزمون با موفقیت ویرایش گردید.",
+    };
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : "خطا در ویرایش آزمون";
+    return { success: false, message: msg };
+  }
+}
+
+/**
+ * Delete Evaluation Exam (Requirement 15: Admin Delete CRUD)
+ */
+export async function deleteEvaluationExamAction(
+  examId: string
+): Promise<{ success: boolean; message: string }> {
+  try {
+    await requireRole(["SUPERVISOR", "CEO", "ADMIN"]);
+
+    const [exam] = await db
+      .select()
+      .from(evaluationExams)
+      .where(eq(evaluationExams.id, examId))
+      .limit(1);
+
+    if (!exam) {
+      return { success: false, message: "آزمون مورد نظر یافت نشد." };
+    }
+
+    // Delete submissions associated with this exam first
+    await db
+      .delete(examSubmissions)
+      .where(eq(examSubmissions.examId, examId));
+
+    // Delete the exam
+    await db
+      .delete(evaluationExams)
+      .where(eq(evaluationExams.id, examId));
+
+    revalidatePath("/exams");
+    revalidatePath("/student/exams");
+
+    return {
+      success: true,
+      message: "آزمون و کلیه کارنامه‌های مرتبط با موفقیت حذف شدند.",
+    };
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : "خطا در حذف آزمون";
+    return { success: false, message: msg };
+  }
+}
+
+

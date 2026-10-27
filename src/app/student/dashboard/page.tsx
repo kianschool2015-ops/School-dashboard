@@ -30,6 +30,7 @@ import {
   getStudyWeekBoundaries,
   toPersianDigits,
   getPersianDayOfWeek,
+  formatJalaliRangeHuman,
 } from "@/lib/jalali";
 import { StudentDashboardClient } from "./dashboard-client";
 import { StudentCallCoachWidget } from "@/components/student/student-call-coach-widget";
@@ -83,7 +84,7 @@ export default async function StudentDashboardPage() {
         .values({
           id: newProfileId,
           userId: session.userId,
-          mentorId: "usr_mentor1",
+          mentorId: null, // UNASSIGNED: Enters supervisor queue & student waiting room
           employmentStatus: "UNEMPLOYED",
           isStudent: false,
           maritalStatus: "SINGLE",
@@ -99,7 +100,7 @@ export default async function StudentDashboardPage() {
           riskStatus: "GREEN",
           riskReason: "داوطلب فعال سامانه مشاهیر دانش",
           hasActiveSupport: true,
-          enrolledCourseCode: "GARNET-BAR-360",
+          enrolledCourseCode: "MASHAHIR-BAR-360",
           enrolledCourseName: "دوره جامع آمادگی آزمون وکالت",
           lastContactAt: new Date(),
         })
@@ -154,8 +155,14 @@ export default async function StudentDashboardPage() {
     console.warn("[StudentDashboard] longitudinalHistory query error:", err);
   }
 
-  const { weekStartDate, weekEndDate, jalaliWeekNumber } = getStudyWeekBoundaries();
+  const { startDateObj, endDateObj, jalaliWeekNumber } = getStudyWeekBoundaries();
+  const studyWeekRange = formatJalaliRangeHuman(startDateObj, endDateObj);
   const currentDayIndex = getPersianDayOfWeek(new Date());
+
+  // Copywriting cleanup: strip parenthetical role suffixes from full name (e.g. "(داوطلب کانون وکلا)")
+  const cleanFullName = (session.fullName || "داوطلب گرامی")
+    .replace(/\s*\([^)]*\)/g, "")
+    .trim();
 
   // Metrics
   const totalTasks = items.length;
@@ -168,34 +175,41 @@ export default async function StudentDashboardPage() {
   const executionPercent =
     totalTasks > 0 ? Math.round(((doneCount + 0.5 * partialCount) / totalTasks) * 100) : 0;
 
+  // Actionable risk status metadata
+  const riskStatusConfig = {
+    GREEN: {
+      variant: "green" as const,
+      label: "پایدار و عالی",
+      reason: student?.riskReason || "عملکرد تحصیلی باثبات و مطابق بودجه‌بندی آزمون وکالت",
+    },
+    YELLOW: {
+      variant: "yellow" as const,
+      label: "هشدار مطالعاتی",
+      reason: student?.riskReason || "نیازمند جبران ساعت مطالعه و پیگیری برنامه هفتگی",
+    },
+    RED: {
+      variant: "red" as const,
+      label: "نیازمند مداخله و پیگیری",
+      reason: student?.riskReason || "عدم ثبت گزارش در ۴۸ ساعت گذشته؛ لزوم ارتباط با پشتیبان",
+    },
+  }[student?.riskStatus || "GREEN"];
+
   return (
     <div className="space-y-6">
       {/* Top Banner & Welcome */}
       <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4 border-b border-border pb-6">
         <div>
-          <div className="flex items-center space-x-2.5 space-x-reverse">
+          <div className="flex flex-wrap items-center gap-2.5">
             <h1 className="text-xl font-bold text-foreground tracking-tight">
-              سلام، {session.fullName} 👋
+              سلام، {cleanFullName} 👋
             </h1>
-            <Badge
-              variant={
-                student?.riskStatus === "RED"
-                  ? "red"
-                  : student?.riskStatus === "YELLOW"
-                  ? "yellow"
-                  : "green"
-              }
-            >
-              {student?.riskStatus === "RED"
-                ? "نیازمند مداخله و پیگیری"
-                : student?.riskStatus === "YELLOW"
-                ? "هشدار مطالعاتی"
-                : "پایدار و عالی"}
+            <Badge variant={riskStatusConfig.variant} className="text-xs px-2.5 py-0.5 font-medium">
+              {riskStatusConfig.label}
             </Badge>
           </div>
-          <p className="text-xs text-muted-foreground mt-1">
-            هفته مطالعاتی {toPersianDigits(jalaliWeekNumber)} ({weekStartDate} تا {weekEndDate}) • هدف:{" "}
-            {student?.masterclassGoal || "قبولی در آزمون وکالت کانون و مرکز وکلا"}
+          <p className="text-xs text-muted-foreground mt-1.5 leading-relaxed">
+            هفته مطالعاتی {toPersianDigits(jalaliWeekNumber)} ({studyWeekRange}) • وضعیت پایش:{" "}
+            <span className="text-foreground font-medium">{riskStatusConfig.reason}</span>
           </p>
         </div>
 
@@ -205,109 +219,199 @@ export default async function StudentDashboardPage() {
         )}
       </div>
 
-      {/* Coach Calling Hours & Reverse AMI Calling Widget */}
-      <StudentCallCoachWidget />
+      {/* Student Waiting Room Banner (When active support is true but mentorId is null) */}
+      {student?.hasActiveSupport && (!student?.mentorId || student.mentorId.trim() === "") && (
+        <Card className="border-amber-300 dark:border-amber-800 bg-amber-50/80 dark:bg-amber-950/30 p-5 rounded-2xl shadow-xs">
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+            <div className="flex items-start gap-3.5">
+              <div className="w-10 h-10 rounded-xl bg-amber-500/10 text-amber-600 dark:text-amber-400 flex items-center justify-center shrink-0 mt-0.5">
+                <Clock className="w-5 h-5" />
+              </div>
+              <div className="space-y-1">
+                <div className="flex items-center gap-2">
+                  <h3 className="text-sm font-bold text-amber-900 dark:text-amber-200">
+                    در انتظار تعیین پشتیبان تخصصی (صف انتظار سرپرست آموزشی)
+                  </h3>
+                  <Badge variant="outline" className="border-amber-400 text-amber-800 dark:text-amber-300 text-[10px]">
+                    ثبت‌نام تایید شده
+                  </Badge>
+                </div>
+                <p className="text-xs text-amber-800/90 dark:text-amber-300/90 leading-relaxed">
+                  داوطلب گرامی، ثبت‌نام و بسته پشتیبانی شما با موفقیت تایید شد. پرونده شما در صف تعیین پشتیبان تخصصی توسط سرپرست آموزشی قرار دارد و ظرف ۲۴ الی ۴۸ ساعت آینده پشتیبان اختصاصی شما تعیین خواهد شد.
+                </p>
+                <div className="text-[11px] text-amber-700/80 dark:text-amber-400/80 pt-1">
+                  دوره ثبت‌نامی: <span className="font-semibold text-foreground">{student.enrolledCourseName || "دوره جامع طلایی آمادگی آزمون وکالت ۳۶۰ درجه"}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </Card>
+      )}
 
-      {/* KPI Stat Tiles */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-        <Card className="p-4">
-          <div className="flex items-center justify-between text-muted-foreground mb-1">
-            <span className="text-xs">درصد اجرای برنامه</span>
-            <TrendingUp className="h-4 w-4 text-emerald-500" />
+      {/* KPI Stat Tiles: Harmonious rounded-xl badges & bottom progress bars */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        {/* KPI 1: Execution */}
+        <Card className="p-4 border-border shadow-xs flex flex-col justify-between">
+          <div>
+            <div className="flex items-center justify-between gap-2 mb-2">
+              <span className="text-xs font-medium text-muted-foreground">درصد اجرای برنامه</span>
+              <div className="w-10 h-10 rounded-xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 flex items-center justify-center shrink-0">
+                <TrendingUp className="h-5 w-5" />
+              </div>
+            </div>
+            <div className="text-2xl font-bold text-foreground persian-nums">
+              ٪{toPersianDigits(executionPercent)}
+            </div>
+            <p className="text-[11px] text-muted-foreground mt-1">
+              {toPersianDigits(doneCount)} پارت تکمیل از {toPersianDigits(totalTasks)} پارت مصوب
+            </p>
           </div>
-          <div className="text-2xl font-bold text-foreground persian-nums">
-            %{toPersianDigits(executionPercent)}
-          </div>
-          <Progress value={executionPercent} className="mt-2 h-1.5" indicatorClassName="bg-emerald-500" />
+          <Progress value={executionPercent} className="mt-3 h-1.5 rounded-full" indicatorClassName="bg-emerald-500" />
         </Card>
 
-        <Card className="p-4">
-          <div className="flex items-center justify-between text-muted-foreground mb-1">
-            <span className="text-xs">استمرار ثبت (Streak)</span>
-            <Flame className="h-4 w-4 text-amber-500" />
+        {/* KPI 2: Streak */}
+        <Card className="p-4 border-border shadow-xs flex flex-col justify-between">
+          <div>
+            <div className="flex items-center justify-between gap-2 mb-2">
+              <span className="text-xs font-medium text-muted-foreground">استمرار ثبت گزارش</span>
+              <div className="w-10 h-10 rounded-xl bg-amber-500/10 text-amber-600 dark:text-amber-400 flex items-center justify-center shrink-0">
+                <Flame className="h-5 w-5" />
+              </div>
+            </div>
+            <div className="text-2xl font-bold text-foreground persian-nums">
+              {toPersianDigits(6)}{" "}
+              <span className="text-xs font-normal text-muted-foreground">روز متوالی</span>
+            </div>
+            <p className="text-[11px] text-muted-foreground mt-1">
+              {toPersianDigits(1)} روز تا ثبت رکورد هفته کامل مطالعاتی
+            </p>
           </div>
-          <div className="text-2xl font-bold text-foreground persian-nums">
-            {toPersianDigits(6)}{" "}
-            <span className="text-xs font-normal text-muted-foreground">روز متوالی</span>
-          </div>
-          <p className="text-[10px] text-muted-foreground mt-1">۱ روز تا ثبت رکورد هفته کامل</p>
+          <Progress value={Math.round((6 / 7) * 100)} className="mt-3 h-1.5 rounded-full" indicatorClassName="bg-amber-500" />
         </Card>
 
-        <Card className="p-4">
-          <div className="flex items-center justify-between text-muted-foreground mb-1">
-            <span className="text-xs">ساعت مطالعه روزانه</span>
-            <Clock className="h-4 w-4 text-indigo-500" />
+        {/* KPI 3: Daily Study Hours */}
+        <Card className="p-4 border-border shadow-xs flex flex-col justify-between">
+          <div>
+            <div className="flex items-center justify-between gap-2 mb-2">
+              <span className="text-xs font-medium text-muted-foreground">ساعت مطالعه روزانه</span>
+              <div className="w-10 h-10 rounded-xl bg-blue-500/10 text-blue-600 dark:text-blue-400 flex items-center justify-center shrink-0">
+                <Clock className="h-5 w-5" />
+              </div>
+            </div>
+            <div className="text-2xl font-bold text-foreground persian-nums">
+              {toPersianDigits(student?.currentDailyStudyHours || 5)}{" "}
+              <span className="text-xs font-normal text-muted-foreground">ساعت</span>
+            </div>
+            <p className="text-[11px] text-muted-foreground mt-1">
+              سقف مجاز: {toPersianDigits(student?.workdayStudyHoursCap || 6)} ساعت در روز
+            </p>
           </div>
-          <div className="text-2xl font-bold text-foreground persian-nums">
-            {toPersianDigits(student?.currentDailyStudyHours || 5)}{" "}
-            <span className="text-xs font-normal text-muted-foreground">ساعت</span>
-          </div>
-          <p className="text-[10px] text-muted-foreground mt-1">
-            سقف مجاز: {toPersianDigits(student?.workdayStudyHoursCap || 6)} ساعت
-          </p>
+          <Progress
+            value={Math.min(100, Math.round(((student?.currentDailyStudyHours || 5) / (student?.workdayStudyHoursCap || 6)) * 100))}
+            className="mt-3 h-1.5 rounded-full"
+            indicatorClassName="bg-blue-500"
+          />
         </Card>
 
-        <Card className="p-4">
-          <div className="flex items-center justify-between text-muted-foreground mb-1">
-            <span className="text-xs">آخرین تراز آزمون وکالت</span>
-            <Award className="h-4 w-4 text-indigo-500" />
+        {/* KPI 4: Exam Score */}
+        <Card className="p-4 border-border shadow-xs flex flex-col justify-between">
+          <div>
+            <div className="flex items-center justify-between gap-2 mb-2">
+              <span className="text-xs font-medium text-muted-foreground">آخرین تراز آزمون وکالت</span>
+              <div className="w-10 h-10 rounded-xl bg-purple-500/10 text-purple-600 dark:text-purple-400 flex items-center justify-center shrink-0">
+                <Award className="h-5 w-5" />
+              </div>
+            </div>
+            {latestSubmission?.status === "PUBLISHED_TO_STUDENT" ? (
+              <>
+                <div className="text-2xl font-bold text-emerald-600 dark:text-emerald-400 persian-nums">
+                  ٪{toPersianDigits(Number(latestSubmission.totalPercentage || 0).toFixed(1))}
+                </div>
+                <p className="text-[11px] text-emerald-600 dark:text-emerald-400 mt-1 font-medium">
+                  تایید شده توسط پشتیبان علمی
+                </p>
+              </>
+            ) : latestSubmission?.status === "AUTO_GRADED_PENDING_MENTOR" ? (
+              <>
+                <div className="text-lg font-bold text-amber-500 mt-0.5">
+                  در انتظار ارزیابی
+                </div>
+                <p className="text-[11px] text-amber-600 dark:text-amber-400 mt-1">
+                  پاسخنامه در دست تحلیل پشتیبان است
+                </p>
+              </>
+            ) : (
+              <>
+                <div className="text-2xl font-bold text-foreground persian-nums">
+                  ٪{toPersianDigits(mockExams[0]?.overallScorePercent || 68)}
+                </div>
+                <p className="text-[11px] text-muted-foreground mt-1 font-medium">
+                  تراز آزمون آزمایشی استاندارد
+                </p>
+              </>
+            )}
           </div>
-          {latestSubmission?.status === "PUBLISHED_TO_STUDENT" ? (
-            <>
-              <div className="text-2xl font-bold text-emerald-500 persian-nums">
-                %{toPersianDigits(Number(latestSubmission.totalPercentage || 0).toFixed(1))}
-              </div>
-              <p className="text-[10px] text-emerald-600 dark:text-emerald-400 mt-1 font-medium">
-                تایید شده توسط پشتیبان علمی
-              </p>
-            </>
-          ) : latestSubmission?.status === "AUTO_GRADED_PENDING_MENTOR" ? (
-            <>
-              <div className="text-base font-bold text-amber-500 mt-1">
-                در انتظار تایید
-              </div>
-              <p className="text-[10px] text-amber-600 dark:text-amber-400 mt-1">
-                پاسخنامه در دست تحلیل پشتیبان است
-              </p>
-            </>
-          ) : (
-            <>
-              <div className="text-2xl font-bold text-foreground persian-nums">
-                %{toPersianDigits(mockExams[0]?.overallScorePercent || 68)}
-              </div>
-              <p className="text-[10px] text-muted-foreground mt-1 font-medium">
-                تراز استاندارد کشوری
-              </p>
-            </>
-          )}
+          <Progress
+            value={
+              latestSubmission?.status === "PUBLISHED_TO_STUDENT"
+                ? Number(latestSubmission.totalPercentage || 0)
+                : latestSubmission?.status === "AUTO_GRADED_PENDING_MENTOR"
+                ? 50
+                : mockExams[0]?.overallScorePercent || 68
+            }
+            className="mt-3 h-1.5 rounded-full"
+            indicatorClassName={
+              latestSubmission?.status === "PUBLISHED_TO_STUDENT"
+                ? "bg-emerald-500"
+                : latestSubmission?.status === "AUTO_GRADED_PENDING_MENTOR"
+                ? "bg-amber-500"
+                : "bg-purple-500"
+            }
+          />
         </Card>
       </div>
 
-      {/* Online Exam & Longitudinal Scorecard Banner */}
-      <Card className="border-border bg-gradient-to-r from-[#004071]/10 via-card to-card p-4">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-[#004071] text-white flex items-center justify-center shrink-0">
-              <Scale className="h-5 w-5" />
-            </div>
+      {/* Bento Grid: Col 1-7: Mentor Call Widget | Col 8-12: Exam Center Banner & Action */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 items-stretch">
+        <div className="lg:col-span-7">
+          <StudentCallCoachWidget />
+        </div>
+        <div className="lg:col-span-5">
+          <Card className="border-border bg-gradient-to-br from-[#004071]/10 via-card to-card p-4 sm:p-5 h-full flex flex-col justify-between shadow-xs">
             <div>
-              <h3 className="text-sm font-bold text-foreground">
-                مرکز آزمون‌های شبیه‌ساز وکالت و پایش رشد طولی
+              <div className="flex items-center justify-between gap-2 mb-3">
+                <div className="w-10 h-10 rounded-xl bg-[#004071] text-white flex items-center justify-center shrink-0 shadow-xs">
+                  <Scale className="h-5 w-5" />
+                </div>
+                <Badge variant="outline" className="border-[#004071]/30 text-[#004071] dark:text-sky-400 bg-[#004071]/5 text-[10px] px-2 py-0.5">
+                  شبیه‌ساز وکالت
+                </Badge>
+              </div>
+              <h3 className="text-sm font-bold text-foreground mb-1.5">
+                مرکز آزمون‌های شبیه‌ساز و پایش رشد
               </h3>
-              <p className="text-xs text-muted-foreground mt-0.5">
-                شرکت در آزمون‌های زمان‌دار استاندارد کانون وکلا با نمره منفی ۱/۳ و مشاهده کارنامه تحلیلی پشتیبان
+              <p className="text-xs text-muted-foreground leading-relaxed">
+                شرکت در آزمون‌های زمان‌دار استاندارد کانون وکلا با محاسبه تراز کشوری، نمره منفی ۱/۳ و صدور کارنامه تفصیلی و تحلیلی توسط پشتیبان آموزشی.
               </p>
             </div>
-          </div>
 
-          <Link href="/student/exams">
-            <Button size="sm" className="text-xs bg-[#004071] hover:bg-[#00335c] text-white flex items-center gap-1.5 shrink-0">
-              <span>ورود به کارتابل آزمون‌ها</span>
-              <ArrowLeft className="h-3.5 w-3.5" />
-            </Button>
-          </Link>
+            <div className="pt-4 border-t border-border/60 mt-4 flex items-center justify-between gap-3">
+              <div className="text-[11px] text-muted-foreground">
+                <span className="font-semibold text-foreground persian-nums">
+                  {toPersianDigits(mockExams.length || 1)}
+                </span>{" "}
+                آزمون در دسترس
+              </div>
+              <Link href="/student/exams">
+                <Button size="sm" className="h-9 px-3.5 text-xs font-semibold bg-[#004071] hover:bg-[#00335c] text-white flex items-center gap-1.5 shadow-xs transition-all">
+                  <span>ورود به کارتابل آزمون‌ها</span>
+                  <ArrowLeft className="h-3.5 w-3.5" />
+                </Button>
+              </Link>
+            </div>
+          </Card>
         </div>
-      </Card>
+      </div>
 
       {/* Visual Longitudinal SVG Score Growth Chart (M-15) */}
       {longitudinalHistory.length > 0 && (
@@ -329,7 +433,7 @@ export default async function StudentDashboardPage() {
       )}
 
       {/* Multi-Horizon 5-Level Progress Gantt Chart */}
-      <MultiHorizonGantt entityType="STUDENT" entityName={session.fullName} />
+      <MultiHorizonGantt entityType="STUDENT" entityName={cleanFullName} />
 
       {/* Persian 7-Day Study Week Schedule (Saturday to Friday) */}
       <Card>

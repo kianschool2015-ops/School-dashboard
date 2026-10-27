@@ -10,7 +10,8 @@ import {
   verifyOtpDistributed,
 } from "../auth/otp";
 import { getRedisClient } from "../redis";
-import { createSessionToken, revokeSession } from "../auth/jwt";
+import { createSessionToken, revokeSession, registerActiveUserSession } from "../auth/jwt";
+import { isCookieSecure } from "@/lib/jwt";
 import { getSession } from "../auth/guard";
 import { db, ensureDatabaseBootstrap, isDbOnline } from "../db";
 import { users, studentProfiles, studentWhitelist } from "../db/schema";
@@ -20,6 +21,12 @@ import { formatJalaliHuman } from "@/lib/jalali";
 import { initialUsers } from "../db/mock-data";
 import type { UserRole, UserRecord } from "@/types/models";
 import { verifyPassword, hashPassword } from "@/lib/password";
+import {
+  verifyStudentCourseHeartbeat,
+  authenticateWithCentralMashahirSso,
+  verifyCourseSupportEntitlement,
+  getActiveSsoApiSettings,
+} from "../services/garnet";
 
 const SESSION_COOKIE_NAME = process.env.SESSION_COOKIE_NAME || "mashahir_session";
 
@@ -220,7 +227,13 @@ export async function verifyOtpAction(
             currentDailyStudyHours: 6,
             masterclassGoal: "قبولی در آزمون وکالت کانون وکلای مرکز",
             riskStatus: "GREEN",
-            riskReason: "داوطلب ثبت‌نام شده سامانه",
+            riskReason: "داوطلب ثبت‌نام شده از فهرست اکسل",
+            hasActiveSupport: true,
+            provisioningSource: "EXCEL_WHITELIST",
+            initialSyncCompleted: true,
+            initialSyncAt: new Date(),
+            isProbationary: false,
+            lastEntitlementCheckAt: new Date(),
             lastContactAt: new Date(),
           });
 
@@ -265,6 +278,29 @@ export async function verifyOtpAction(
             .where(eq(studentProfiles.userId, user.id))
             .limit(1);
           studentProfileId = profile?.id;
+
+          if (profile) {
+            // Layer 1 DRM: Reject suspended / refunded candidates immediately
+            if (profile.hasActiveSupport === false) {
+              return {
+                success: false,
+                message: profile.suspensionReason
+                  ? `دسترسی شما به سامانه به دلیل «${profile.suspensionReason}» مسدود شده است. لطفاً با پشتیبانی مشاهیر دانش تماس بگیرید.`
+                  : "دسترسی شما به سامانه پشتیبانی مشاهیر دانش غیرفعال شده است.",
+              };
+            }
+
+            // Layer 1 DRM: Asynchronous background entitlement heartbeat (Zero login delay)
+            const now = Date.now();
+            const lastCheck = profile.lastEntitlementCheckAt
+              ? new Date(profile.lastEntitlementCheckAt).getTime()
+              : 0;
+            if (now - lastCheck > 12 * 3600 * 1000) {
+              void verifyStudentCourseHeartbeat(user.id).catch((hbErr) => {
+                console.warn("[DRM Heartbeat] Background OTP check error:", hbErr);
+              });
+            }
+          }
         } catch {}
       }
       if (!studentProfileId) {
@@ -290,6 +326,12 @@ export async function verifyOtpAction(
       },
     }).catch(() => {});
 
+    // Generate unique sessionId for Strict Single-Device Session Policy (Layer 4 DRM)
+    const sessionId =
+      typeof globalThis.crypto?.randomUUID === "function"
+        ? globalThis.crypto.randomUUID()
+        : `sess_${Date.now()}_${Math.random().toString(36).substring(2)}`;
+
     // Generate JWT token
     const token = await createSessionToken({
       userId: user.id,
@@ -297,13 +339,16 @@ export async function verifyOtpAction(
       fullName: user.fullName,
       role: user.role as UserRole,
       studentProfileId,
+      sessionId,
     });
 
-    const isCookieSecure = process.env.COOKIE_SECURE === "true";
+    // Enforce Single-Device Login: revoke previous active session for this user
+    await registerActiveUserSession(user.id, sessionId);
+
     const cookieStore = await cookies();
     cookieStore.set(SESSION_COOKIE_NAME, token, {
       httpOnly: true,
-      secure: isCookieSecure,
+      secure: isCookieSecure(),
       sameSite: "lax",
       path: "/",
       maxAge: 7 * 24 * 60 * 60,
@@ -442,6 +487,7 @@ export async function loginWithPasswordAction(
     }
 
     const normDigits = toEnglishDigits(rawNorm).trim();
+    const cleanInputPassword = password.trim();
     const normalizedPhone = normalizePhoneNumber(rawNorm);
     const isPhone = isValidIranianPhone(rawNorm);
     const rateLimitKey = isPhone ? normalizedPhone : normDigits.toLowerCase();
@@ -494,6 +540,114 @@ export async function loginWithPasswordAction(
     }
 
     if (!user) {
+      // Step 3 (External API - One-Time Onboarding ONLY):
+      // If student is not found in local PostgreSQL, attempt authentication against Central SSO API
+      const ssoSettings = await getActiveSsoApiSettings();
+      if (ssoSettings.isEnabled) {
+        const ssoResult = await authenticateWithCentralMashahirSso(rawNorm, password.trim());
+        if (ssoResult.success && ssoResult.user) {
+          const enrolledCodes = ssoResult.courses.map((c) => c.code);
+          const entitlement = await verifyCourseSupportEntitlement(enrolledCodes);
+
+          if (!entitlement.isEntitled && !ssoSettings.bypassCourseCheckIfNoEndpoint) {
+            return {
+              success: false,
+              message: "داوطلب گرامی، دوره ثبت‌نامی شما فاقد بسته پشتیبانی آموزشی ۳۶۰ درجه مشاهیر دانش است.",
+              redirectUrl: "/auth/no-support-access",
+            };
+          }
+
+          // Provision user locally in PostgreSQL (One-Time Onboarding)
+          const newUserId = `usr_${Date.now()}`;
+          const newProfileId = `profile_${Date.now()}`;
+          const matchedCourse = entitlement.matchedCourse;
+          const cleanPhone = ssoResult.user.phoneNumber;
+
+          try {
+            await db
+              .insert(users)
+              .values({
+                id: newUserId,
+                phoneNumber: cleanPhone,
+                fullName: ssoResult.user.fullName,
+                nationalId: ssoResult.user.nationalId || null,
+                username: ssoResult.user.username || cleanPhone,
+                role: "STUDENT",
+                passwordHash: hashPassword(cleanInputPassword),
+                garnetUserId: ssoResult.user.id,
+                garnetUsername: ssoResult.user.username || null,
+                isActive: true,
+              });
+
+            await db.insert(studentProfiles).values({
+              id: newProfileId,
+              userId: newUserId,
+              mentorId: null, // UNASSIGNED: Enters supervisor queue & student waiting room
+              employmentStatus: "UNEMPLOYED",
+              isStudent: false,
+              maritalStatus: "SINGLE",
+              hasChildren: false,
+              childrenCount: 0,
+              hasFamilyCareDuty: false,
+              workdayStudyHoursCap: 8,
+              holidayStudyHoursCap: 12,
+              bestStudyTime: "MORNING",
+              previousBarExamAttempts: 0,
+              currentDailyStudyHours: 6,
+              masterclassGoal: "قبولی در آزمون وکالت کانون و مرکز وکلا",
+              riskStatus: "GREEN",
+              riskReason: "تطبیق اولیه از وب‌سرویس مرکزی با بسته پشتیبانی فعال",
+              enrolledCourseCode: matchedCourse?.courseCode || "MASHAHIR-BAR-360",
+              enrolledCourseName: matchedCourse?.courseName || "دوره جامع طلایی آمادگی آزمون وکالت ۳۶۰ درجه",
+              hasActiveSupport: true,
+              externalUserId: ssoResult.user.id,
+              initialSyncCompleted: true,
+              initialSyncAt: new Date(),
+              provisioningSource: "EXTERNAL_API_ONCE",
+              isProbationary: true,
+              lastEntitlementCheckAt: new Date(),
+              lastContactAt: new Date(),
+            });
+
+            await clearPasswordFailuresDistributed(rateLimitKey);
+
+            const sessionId =
+              typeof globalThis.crypto?.randomUUID === "function"
+                ? globalThis.crypto.randomUUID()
+                : `sess_${Date.now()}_${Math.random().toString(36).substring(2)}`;
+
+            const token = await createSessionToken({
+              userId: newUserId,
+              phoneNumber: cleanPhone,
+              fullName: ssoResult.user.fullName,
+              role: "STUDENT",
+              studentProfileId: newProfileId,
+              sessionId,
+            });
+
+            await registerActiveUserSession(newUserId, sessionId);
+
+            const cookieStore = await cookies();
+            cookieStore.set(SESSION_COOKIE_NAME, token, {
+              httpOnly: true,
+              secure: isCookieSecure(),
+              sameSite: "lax",
+              path: "/",
+              maxAge: 7 * 24 * 60 * 60,
+            });
+
+            return {
+              success: true,
+              message: `ورود با موفقیت انجام شد. خوش آمدید، ${ssoResult.user.fullName}`,
+              data: { role: "STUDENT", fullName: ssoResult.user.fullName },
+              redirectUrl: "/student/dashboard",
+            };
+          } catch (provisionErr) {
+            console.error("[Auth] One-time external provisioning error:", provisionErr);
+          }
+        }
+      }
+
       await recordPasswordFailureDistributed(rateLimitKey);
       return {
         success: false,
@@ -501,7 +655,6 @@ export async function loginWithPasswordAction(
       };
     }
 
-    const cleanInputPassword = password.trim();
     const engInputPassword = toEnglishDigits(cleanInputPassword);
 
     // Verify password against stored passwordHash using cryptographic verifyPassword (C-02, C-03)
@@ -538,7 +691,31 @@ export async function loginWithPasswordAction(
             .from(studentProfiles)
             .where(eq(studentProfiles.userId, user.id))
             .limit(1);
-          studentProfileId = profile?.id;
+
+          if (profile) {
+            studentProfileId = profile.id;
+
+            // Layer 1 DRM: Reject suspended / refunded candidates immediately
+            if (profile.hasActiveSupport === false) {
+              return {
+                success: false,
+                message: profile.suspensionReason
+                  ? `دسترسی شما به سامانه به دلیل «${profile.suspensionReason}» مسدود شده است. لطفاً با پشتیبانی مشاهیر دانش تماس بگیرید.`
+                  : "دسترسی شما به سامانه پشتیبانی مشاهیر دانش غیرفعال شده است.",
+              };
+            }
+
+            // Layer 1 DRM: Asynchronous background entitlement heartbeat (Zero login delay)
+            const now = Date.now();
+            const lastCheck = profile.lastEntitlementCheckAt
+              ? new Date(profile.lastEntitlementCheckAt).getTime()
+              : 0;
+            if (now - lastCheck > 12 * 3600 * 1000) {
+              void verifyStudentCourseHeartbeat(user.id).catch((hbErr) => {
+                console.warn("[DRM Heartbeat] Background password check error:", hbErr);
+              });
+            }
+          }
         } catch {}
       }
       if (!studentProfileId) {
@@ -557,6 +734,12 @@ export async function loginWithPasswordAction(
       },
     }).catch(() => {});
 
+    // Generate unique sessionId for Strict Single-Device Session Policy (Layer 4 DRM)
+    const sessionId =
+      typeof globalThis.crypto?.randomUUID === "function"
+        ? globalThis.crypto.randomUUID()
+        : `sess_${Date.now()}_${Math.random().toString(36).substring(2)}`;
+
     // Generate JWT token
     const token = await createSessionToken({
       userId: user.id,
@@ -564,13 +747,16 @@ export async function loginWithPasswordAction(
       fullName: user.fullName,
       role: user.role as UserRole,
       studentProfileId,
+      sessionId,
     });
 
-    const isCookieSecure = process.env.COOKIE_SECURE === "true";
+    // Enforce Single-Device Login: revoke previous active session for this user
+    await registerActiveUserSession(user.id, sessionId);
+
     const cookieStore = await cookies();
     cookieStore.set(SESSION_COOKIE_NAME, token, {
       httpOnly: true,
-      secure: isCookieSecure,
+      secure: isCookieSecure(),
       sameSite: "lax",
       path: "/",
       maxAge: 7 * 24 * 60 * 60,
@@ -733,11 +919,10 @@ export async function registerWhitelistedStudentAction(payload: {
       studentProfileId: newProfileId,
     });
 
-    const isCookieSecure = process.env.COOKIE_SECURE === "true";
     const cookieStore = await cookies();
     cookieStore.set(SESSION_COOKIE_NAME, token, {
       httpOnly: true,
-      secure: isCookieSecure,
+      secure: isCookieSecure(),
       sameSite: "lax",
       path: "/",
       maxAge: 7 * 24 * 60 * 60,

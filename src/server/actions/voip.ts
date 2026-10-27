@@ -295,15 +295,17 @@ export async function getMentorCallingStatusAction(mentorIdParam?: string): Prom
       .from(studentProfiles)
       .where(eq(studentProfiles.userId, session.userId))
       .limit(1);
-    targetMentorId = profile?.mentorId || "usr_mentor1";
+    targetMentorId = profile?.mentorId || undefined;
+  } else if (!targetMentorId && (session.role === "MENTOR" || session.role === "SUPERVISOR" || session.role === "CEO" || session.role === "ADMIN")) {
+    targetMentorId = session.userId;
   }
 
   if (!targetMentorId) {
     return {
       isOpen: false,
-      message: "پشتیبان اختصاصی تعیین نشده است.",
-      scheduleDescription: "ساعات کاری هنوز تعریف نشده است.",
-      mentorName: "پشتیبان آموزشی",
+      message: "پشتیبان اختصاصی شما هنوز تعیین نشده است. لطفاً منتظر بررسی سرپرست آموزشی باشید.",
+      scheduleDescription: "در انتظار تعیین پشتیبان اختصاصی",
+      mentorName: "در انتظار تعیین پشتیبان",
       window: null,
     };
   }
@@ -354,7 +356,14 @@ export async function requestStudentToMentorCallAction(): Promise<{
     };
   }
 
-  const mentorId = profile.mentorId || "usr_mentor1";
+  if (!profile.mentorId) {
+    return {
+      success: false,
+      message: "پشتیبان اختصاصی شما هنوز تعیین نشده است. پرونده شما در صف بررسی سرپرست آموزشی قرار دارد.",
+    };
+  }
+
+  const mentorId = profile.mentorId;
 
   const [studentUser] = await db
     .select()

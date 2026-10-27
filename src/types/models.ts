@@ -48,6 +48,15 @@ export interface StudentProfileRecord {
   enrolledCourseCode?: string | null;
   enrolledCourseName?: string | null;
   hasActiveSupport?: boolean;
+  externalUserId?: string | null;
+  initialSyncCompleted?: boolean;
+  initialSyncAt?: Date | null;
+  provisioningSource?: "EXCEL_WHITELIST" | "EXTERNAL_API_ONCE" | "ADMIN_MANUAL" | "LOCAL";
+  acceptedLegalTermsAt?: Date | null;
+  acceptedLegalTermsIp?: string | null;
+  isProbationary?: boolean;
+  lastEntitlementCheckAt?: Date | null;
+  suspensionReason?: string | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -157,6 +166,7 @@ export interface StudentWhitelistRecord {
 export type SmsTriggerEvent =
   | "LOGIN"
   | "MENTOR_CONTACT"
+  | "MENTOR_ASSIGNED"
   | "TRIAGE_RESOLVED"
   | "WEEKLY_PLAN_ASSIGNED"
   | "TASK_ASSIGNED"
@@ -649,9 +659,55 @@ export interface EntitledCourseRecord {
   priceFormatted: string;
   garnetPurchaseUrl: string;
   hasSupport: boolean;
-  supportTier: string;
+  supportTier?: string;
   isActive: boolean;
   createdAt: Date;
   updatedAt: Date;
 }
+
+/**
+ * 14. Central SSO API Settings (Mashahir Danesh Central Account)
+ */
+export interface SsoApiSettingsRecord {
+  id: string;
+  isEnabled: boolean;
+  serviceTitle: string;
+  baseUrl: string;
+  loginEndpoint: string;
+  coursesEndpoint: string;
+  sendOtpEndpoint?: string;
+  verifyOtpEndpoint?: string;
+  productsEndpoint?: string;
+  codeCount?: number;
+  apiKeyHeader: string;
+  apiKeyValue: string;
+  mobileFieldName: string;
+  passwordFieldName: string;
+  successStatusCode: number;
+  timeoutMs: number;
+  autoCreateStudent: boolean;
+  bypassCourseCheckIfNoEndpoint: boolean;
+  updatedAt: Date;
+}
+
+/**
+ * 15. System Audit Logs
+ */
+export interface SystemAuditLogRecord {
+  id: string;
+  actorId: string;
+  actorName: string;
+  actorRole: string;
+  eventType: string;
+  action: string;
+  targetEntity: string;
+  targetId?: string | null;
+  details?: string | null;
+  metadata?: Record<string, any> | null;
+  ipAddress?: string | null;
+  userAgent?: string | null;
+  createdAt: Date;
+}
+
+
 

@@ -24,6 +24,60 @@ export async function revokeSessionToken(sessionId: string, ttlSeconds = 8 * 360
 
 export const revokeSession = revokeSessionToken;
 
+const inMemoryActiveUserSessions = new Map<string, string>();
+
+/**
+ * Enforce Strict Single-Device Session Policy:
+ * When a user (especially a student) logs in on a new browser/device,
+ * any prior active session is immediately revoked so credentials cannot be shared.
+ */
+export async function registerActiveUserSession(
+  userId: string,
+  newSessionId: string
+): Promise<void> {
+  if (!userId || !newSessionId) return;
+
+  const previousSessionId = inMemoryActiveUserSessions.get(userId);
+  inMemoryActiveUserSessions.set(userId, newSessionId);
+
+  try {
+    const redis = getRedisClient();
+    if (redis) {
+      const redisPrev = await redis.get(`user_active_session:${userId}`);
+      if (redisPrev && redisPrev !== newSessionId) {
+        await revokeSessionToken(redisPrev);
+      }
+      await redis.set(`user_active_session:${userId}`, newSessionId, "EX", 7 * 24 * 3600);
+    }
+  } catch {}
+
+  if (previousSessionId && previousSessionId !== newSessionId) {
+    await revokeSessionToken(previousSessionId);
+  }
+}
+
+/**
+ * Revoke all active sessions for a user (used upon account suspension or refund detection)
+ */
+export async function revokeAllUserSessions(userId: string): Promise<void> {
+  if (!userId) return;
+  const inMem = inMemoryActiveUserSessions.get(userId);
+  if (inMem) {
+    await revokeSessionToken(inMem);
+    inMemoryActiveUserSessions.delete(userId);
+  }
+  try {
+    const redis = getRedisClient();
+    if (redis) {
+      const activeSessionId = await redis.get(`user_active_session:${userId}`);
+      if (activeSessionId) {
+        await revokeSessionToken(activeSessionId);
+        await redis.del(`user_active_session:${userId}`);
+      }
+    }
+  } catch {}
+}
+
 export async function isSessionRevoked(sessionId: string): Promise<boolean> {
   if (!sessionId) return false;
   if (await isRevokedInMemory(sessionId)) return true;
@@ -46,6 +100,24 @@ export async function verifySessionToken(token: string): Promise<SessionPayload 
   if (session.sessionId) {
     const revoked = await isSessionRevoked(session.sessionId);
     if (revoked) return null;
+
+    // Single-device check for student accounts
+    if (session.role === "STUDENT" && session.userId) {
+      try {
+        const redis = getRedisClient();
+        if (redis) {
+          const activeSessionId = await redis.get(`user_active_session:${session.userId}`);
+          if (activeSessionId && activeSessionId !== session.sessionId) {
+            return null; // A newer login has superseded this session
+          }
+        }
+      } catch {}
+
+      const localActive = inMemoryActiveUserSessions.get(session.userId);
+      if (localActive && localActive !== session.sessionId) {
+        return null;
+      }
+    }
   }
 
   return session;

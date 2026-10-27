@@ -191,7 +191,7 @@ export default async function ExecutiveDashboardPage() {
             </Badge>
           </div>
           <p className="text-xs text-muted-foreground mt-1">
-            پایش لحظه‌ای عملکرد سرپرستان، پشتیبانان، داوطلبان نیازمند رسیدگی و مدیریت دوره‌های مجاز گارنت LMS
+            پایش لحظه‌ای عملکرد سرپرستان، پشتیبانان، داوطلبان نیازمند رسیدگی و مدیریت دوره‌های آموزشی مشاهیر دانش
           </p>
         </div>
       </div>

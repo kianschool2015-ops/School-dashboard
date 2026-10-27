@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
+import Link from "next/link";
 import {
   PhoneCall,
   Clock,
@@ -9,7 +10,7 @@ import {
   AlertCircle,
   Loader2,
   Headphones,
-  UserCheck,
+  ArrowLeft,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
@@ -18,6 +19,7 @@ import {
   getMentorCallingStatusAction,
   requestStudentToMentorCallAction,
 } from "@/server/actions/voip";
+import { toPersianDigits } from "@/lib/jalali";
 
 interface CallingStatusState {
   isOpen: boolean;
@@ -68,7 +70,7 @@ export function StudentCallCoachWidget() {
     } catch {
       setCallResult({
         success: false,
-        message: "خطا در برقراری ارتباط با سانترال تلفنی ایزابل / AMI.",
+        message: "خطا در برقراری ارتباط با مرکز تماس هوشمند. لطفاً دقایقی دیگر مجدداً تلاش فرمایید.",
       });
     } finally {
       setIsCalling(false);
@@ -76,113 +78,131 @@ export function StudentCallCoachWidget() {
   };
 
   return (
-    <Card className="border-border bg-card shadow-sm overflow-hidden">
-      <CardHeader className="pb-3 border-b border-border bg-muted/20">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center space-x-2 space-x-reverse">
-            <div className="w-8 h-8 rounded-lg bg-[#004071] text-white flex items-center justify-center">
-              <Headphones className="w-4 h-4" />
+    <Card className="border-border bg-card shadow-xs overflow-hidden h-full flex flex-col justify-between">
+      <div>
+        <CardHeader className="p-4 border-b border-border bg-muted/20">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center space-x-2.5 space-x-reverse min-w-0">
+              <div className="w-9 h-9 rounded-xl bg-[#004071] text-white flex items-center justify-center shrink-0 shadow-xs">
+                <Headphones className="w-4 h-4" />
+              </div>
+              <div className="min-w-0">
+                <CardTitle className="text-xs sm:text-sm font-bold text-foreground truncate">
+                  تماس با پشتیبان آموزشی
+                </CardTitle>
+                <p className="text-[11px] text-muted-foreground truncate">
+                  پشتیبان:{" "}
+                  <span className="font-semibold text-foreground">
+                    {status?.mentorName || "در حال اتصال..."}
+                  </span>
+                </p>
+              </div>
             </div>
-            <div>
-              <CardTitle className="text-sm font-bold text-foreground">
-                تماس تلفنی با پشتیبان اختصاصی
-              </CardTitle>
-              <p className="text-[11px] text-muted-foreground">
-                پشتیبان شما:{" "}
-                <span className="font-semibold text-foreground">
-                  {status?.mentorName || "پشتیبان آموزشی"}
-                </span>
-              </p>
+
+            <Badge
+              variant={status?.isOpen ? "green" : "outline"}
+              className="text-[10px] px-2 py-0.5 shrink-0"
+            >
+              {status?.isOpen ? "در ساعت پاسخگویی" : "خارج از بازه پاسخگویی"}
+            </Badge>
+          </div>
+        </CardHeader>
+
+        <CardContent className="p-4 space-y-3">
+          {/* Availability Schedule Notice */}
+          <div className="flex items-start gap-2.5 text-xs text-muted-foreground bg-muted/40 p-2.5 rounded-xl border border-border/80">
+            <Clock className="w-4 h-4 text-[#004071] shrink-0 mt-0.5" />
+            <div className="space-y-0.5 min-w-0">
+              <span className="font-semibold text-foreground text-[11px] block">
+                ساعات پاسخگویی تلفنی:
+              </span>
+              <span className="text-[11px] leading-relaxed block">
+                {status?.scheduleDescription
+                  ? toPersianDigits(status.scheduleDescription)
+                  : "در حال دریافت ساعات کاری پشتیبان..."}
+              </span>
             </div>
           </div>
 
-          <Badge variant={status?.isOpen ? "green" : "outline"} className="text-[10px] px-2.5 py-0.5">
-            {status?.isOpen ? "هم‌اکنون در ساعت پاسخگویی" : "خارج از ساعت پاسخگویی"}
-          </Badge>
-        </div>
-      </CardHeader>
-
-      <CardContent className="p-4 space-y-3.5">
-        {/* Availability Schedule Notice */}
-        <div className="flex items-start gap-2.5 text-xs text-muted-foreground bg-muted/40 p-3 rounded-xl border border-border">
-          <Clock className="w-4 h-4 text-[#004071] shrink-0 mt-0.5" />
-          <div className="space-y-0.5">
-            <span className="font-bold text-foreground block">
-              ساعات پاسخگویی تلفنی پشتیبان:
-            </span>
-            <span>
-              {status?.scheduleDescription || "در حال دریافت ساعات کاری پشتیبان..."}
+          {/* Call Flow Explanation & Privacy Guarantee */}
+          <div className="flex items-start gap-2 text-[11px] text-emerald-700 dark:text-emerald-400 bg-emerald-500/10 p-2.5 rounded-xl border border-emerald-500/20">
+            <ShieldCheck className="w-4 h-4 shrink-0 text-emerald-600 mt-0.5" />
+            <span className="leading-relaxed">
+              تماس امن دوطرفه: سامانه ابتدا با پشتیبان تماس برقرار کرده و پس از پاسخگویی ایشان، با شما ارتباط برقرار می‌کند. شماره تماس طرفین کاملاً محرمانه باقی می‌ماند.
             </span>
           </div>
-        </div>
 
-        {/* Call Flow Explanation & Privacy Guarantee */}
-        <div className="flex items-center gap-2 text-[11px] text-emerald-700 dark:text-emerald-400 bg-emerald-500/10 px-3 py-2 rounded-lg border border-emerald-500/20">
-          <ShieldCheck className="w-4 h-4 shrink-0 text-emerald-600" />
-          <span>
-            سیستم امن AMI: ابتدا زویپر پشتیبان زنگ می‌خورد و پس از پاسخ، تلفن شما وصل می‌شود. شماره تماس‌ها کاملاً محرمانه است.
-          </span>
-        </div>
-
-        {/* Feedback Message */}
-        {callResult && (
-          <div
-            className={`rounded-xl p-3 text-xs flex items-start gap-2 border ${
-              callResult.success
-                ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-700 dark:text-emerald-400"
-                : "bg-destructive/10 border-destructive/20 text-destructive"
-            }`}
-          >
-            {callResult.success ? (
-              <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5 text-emerald-600" />
-            ) : (
-              <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
-            )}
-            <div className="space-y-0.5">
-              <span className="font-bold block">{callResult.message}</span>
-              {callResult.maskedStudentPhone && (
-                <span className="text-[10px] opacity-80 block">
-                  تماس با شماره ماسک‌شده شما: {callResult.maskedStudentPhone}
-                </span>
+          {/* Feedback Message */}
+          {callResult && (
+            <div
+              className={`rounded-xl p-2.5 text-xs flex items-start gap-2 border ${
+                callResult.success
+                  ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-700 dark:text-emerald-400"
+                  : "bg-destructive/10 border-destructive/20 text-destructive"
+              }`}
+            >
+              {callResult.success ? (
+                <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5 text-emerald-600" />
+              ) : (
+                <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
               )}
+              <div className="space-y-0.5">
+                <span className="font-bold block">{callResult.message}</span>
+                {callResult.maskedStudentPhone && (
+                  <span className="text-[10px] opacity-80 block">
+                    تماس با شماره ماسک‌شده شما: {toPersianDigits(callResult.maskedStudentPhone)}
+                  </span>
+                )}
+              </div>
             </div>
-          </div>
+          )}
+        </CardContent>
+      </div>
+
+      <div className="p-4 pt-0">
+        {status?.isOpen ? (
+          <Button
+            onClick={handleInitiateCall}
+            disabled={isCalling}
+            className="w-full h-10 text-xs sm:text-sm font-bold bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs flex items-center justify-center gap-2 transition-all"
+          >
+            {isCalling ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin" />
+                <span>در حال برقراری ارتباط امن با پشتیبان...</span>
+              </>
+            ) : (
+              <>
+                <PhoneCall className="w-4 h-4 animate-pulse" />
+                <span>تماس با پشتیبان</span>
+              </>
+            )}
+          </Button>
+        ) : (
+          <Button
+            disabled
+            variant="outline"
+            className="w-full h-10 text-xs font-medium text-muted-foreground bg-muted/30 cursor-not-allowed flex items-center justify-center gap-2"
+          >
+            <Clock className="w-3.5 h-3.5" />
+            <span className="truncate">
+              {status?.message
+                ? toPersianDigits(status.message)
+                : "تماس با پشتیبان فقط در بازه کاری تعیین‌شده امکان‌پذیر است"}
+            </span>
+          </Button>
         )}
 
-        {/* Action Button */}
-        <div>
-          {status?.isOpen ? (
-            <Button
-              onClick={handleInitiateCall}
-              disabled={isCalling}
-              className="w-full h-11 text-xs sm:text-sm font-bold bg-emerald-600 hover:bg-emerald-700 text-white shadow-md shadow-emerald-600/20 flex items-center justify-center gap-2 transition-all"
-            >
-              {isCalling ? (
-                <>
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                  <span>در حال ارسال دستور تماس امن به سانترال AMI...</span>
-                </>
-              ) : (
-                <>
-                  <PhoneCall className="w-4 h-4 animate-pulse" />
-                  <span>برقراری تماس صوتی با پشتیبان آموزشی</span>
-                </>
-              )}
-            </Button>
-          ) : (
-            <Button
-              disabled
-              variant="outline"
-              className="w-full h-11 text-xs font-semibold text-muted-foreground bg-muted/30 cursor-not-allowed flex items-center justify-center gap-2"
-            >
-              <Clock className="w-4 h-4" />
-              <span>
-                {status?.message || "تماس با پشتیبان فقط در بازه کاری تعیین‌شده امکان‌پذیر است"}
-              </span>
-            </Button>
-          )}
+        <div className="mt-2 text-center">
+          <Link
+            href="/student/call"
+            className="inline-flex items-center gap-1.5 text-[11px] text-primary hover:underline font-medium transition-colors"
+          >
+            <span>مشاهده صفحه اختصاصی و دیاگرام زنده تماس</span>
+            <ArrowLeft className="w-3 h-3" />
+          </Link>
         </div>
-      </CardContent>
+      </div>
     </Card>
   );
 }

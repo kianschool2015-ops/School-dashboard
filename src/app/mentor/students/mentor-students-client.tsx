@@ -1189,12 +1189,18 @@ export function MentorStudentsClient({
                     در صورت غیرفعال بودن، دکمه تماس در پنل داوطلبان مسدود خواهد بود
                   </span>
                 </div>
-                <input
-                  type="checkbox"
-                  checked={windowIsActive}
-                  onChange={(e) => setWindowIsActive(e.target.checked)}
-                  className="h-4 w-4 rounded border-input text-emerald-600 focus:ring-emerald-500"
-                />
+                <button
+                  type="button"
+                  onClick={() => setWindowIsActive(!windowIsActive)}
+                  className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-bold transition-all shadow-xs border cursor-pointer select-none ${
+                    windowIsActive
+                      ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/20"
+                      : "bg-slate-500/10 text-slate-600 dark:text-slate-400 border-slate-400/30 hover:bg-slate-500/20"
+                  }`}
+                >
+                  <span className={`w-2 h-2 rounded-full ${windowIsActive ? "bg-emerald-500 animate-pulse" : "bg-slate-400"}`} />
+                  <span>{windowIsActive ? "فعال — آماده پذیرش تماس" : "غیرفعال — خارج از دسترس"}</span>
+                </button>
               </div>
 
               {/* Action Buttons */}

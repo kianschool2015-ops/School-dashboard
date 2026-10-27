@@ -146,6 +146,10 @@ export function formatJalaliDate(date: Date, separator: "/" | "-" = "-"): string
   return `${jy}${separator}${mm}${separator}${dd}`;
 }
 
+export function toJalaliString(date: Date, separator: "/" | "-" = "/"): string {
+  return formatJalaliDate(date, separator);
+}
+
 /**
  * Returns Persian weekday index (0 = Saturday/Shanbeh to 6 = Friday/Jomeh)
  */
@@ -212,6 +216,20 @@ export function toPersianDigits(input: string | number): string {
 }
 
 /**
+ * Converts Persian and Arabic digits to standard ASCII English digits (0-9)
+ */
+export function toEnglishDigits(str: string | number | null | undefined): string {
+  if (str === null || str === undefined) return "";
+  const persianDigits = ["۰", "۱", "۲", "۳", "۴", "۵", "۶", "۷", "۸", "۹"];
+  const arabicDigits = ["٠", "١", "٢", "٣", "٤", "٥", "٦", "٧", "٨", "٩"];
+  let res = str.toString();
+  for (let i = 0; i < 10; i++) {
+    res = res.replaceAll(persianDigits[i], i.toString()).replaceAll(arabicDigits[i], i.toString());
+  }
+  return res;
+}
+
+/**
  * Human-readable Persian date: "۲۱ مهر ۱۴۰۳"
  */
 export function formatJalaliHuman(date: Date): string {
@@ -221,6 +239,22 @@ export function formatJalaliHuman(date: Date): string {
     date.getDate()
   );
   return `${toPersianDigits(jd)} ${PERSIAN_MONTHS[jm - 1]} ${toPersianDigits(jy)}`;
+}
+
+/**
+ * Human-readable Persian date range: "۲ آبان الی ۸ آبان ۱۴۰۵" or "۲ الی ۸ آبان ۱۴۰۵"
+ */
+export function formatJalaliRangeHuman(start: Date, end: Date): string {
+  const jStart = gregorianToJalali(start.getFullYear(), start.getMonth() + 1, start.getDate());
+  const jEnd = gregorianToJalali(end.getFullYear(), end.getMonth() + 1, end.getDate());
+
+  if (jStart.jy === jEnd.jy && jStart.jm === jEnd.jm) {
+    return `${toPersianDigits(jStart.jd)} الی ${toPersianDigits(jEnd.jd)} ${PERSIAN_MONTHS[jEnd.jm - 1]} ${toPersianDigits(jEnd.jy)}`;
+  }
+  if (jStart.jy === jEnd.jy) {
+    return `${toPersianDigits(jStart.jd)} ${PERSIAN_MONTHS[jStart.jm - 1]} الی ${toPersianDigits(jEnd.jd)} ${PERSIAN_MONTHS[jEnd.jm - 1]} ${toPersianDigits(jEnd.jy)}`;
+  }
+  return `${toPersianDigits(jStart.jd)} ${PERSIAN_MONTHS[jStart.jm - 1]} ${toPersianDigits(jStart.jy)} الی ${toPersianDigits(jEnd.jd)} ${PERSIAN_MONTHS[jEnd.jm - 1]} ${toPersianDigits(jEnd.jy)}`;
 }
 
 /**

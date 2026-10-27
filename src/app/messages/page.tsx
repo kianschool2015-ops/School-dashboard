@@ -7,8 +7,9 @@ import {
   chatConversations,
   chatMessages,
 } from "@/server/db/schema";
-import { eq, or, asc, desc } from "drizzle-orm";
+import { eq, or, asc, desc, inArray } from "drizzle-orm";
 import { MessagesClient } from "./messages-client";
+import { maskPhoneNumber } from "@/lib/sanitize";
 import type {
   DirectMessageRecord,
   ChatConversationRecord,
@@ -21,7 +22,7 @@ export default async function MessagesPage() {
   const allUsers = await db.select().from(users);
   const userMap = new Map(allUsers.map((u) => [u.id, u]));
 
-  const userMessages = (await db
+  const rawUserMessages = await db
     .select()
     .from(directMessages)
     .where(
@@ -30,7 +31,9 @@ export default async function MessagesPage() {
         eq(directMessages.receiverId, session.userId)
       )
     )
-    .orderBy(asc(directMessages.createdAt))) as unknown as DirectMessageRecord[];
+    .orderBy(desc(directMessages.createdAt))
+    .limit(50);
+  const userMessages = rawUserMessages.reverse() as unknown as DirectMessageRecord[];
 
   // Define contact shape with 3 distinct tabs (Requirement 5)
   type ContactCategory = "STUDENTS" | "MENTORS" | "LEADERSHIP";
@@ -79,13 +82,15 @@ export default async function MessagesPage() {
         ? "سرپرست آموزشی"
         : "مدیریت ارشد مؤسسه";
 
+    const isPrivileged = session.role === "CEO" || session.role === "ADMIN";
+
     contactsMap.set(u.id, {
       id: u.id,
       fullName: u.fullName,
       role: displayRole || defaultRoleLabel,
       rawRole,
       category,
-      phoneNumber: u.phoneNumber,
+      phoneNumber: isPrivileged ? (u.phoneNumber || "") : maskPhoneNumber(u.phoneNumber),
       canInitiate,
     });
   };
@@ -176,23 +181,42 @@ export default async function MessagesPage() {
   const isManager = session.role === "CEO" || session.role === "ADMIN";
   const isSupervisorOrManager = isManager || session.role === "SUPERVISOR";
 
-  const userConversations = isManager
+  const userConversations = isSupervisorOrManager
     ? (rawConversations as unknown as ChatConversationRecord[])
     : (rawConversations.filter((c) => {
         const participants = Array.isArray(c.memberIds) ? (c.memberIds as string[]) : [];
         return participants.includes(session.userId);
       }) as unknown as ChatConversationRecord[]);
 
-  const rawChatMessages = await db
-    .select()
-    .from(chatMessages)
-    .orderBy(asc(chatMessages.createdAt));
+  const userConversationIds = userConversations.map((c) => c.id);
+  const rawChatMessages = isSupervisorOrManager
+    ? (
+        await db
+          .select()
+          .from(chatMessages)
+          .orderBy(desc(chatMessages.createdAt))
+          .limit(100)
+      ).reverse()
+    : userConversationIds.length > 0
+    ? (
+        await db
+          .select()
+          .from(chatMessages)
+          .where(inArray(chatMessages.conversationId, userConversationIds))
+          .orderBy(desc(chatMessages.createdAt))
+          .limit(50)
+      ).reverse()
+    : [];
   const allChatMessages = rawChatMessages as unknown as ChatMessageRecord[];
 
-  // Omniscient data for Manager (CEO / ADMIN)
-  const allConversations = isManager ? (rawConversations as unknown as ChatConversationRecord[]) : [];
-  const allDirectMessages = isManager
-    ? ((await db.select().from(directMessages).orderBy(desc(directMessages.createdAt))) as unknown as DirectMessageRecord[])
+  // Supervisory & Omniscient data for Manager & Supervisor (Requirement 8)
+  const allConversations = isSupervisorOrManager ? (rawConversations as unknown as ChatConversationRecord[]) : [];
+  const allDirectMessages = isSupervisorOrManager
+    ? ((await db
+        .select()
+        .from(directMessages)
+        .orderBy(desc(directMessages.createdAt))
+        .limit(100)) as unknown as DirectMessageRecord[])
     : [];
   const allUsersList = allUsers.map((u) => ({ id: u.id, fullName: u.fullName, role: u.role }));
 
@@ -208,7 +232,7 @@ export default async function MessagesPage() {
         initialMessages={userMessages}
         initialConversations={userConversations}
         initialChatMessages={allChatMessages}
-        isManager={isManager}
+        isManager={isSupervisorOrManager}
         canUseGhostMode={isSupervisorOrManager}
         allConversations={allConversations}
         allDirectMessages={allDirectMessages}

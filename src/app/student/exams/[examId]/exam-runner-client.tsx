@@ -18,9 +18,10 @@ import {
   HelpCircle,
   RotateCcw,
   Sparkles,
+  ShieldAlert,
 } from "lucide-react";
 import { toPersianDigits } from "@/lib/jalali";
-import { submitExamAction } from "@/server/actions/exams";
+import { submitExamAction, reportSuspiciousExamActivityAction } from "@/server/actions/exams";
 import type { ExamRecord, ExamQuestion } from "@/types/models";
 
 interface ExamRunnerClientProps {
@@ -28,11 +29,14 @@ interface ExamRunnerClientProps {
   questions: ExamQuestion[];
   userId: string;
   initialStartedAt?: string;
+  initialRemainingSeconds?: number;
 }
 
-export function ExamRunnerClient({ exam, questions, userId, initialStartedAt }: ExamRunnerClientProps) {
+export function ExamRunnerClient({ exam, questions, userId, initialStartedAt, initialRemainingSeconds }: ExamRunnerClientProps) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
+
+  const storageKey = `exam_state_${exam.id}_${userId}`;
 
   // Active question index (0 to questions.length - 1)
   const [currentIndex, setCurrentIndex] = useState(0);
@@ -45,9 +49,11 @@ export function ExamRunnerClient({ exam, questions, userId, initialStartedAt }: 
 
   // Countdown timer state in seconds (enforced via server start time)
   const totalSeconds = (exam.durationMinutes || 120) * 60;
-  const initialRemaining = initialStartedAt
-    ? Math.max(0, totalSeconds - Math.floor((Date.now() - new Date(initialStartedAt).getTime()) / 1000))
-    : totalSeconds;
+  const initialRemaining = initialRemainingSeconds !== undefined
+    ? initialRemainingSeconds
+    : (initialStartedAt
+      ? Math.max(0, totalSeconds - Math.floor((Date.now() - new Date(initialStartedAt).getTime()) / 1000))
+      : totalSeconds);
   const [remainingSeconds, setRemainingSeconds] = useState(initialRemaining);
   const [isTimeUp, setIsTimeUp] = useState(() => initialRemaining <= 0);
 
@@ -60,11 +66,53 @@ export function ExamRunnerClient({ exam, questions, userId, initialStartedAt }: 
     message?: string;
   } | null>(null);
 
+  // Restore saved answers from localStorage (Requirement 3)
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(storageKey);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed.answers && typeof parsed.answers === "object") {
+          setAnswers((prev) => ({ ...parsed.answers, ...prev }));
+        }
+      }
+    } catch (e) {
+      console.warn("[ExamRunnerClient] Failed to restore answers from localStorage:", e);
+    }
+  }, [storageKey]);
+
+  // Persist answers and state to localStorage (Requirement 3)
+  useEffect(() => {
+    if (submissionComplete) {
+      try {
+        localStorage.removeItem(storageKey);
+      } catch {}
+      return;
+    }
+    try {
+      localStorage.setItem(
+        storageKey,
+        JSON.stringify({
+          answers,
+          startedAt,
+          remainingSeconds,
+          updatedAt: Date.now(),
+        })
+      );
+    } catch {}
+  }, [answers, remainingSeconds, startedAt, storageKey, submissionComplete]);
+
+  // Layer 4 DRM: Anti-Scraping Tripwire States
+  const [isTimerPaused, setIsTimerPaused] = useState(false);
+  const [showTripwireModal, setShowTripwireModal] = useState(false);
+  const navigationTimestampsRef = useRef<number[]>([]);
+  const tripwireTriggeredRef = useRef(false);
+
   const autoSubmittedRef = useRef(false);
 
-  // Timer Countdown Effect
+  // Timer Countdown Effect (pauses when anti-scraping tripwire fires)
   useEffect(() => {
-    if (submissionComplete || isTimeUp) return;
+    if (submissionComplete || isTimeUp || isTimerPaused) return;
 
     const timer = setInterval(() => {
       setRemainingSeconds((prev) => {
@@ -78,7 +126,7 @@ export function ExamRunnerClient({ exam, questions, userId, initialStartedAt }: 
     }, 1000);
 
     return () => clearInterval(timer);
-  }, [submissionComplete, isTimeUp]);
+  }, [submissionComplete, isTimeUp, isTimerPaused]);
 
   // Auto-submit when countdown hits zero
   useEffect(() => {
@@ -87,6 +135,36 @@ export function ExamRunnerClient({ exam, questions, userId, initialStartedAt }: 
       executeSubmit();
     }
   }, [isTimeUp, submissionComplete]);
+
+  // Layer 4 DRM: Monitored Question Navigation
+  const handleNavigateQuestion = (targetIndex: number) => {
+    if (targetIndex === currentIndex) return;
+
+    const now = Date.now();
+    // Keep navigation timestamps occurring within the last 25 seconds
+    navigationTimestampsRef.current = navigationTimestampsRef.current.filter(
+      (ts) => now - ts <= 25000
+    );
+    navigationTimestampsRef.current.push(now);
+
+    const answeredCount = Object.keys(answers).length;
+    // Tripwire trigger: clicked through >12 questions in under 25 seconds with fewer than 3 answers
+    if (
+      navigationTimestampsRef.current.length > 12 &&
+      answeredCount < 3 &&
+      !tripwireTriggeredRef.current
+    ) {
+      tripwireTriggeredRef.current = true;
+      setIsTimerPaused(true);
+      setShowTripwireModal(true);
+      void reportSuspiciousExamActivityAction(
+        exam.id,
+        "RAPID_QUESTION_SCRAPING_SUSPECTED"
+      );
+    }
+
+    setCurrentIndex(targetIndex);
+  };
 
   // Select Option handler (immediate state update)
   const handleSelectOption = (questionId: string, optionId: number) => {
@@ -118,6 +196,9 @@ export function ExamRunnerClient({ exam, questions, userId, initialStartedAt }: 
       });
 
       if (res.success) {
+        try {
+          localStorage.removeItem(storageKey);
+        } catch {}
         setSubmissionComplete(true);
         setSubmissionResult({
           totalPercentage: res.totalPercentage,
@@ -343,7 +424,7 @@ export function ExamRunnerClient({ exam, questions, userId, initialStartedAt }: 
                     variant="outline"
                     size="sm"
                     disabled={currentIndex === 0}
-                    onClick={() => setCurrentIndex((prev) => Math.max(0, prev - 1))}
+                    onClick={() => handleNavigateQuestion(Math.max(0, currentIndex - 1))}
                     className="text-xs flex items-center gap-1.5 border-border"
                   >
                     <ArrowRight className="h-3.5 w-3.5" />
@@ -369,7 +450,7 @@ export function ExamRunnerClient({ exam, questions, userId, initialStartedAt }: 
                     type="button"
                     size="sm"
                     disabled={currentIndex === questions.length - 1}
-                    onClick={() => setCurrentIndex((prev) => Math.min(questions.length - 1, prev + 1))}
+                    onClick={() => handleNavigateQuestion(Math.min(questions.length - 1, currentIndex + 1))}
                     className="text-xs flex items-center gap-1.5 bg-[#004071] hover:bg-[#00335c] text-white"
                   >
                     <span>سؤال بعدی</span>
@@ -407,7 +488,7 @@ export function ExamRunnerClient({ exam, questions, userId, initialStartedAt }: 
                     <button
                       key={q.id}
                       type="button"
-                      onClick={() => setCurrentIndex(idx)}
+                      onClick={() => handleNavigateQuestion(idx)}
                       className={`h-8 rounded-lg font-mono text-xs font-bold transition-all flex items-center justify-center ${
                         isActive
                           ? "ring-2 ring-[#004071] bg-[#004071] text-white shadow-sm"
@@ -524,6 +605,50 @@ export function ExamRunnerClient({ exam, questions, userId, initialStartedAt }: 
                     <span>تأیید نهایی و تحویل پاسخنامه</span>
                   </>
                 )}
+              </Button>
+            </div>
+          </Card>
+        </div>
+      )}
+
+      {/* Layer 4 DRM: Anti-Scraping Tripwire Security Warning Modal */}
+      {showTripwireModal && (
+        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
+          <Card className="max-w-md w-full border-rose-500/50 bg-card shadow-2xl p-6 space-y-5 rounded-2xl animate-in fade-in-50">
+            <div className="flex items-center gap-3">
+              <div className="w-12 h-12 rounded-2xl bg-rose-500/10 text-rose-600 dark:text-rose-400 flex items-center justify-center shrink-0 border border-rose-500/30">
+                <ShieldAlert className="w-6 h-6" />
+              </div>
+              <div>
+                <h3 className="text-sm font-bold text-foreground">هشدار امنیتی سامانه سنجش</h3>
+                <p className="text-xs text-rose-500 font-semibold">ردیابی رفتار نامتعارف و الگوریتم مشکوک</p>
+              </div>
+            </div>
+
+            <div className="p-4 bg-rose-50 dark:bg-rose-950/30 rounded-xl border border-rose-200 dark:border-rose-900/50 text-xs text-rose-900 dark:text-rose-200 leading-relaxed space-y-2">
+              <p className="font-bold">
+                فعالیت مشکوک شناسایی شد. لطفاً سوالات را با دقت مطالعه فرمایید.
+              </p>
+              <p className="text-[11px] text-muted-foreground leading-normal">
+                ورق‌زدن متوالی و فوق‌سریع بیش از ۱۲ سؤال در کمتر از ۲۵ ثانیه بدون ثبت پاسخ، مغایر با اصول شرکت در آزمون‌های حقوقی بوده و به عنوان احتمال استخراج غیرمجاز سوالات ثبت گردید. زمان آزمون موقتاً متوقف گردیده است.
+              </p>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2">
+              <Button
+                type="button"
+                size="sm"
+                onClick={() => {
+                  setShowTripwireModal(false);
+                  setIsTimerPaused(false);
+                  navigationTimestampsRef.current = [];
+                  setTimeout(() => {
+                    tripwireTriggeredRef.current = false;
+                  }, 10000);
+                }}
+                className="w-full text-xs bg-[#004071] hover:bg-[#003056] text-white py-2.5 font-bold"
+              >
+                متوجه شدم، بازگشت به آزمون و مطالعه دقیق سوالات
               </Button>
             </div>
           </Card>

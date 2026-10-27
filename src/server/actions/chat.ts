@@ -25,10 +25,15 @@ export async function getConversationsAction(): Promise<ChatConversationRecord[]
     return all as unknown as ChatConversationRecord[];
   }
 
+  // [M-02] Channel Membership Isolation: Only expose channels where user is a participant or matching cohort
   return all.filter((c) => {
-    if (c.type === "CHANNEL") return true;
     const members = (c.memberIds as string[]) || [];
-    return members.includes(session.userId);
+    if (members.includes(session.userId)) return true;
+    if (c.type === "CHANNEL") {
+      if (members.includes("ALL") || members.includes(session.role)) return true;
+      if (members.length === 0) return true; // institutional general announcements
+    }
+    return false;
   }) as unknown as ChatConversationRecord[];
 }
 
@@ -175,6 +180,15 @@ export async function sendMessageAction(payload: {
     return {
       success: false,
       message: "این کانال فقط جهت اطلاع‌رسانی است و امکان ارسال پیام برای داوطلبان وجود ندارد.",
+    };
+  }
+
+  // Voice message gating (Requirement 10: blocked for STUDENT, allowed for MENTOR, SUPERVISOR, ADMIN, CEO)
+  const isVoice = payload.attachmentType === "voice" || payload.attachmentType?.startsWith("audio/");
+  if (isVoice && session.role === "STUDENT") {
+    return {
+      success: false,
+      message: "ارسال پیام صوتی برای داوطلبان مجاز نمی‌باشد و تنها کادر پشتیبانی، سرپرستان و مدیران مجاز به ارسال وویس هستند.",
     };
   }
 
@@ -445,3 +459,75 @@ export async function bulkAddMembersByCourseAction(payload: {
     addedCount,
   };
 }
+
+/**
+ * Edit Channel or Group Metadata (Requirement 15: Admin Edit CRUD)
+ */
+export async function editConversationAction(payload: {
+  conversationId: string;
+  title: string;
+  description?: string;
+  isChannelReadOnlyForStudents?: boolean;
+}) {
+  const session = await requireRole(["CEO", "ADMIN", "SUPERVISOR"]);
+
+  const [conv] = await db
+    .select()
+    .from(chatConversations)
+    .where(eq(chatConversations.id, payload.conversationId))
+    .limit(1);
+
+  if (!conv) {
+    return { success: false, message: "گفتگو یافت نشد." };
+  }
+
+  await db
+    .update(chatConversations)
+    .set({
+      title: payload.title.trim(),
+      description: payload.description?.trim() || null,
+      isChannelReadOnlyForStudents: payload.isChannelReadOnlyForStudents ?? conv.isChannelReadOnlyForStudents,
+      updatedAt: new Date(),
+    })
+    .where(eq(chatConversations.id, payload.conversationId));
+
+  revalidatePath("/messages");
+  return {
+    success: true,
+    message: "مشخصات گفتگو با موفقیت ویرایش شد.",
+  };
+}
+
+/**
+ * Delete Channel or Group (Requirement 15: Admin Delete CRUD)
+ */
+export async function deleteConversationAction(conversationId: string) {
+  const session = await requireRole(["CEO", "ADMIN", "SUPERVISOR"]);
+
+  const [conv] = await db
+    .select()
+    .from(chatConversations)
+    .where(eq(chatConversations.id, conversationId))
+    .limit(1);
+
+  if (!conv) {
+    return { success: false, message: "گفتگو یافت نشد." };
+  }
+
+  // Delete messages first
+  await db
+    .delete(chatMessages)
+    .where(eq(chatMessages.conversationId, conversationId));
+
+  // Delete conversation
+  await db
+    .delete(chatConversations)
+    .where(eq(chatConversations.id, conversationId));
+
+  revalidatePath("/messages");
+  return {
+    success: true,
+    message: "کانال/گروه با موفقیت حذف گردید.",
+  };
+}
+

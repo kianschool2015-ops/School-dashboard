@@ -41,6 +41,10 @@ const defaultTriggers: Record<SmsTriggerEvent, { isEnabled: boolean; templateMes
     isEnabled: true,
     templateMessage: "داوطلب گرامی {name}، ثبت‌نام شما در سامانه مشاهیر دانش مجاز شد: {link}",
   },
+  MENTOR_ASSIGNED: {
+    isEnabled: true,
+    templateMessage: "داوطلب گرامی {name}، پشتیبان اختصاصی شما ({mentor}) در مشاهیر دانش تعیین گردید.",
+  },
 };
 
 /**

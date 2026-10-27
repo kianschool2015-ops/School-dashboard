@@ -7,8 +7,40 @@
 
 import { Queue, Worker, Job } from "bullmq";
 import Redis from "ioredis";
+import { sql, eq } from "drizzle-orm";
 import { db } from "../db";
-import { examSubmissions } from "../db/schema";
+import { examSubmissions, exams } from "../db/schema";
+
+/**
+ * Ensures exam record exists in PostgreSQL before submission insert (Requirement 2)
+ */
+async function ensureExamExists(examId: string, examTitle?: string) {
+  if (!examId) return;
+  try {
+    const existing = await db
+      .select({ id: exams.id })
+      .from(exams)
+      .where(eq(exams.id, examId))
+      .limit(1);
+
+    if (existing.length === 0) {
+      await db
+        .insert(exams)
+        .values({
+          id: examId,
+          title: examTitle || "آزمون شبیه‌ساز وکالت",
+          category: "MOCK_BAR",
+          durationMinutes: 120,
+          createdById: "usr_admin1",
+          isPublished: true,
+          targetAudience: "ALL",
+        })
+        .onConflictDoNothing();
+    }
+  } catch (err) {
+    console.warn("[ensureExamExists] Warning ensuring exam exists in queue:", err);
+  }
+}
 
 // Redis Connection Configuration (Dedicated connections for Queue & Worker - M-11)
 const redisUrl = process.env.REDIS_URL || "redis://localhost:6379/0";
@@ -68,8 +100,9 @@ export const examSubmissionQueue = new Queue<ExamSubmissionJobData>(
         type: "exponential",
         delay: 1000,
       },
-      removeOnComplete: 10000, // Keep last 10k completed in memory
-      removeOnFail: 50000,     // Retain failed for dead-letter auditing
+      // [H-15, L-04] Bounded queue retention to prevent Redis memory exhaustion
+      removeOnComplete: { count: 1000, age: 3600 },
+      removeOnFail: { count: 5000, age: 86400 },
     },
   }
 );
@@ -126,6 +159,8 @@ export async function enqueueExamSubmission(
 
   // Graceful Fallback: Direct Database Ingestion
   try {
+    await ensureExamExists(data.examId, data.examTitle);
+
     await db
       .insert(examSubmissions)
       .values({
@@ -179,6 +214,9 @@ export function createExamSubmissionWorker() {
     async (job: Job<ExamSubmissionJobData>) => {
       const sub = job.data;
 
+      // Ensure exam exists before inserting submission (Requirement 2)
+      await ensureExamExists(sub.examId, sub.examTitle);
+
       // Reliable, atomic PostgreSQL persistence (C-08, L-04, L-05)
       await db
         .insert(examSubmissions)
@@ -211,7 +249,8 @@ export function createExamSubmissionWorker() {
             incorrectCount: sub.wrongCount,
             unansweredCount: sub.unansweredCount,
             totalPercentage: (sub.overallScorePercent || 0).toFixed(2),
-            status: "AUTO_GRADED_PENDING_MENTOR",
+            // [H-18] Preserve PUBLISHED_TO_STUDENT if mentor has already finalized and published
+            status: sql`CASE WHEN ${examSubmissions.status} = 'PUBLISHED_TO_STUDENT' THEN ${examSubmissions.status} ELSE 'AUTO_GRADED_PENDING_MENTOR' END`,
             subjectScores: sub.subjectScores,
             answers: (sub.answers as Record<string, number>) || {},
             submittedAt: new Date(sub.submittedAt || Date.now()),

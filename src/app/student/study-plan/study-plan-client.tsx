@@ -99,6 +99,11 @@ export function StudyPlanClient({
 }: StudyPlanClientProps) {
   const [selectedDay, setSelectedDay] = useState<number>(currentDayOfWeek);
 
+  // Clean mentor name to avoid double parentheses like: (تعیین‌شده توسط استاد علی کاظمی (پشتیبان علمی)):
+  const cleanMentorName = (mentorName || "پشتیبان علمی")
+    .replace(/\s*\((?:پشتیبان علمی|پشتیبان آموزشی|پشتیبان)\)/gi, "")
+    .trim();
+
   // Daily Study Log Form State
   const [plannedHours, setPlannedHours] = useState<number>(todayCheckin?.plannedHours || 6);
   const [actualHours, setActualHours] = useState<number>(todayCheckin?.actualHours || 0);
@@ -212,7 +217,9 @@ export function StudyPlanClient({
           <CardContent className="p-4 flex items-start gap-3">
             <Flame className="h-5 w-5 text-primary shrink-0 mt-0.5" />
             <div>
-              <span className="text-xs font-bold text-primary">هدف راهبردی هفته (تعیین‌شده توسط {mentorName}):</span>
+              <span className="text-xs font-bold text-primary">
+                هدف راهبردی هفته (تعیین‌شده توسط {cleanMentorName}):
+              </span>
               <p className="text-xs text-foreground mt-0.5 leading-relaxed">{weeklyMainGoal}</p>
             </div>
           </CardContent>
@@ -365,7 +372,7 @@ export function StudyPlanClient({
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className="block text-xs font-semibold mb-1 text-muted-foreground">
-                      ساعت مصوب برنامه:
+                      ساعت مصوب برنامه ({toPersianDigits(plannedHours)} ساعت):
                     </label>
                     <div className="relative">
                       <input
@@ -384,7 +391,7 @@ export function StudyPlanClient({
 
                   <div>
                     <label className="block text-xs font-semibold mb-1 text-foreground">
-                      ساعت مطالعه واقعی:
+                      ساعت مطالعه واقعی ({toPersianDigits(actualHours)} ساعت):
                     </label>
                     <div className="relative">
                       <input
@@ -405,7 +412,9 @@ export function StudyPlanClient({
                 {/* Progress calculation */}
                 <div className="p-3 bg-muted/40 rounded-xl space-y-2 border border-border/60">
                   <div className="flex items-center justify-between text-xs">
-                    <span className="text-muted-foreground font-medium">درصد تحقق برنامه امروز:</span>
+                    <span className="text-muted-foreground font-medium">
+                      درصد تحقق برنامه امروز ({toPersianDigits(actualHours)} از {toPersianDigits(plannedHours)} ساعت):
+                    </span>
                     <span
                       className={`font-bold font-mono ${
                         executionPercent >= 80
@@ -419,6 +428,10 @@ export function StudyPlanClient({
                     </span>
                   </div>
                   <Progress value={executionPercent} className="h-2" />
+                  <div className="flex justify-between items-center text-[10px] text-muted-foreground font-medium pt-1">
+                    <span>مصوب: {toPersianDigits(plannedHours)} ساعت</span>
+                    <span>اجراشده: {toPersianDigits(actualHours)} ساعت</span>
+                  </div>
                 </div>
 
                 {/* Root cause if execution < 70% */}

@@ -441,3 +441,51 @@ export async function submitEscalationTicketAction(payload: {
     ticket: newTicket,
   };
 }
+
+/**
+ * Mark direct messages as read (Section 6: Real-time notification clearing)
+ * Marks incoming unread messages as read and allows client to dispatch badge updates
+ */
+export async function markDirectMessagesAsReadAction(contactId?: string): Promise<{
+  success: boolean;
+  markedCount: number;
+}> {
+  try {
+    const session = await requireAuth();
+
+    const conditions = [
+      eq(directMessages.receiverId, session.userId),
+      eq(directMessages.isRead, false),
+    ];
+
+    if (contactId) {
+      conditions.push(eq(directMessages.senderId, contactId));
+    }
+
+    const unreadMsgs = await db
+      .select({ id: directMessages.id })
+      .from(directMessages)
+      .where(and(...conditions));
+
+    if (unreadMsgs.length > 0) {
+      await db
+        .update(directMessages)
+        .set({ isRead: true })
+        .where(and(...conditions));
+
+      revalidatePath("/messages");
+      revalidatePath("/student/messages");
+    }
+
+    return {
+      success: true,
+      markedCount: unreadMsgs.length,
+    };
+  } catch {
+    return {
+      success: false,
+      markedCount: 0,
+    };
+  }
+}
+

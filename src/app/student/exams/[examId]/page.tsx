@@ -2,9 +2,11 @@ import React from "react";
 import { getSession } from "@/server/auth/guard";
 import { redirect } from "next/navigation";
 import { db } from "@/server/db";
-import { exams, examQuestions, examSubmissions, studentProfiles } from "@/server/db/schema";
+import { exams, examQuestions, examSubmissions, studentProfiles, users } from "@/server/db/schema";
 import { eq, and, asc } from "drizzle-orm";
 import { ExamRunnerClient } from "./exam-runner-client";
+import { ForensicWatermark } from "@/components/security/forensic-watermark";
+import { LegalConsentModal } from "@/components/security/legal-consent-modal";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -29,8 +31,30 @@ export default async function StudentExamSessionPage({ params }: PageProps) {
   let examRow: any = null;
   let existingSub: any = null;
   let questions: ExamQuestion[] = [];
+  let currentUser: { fullName: string; nationalId: string | null; phoneNumber: string | null } | null = null;
+  let acceptedLegalTermsAt: Date | null = null;
 
   try {
+    const [u] = await db
+      .select({
+        fullName: users.fullName,
+        nationalId: users.nationalId,
+        phoneNumber: users.phoneNumber,
+      })
+      .from(users)
+      .where(eq(users.id, session.userId))
+      .limit(1);
+    currentUser = u || null;
+
+    const [sp] = await db
+      .select({
+        acceptedLegalTermsAt: studentProfiles.acceptedLegalTermsAt,
+      })
+      .from(studentProfiles)
+      .where(eq(studentProfiles.userId, session.userId))
+      .limit(1);
+    acceptedLegalTermsAt = sp?.acceptedLegalTermsAt || null;
+
     const [fetchedExam] = await db
       .select()
       .from(exams)
@@ -258,14 +282,32 @@ export default async function StudentExamSessionPage({ params }: PageProps) {
     redirect(`/student/exams?viewResult=${examId}`);
   }
 
+  // Calculate remaining seconds server-side accurately (Requirement 3)
+  const durationSeconds = (exam.durationMinutes || 120) * 60;
+  const startedAtMs = existingSub?.startedAt ? new Date(existingSub.startedAt).getTime() : Date.now();
+  const elapsedSeconds = Math.floor((Date.now() - startedAtMs) / 1000);
+  const remainingSeconds = Math.max(0, durationSeconds - elapsedSeconds);
+
   return (
-    <div className="max-w-5xl mx-auto space-y-6">
-      <ExamRunnerClient
-        exam={exam}
-        questions={questions}
-        userId={session.userId}
-        initialStartedAt={existingSub?.startedAt ? new Date(existingSub.startedAt).toISOString() : undefined}
+    <ForensicWatermark
+      userFullName={currentUser?.fullName || session.fullName}
+      nationalId={currentUser?.nationalId || "••••••••••"}
+      phoneNumber={currentUser?.phoneNumber || "۰۹•••••••••"}
+    >
+      <LegalConsentModal
+        isOpen={session.role === "STUDENT" && !acceptedLegalTermsAt}
+        studentName={currentUser?.fullName || session.fullName}
+        nationalId={currentUser?.nationalId || ""}
       />
-    </div>
+      <div className="max-w-5xl mx-auto space-y-6">
+        <ExamRunnerClient
+          exam={exam}
+          questions={questions}
+          userId={session.userId}
+          initialStartedAt={existingSub?.startedAt ? new Date(existingSub.startedAt).toISOString() : undefined}
+          initialRemainingSeconds={remainingSeconds}
+        />
+      </div>
+    </ForensicWatermark>
   );
 }

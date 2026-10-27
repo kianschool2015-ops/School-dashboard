@@ -89,7 +89,7 @@ export function QuestionDesignerClient({
   // Exam Header Edit Form State
   const [isEditingHeader, setIsEditingHeader] = useState(false);
   const [headerTitle, setHeaderTitle] = useState(exam.title);
-  const [headerCourseCode, setHeaderCourseCode] = useState(exam.courseCode || "GARNET-BAR-MASTER");
+  const [headerCourseCode, setHeaderCourseCode] = useState(exam.courseCode || "MASHAHIR-BAR-MASTER");
   const [headerCategory, setHeaderCategory] = useState<ExamCategory>(exam.category);
   const [headerDuration, setHeaderDuration] = useState(exam.durationMinutes);
   const [headerNegativeMarking, setHeaderNegativeMarking] = useState(exam.hasNegativeMarking);
@@ -117,10 +117,10 @@ export function QuestionDesignerClient({
     targetCourses.length > 0
       ? targetCourses
       : [
-          { code: "GARNET-BAR-MASTER", name: "دوره جامع مستر وکالت" },
+          { code: "MASHAHIR-BAR-MASTER", name: "دوره جامع مستر وکالت" },
           { code: "CRASH-BAR", name: "دوره ضربتی آزمون وکالت" },
           { code: "SAVIOR-FALL-1405", name: "کلاس نجات پاییز ۱۴۰۵" },
-          { code: "GARNET-BAR-360", name: "دوره جامع آمادگی آزمون وکالت ۳۶۰" },
+          { code: "MASHAHIR-BAR-360", name: "دوره جامع آمادگی آزمون وکالت ۳۶۰" },
           { code: "DIAGNOSTIC-1405", name: "دوره سنجش و تعیین سطح وکالت ۱۴۰۵" },
         ];
 
@@ -599,7 +599,7 @@ export function QuestionDesignerClient({
                     {headerTargetAudience === "ALL"
                       ? "عمومی برای همه"
                       : headerTargetAudience === "COURSE_CODE"
-                      ? `${toPersianDigits(headerTargetCourseCodes.length)} دوره گارنت`
+                      ? `${toPersianDigits(headerTargetCourseCodes.length)} دوره مشاهیر دانش`
                       : `${toPersianDigits(headerTargetStudentIds.length)} داوطلب منتخب`}
                   </Badge>
                 </div>
@@ -640,7 +640,7 @@ export function QuestionDesignerClient({
                     }`}
                   >
                     <div className="flex items-center justify-between mb-1.5">
-                      <span className="text-xs font-bold text-foreground">بر اساس کد دوره / کلاس گارنت</span>
+                      <span className="text-xs font-bold text-foreground">بر اساس کد دوره / کلاس مشاهیر دانش</span>
                       <input
                         type="radio"
                         name="headerTargetAudience"
@@ -650,7 +650,7 @@ export function QuestionDesignerClient({
                       />
                     </div>
                     <p className="text-[11px] leading-relaxed">
-                      تخصیص اختصاصی به داوطلبان ثبت‌نامی یک یا چند دوره خاص گارنت.
+                      تخصیص اختصاصی به داوطلبان ثبت‌نامی یک یا چند دوره خاص مشاهیر دانش.
                     </p>
                   </div>
 
@@ -875,7 +875,7 @@ export function QuestionDesignerClient({
                   </strong>
                 </div>
                 <div className="p-3 bg-muted/40 rounded-xl border border-border">
-                  <span className="text-[10px] text-muted-foreground block">دوره هدف گارنت LMS</span>
+                  <span className="text-[10px] text-muted-foreground block">دوره هدف مشاهیر دانش</span>
                   <strong className="text-sm font-bold font-mono text-amber-500 mt-0.5 block">
                     {exam.courseCode || "عمومی"}
                   </strong>
@@ -901,7 +901,7 @@ export function QuestionDesignerClient({
                   <span className="font-semibold text-foreground">جامعه هدف آزمون:</span>
                   {exam.targetAudience === "COURSE_CODE" ? (
                     <Badge variant="outline" className="border-blue-500/30 text-blue-500 bg-blue-500/10 text-[11px]">
-                      کدهای دوره گارنت: {(exam.targetCourseCodes || []).join(" ، ") || "تعریف نشده"}
+                      کدهای دوره مشاهیر دانش: {(exam.targetCourseCodes || []).join(" ، ") || "تعریف نشده"}
                     </Badge>
                   ) : exam.targetAudience === "SPECIFIC_STUDENTS" ? (
                     <Badge variant="outline" className="border-purple-500/30 text-purple-500 bg-purple-500/10 text-[11px]">

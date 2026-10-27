@@ -226,7 +226,8 @@ export async function launchInstantTriageRoomAction(studentProfileId: string, st
     roomCode,
     sessionType: "TRIAGE_URGENT",
     targetCohort: "مشاوره اضطراری",
-    allowedRoles: ["CEO", "ADMIN", "SUPERVISOR", "MENTOR", "STUDENT"],
+    // [H-13] Restrict allowedRoles to executive leadership to prevent cross-student triage snooping
+    allowedRoles: ["CEO", "ADMIN", "SUPERVISOR"],
     participantIds: participants,
     scheduledStart: "هم‌اکنون (جلسه فوری)",
     durationMinutes: 45,
@@ -244,7 +245,7 @@ export async function launchInstantTriageRoomAction(studentProfileId: string, st
     roomCode,
     sessionType: "TRIAGE_URGENT",
     targetCohort: "مشاوره اضطراری",
-    allowedRoles: ["CEO", "ADMIN", "SUPERVISOR", "MENTOR", "STUDENT"],
+    allowedRoles: ["CEO", "ADMIN", "SUPERVISOR"],
     participantIds: participants,
     scheduledStart: "هم‌اکنون (جلسه فوری)",
     durationMinutes: 45,

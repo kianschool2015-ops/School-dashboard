@@ -123,7 +123,20 @@ export async function submitFridayReportAction(
         })
         .where(eq(fridayReports.id, existing.id));
 
+      if (studentProfileId) {
+        await db
+          .update(studentProfiles)
+          .set({
+            currentDailyStudyHours: Math.max(1, Math.round(totalHours / 7)),
+            updatedAt: new Date(),
+          })
+          .where(eq(studentProfiles.id, studentProfileId));
+      }
+
       revalidatePath("/student/friday-report");
+      revalidatePath("/student/friday-reports");
+      revalidatePath("/student/dashboard");
+      revalidatePath("/student/study-plan");
       revalidatePath("/mentor/friday-reports");
 
       return {
@@ -154,7 +167,20 @@ export async function submitFridayReportAction(
       supervisorApproval: false,
     });
 
+    if (studentProfileId) {
+      await db
+        .update(studentProfiles)
+        .set({
+          currentDailyStudyHours: Math.max(1, Math.round(totalHours / 7)),
+          updatedAt: new Date(),
+        })
+        .where(eq(studentProfiles.id, studentProfileId));
+    }
+
     revalidatePath("/student/friday-report");
+    revalidatePath("/student/friday-reports");
+    revalidatePath("/student/dashboard");
+    revalidatePath("/student/study-plan");
     revalidatePath("/mentor/friday-reports");
 
     return {

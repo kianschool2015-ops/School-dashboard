@@ -92,6 +92,15 @@ export async function runDatabaseBootstrap(client: postgres.Sql): Promise<void> 
       enrolled_course_code text,
       enrolled_course_name text,
       has_active_support boolean DEFAULT true NOT NULL,
+      external_user_id text,
+      initial_sync_completed boolean DEFAULT false NOT NULL,
+      initial_sync_at timestamp,
+      provisioning_source varchar(30) DEFAULT 'LOCAL' NOT NULL,
+      accepted_legal_terms_at timestamp,
+      accepted_legal_terms_ip varchar(64),
+      is_probationary boolean DEFAULT true NOT NULL,
+      last_entitlement_check_at timestamp,
+      suspension_reason text,
       created_at timestamp DEFAULT now() NOT NULL,
       updated_at timestamp DEFAULT now() NOT NULL
     );
@@ -150,8 +159,10 @@ export async function runDatabaseBootstrap(client: postgres.Sql): Promise<void> 
     -- 7. Daily Check-ins
     CREATE TABLE IF NOT EXISTS daily_checkins (
       id text PRIMARY KEY,
-      student_profile_id text REFERENCES student_profiles(id) NOT NULL,
+      student_profile_id text REFERENCES student_profiles(id) ON DELETE CASCADE NOT NULL,
       checkin_date text NOT NULL,
+      planned_hours integer DEFAULT 6 NOT NULL,
+      actual_hours integer DEFAULT 0 NOT NULL,
       calculated_execution_percent integer NOT NULL,
       root_failure_cause text,
       help_requested boolean DEFAULT false NOT NULL,
@@ -287,10 +298,10 @@ export async function runDatabaseBootstrap(client: postgres.Sql): Promise<void> 
     -- 17. Hierarchy Tasks
     CREATE TABLE IF NOT EXISTS hierarchy_tasks (
       id text PRIMARY KEY,
-      sender_id text REFERENCES users(id) NOT NULL,
+      sender_id text REFERENCES users(id) ON DELETE CASCADE NOT NULL,
       sender_role varchar(20) NOT NULL,
       sender_name text NOT NULL,
-      receiver_id text REFERENCES users(id) NOT NULL,
+      receiver_id text REFERENCES users(id) ON DELETE CASCADE NOT NULL,
       receiver_role varchar(20) NOT NULL,
       receiver_name text NOT NULL,
       title text NOT NULL,
@@ -299,7 +310,8 @@ export async function runDatabaseBootstrap(client: postgres.Sql): Promise<void> 
       status varchar(30) DEFAULT 'PENDING' NOT NULL,
       due_date varchar(30) NOT NULL,
       resolution_notes text,
-      reviewed_by text REFERENCES users(id),
+      seen_at timestamp,
+      reviewed_by text REFERENCES users(id) ON DELETE SET NULL,
       reviewed_by_name text,
       review_notes text,
       reviewed_at timestamp,
@@ -414,13 +426,13 @@ export async function runDatabaseBootstrap(client: postgres.Sql): Promise<void> 
       coefficient integer DEFAULT 1 NOT NULL
     );
 
-    -- 24. Exam Submissions (Production Grade)
+    -- 24. Exam Submissions (Production Grade - Resilient High-Concurrency Storage)
     CREATE TABLE IF NOT EXISTS exam_submissions (
       id text PRIMARY KEY,
-      exam_id text REFERENCES exams(id) ON DELETE CASCADE NOT NULL,
-      student_id text REFERENCES users(id) ON DELETE CASCADE NOT NULL,
+      exam_id text NOT NULL,
+      student_id text NOT NULL,
       student_name text DEFAULT 'داوطلب مشاهیر دانش',
-      mentor_id text REFERENCES users(id) ON DELETE SET NULL,
+      mentor_id text,
       started_at timestamp DEFAULT now() NOT NULL,
       submitted_at timestamp,
       answers jsonb DEFAULT '{}'::jsonb NOT NULL,
@@ -602,6 +614,66 @@ export async function runDatabaseBootstrap(client: postgres.Sql): Promise<void> 
       updated_at timestamp DEFAULT now() NOT NULL
     );
 
+    -- 35. SSO API Settings (Mashahir Danesh Central Account)
+    CREATE TABLE IF NOT EXISTS sso_api_settings (
+      id text PRIMARY KEY DEFAULT 'default',
+      is_enabled boolean DEFAULT true NOT NULL,
+      service_title text DEFAULT 'حساب کاربری مشاهیر دانش' NOT NULL,
+      base_url text DEFAULT 'https://mashahiredanesh.com/GarnetAPI' NOT NULL,
+      login_endpoint text DEFAULT '/auth/loginMobile' NOT NULL,
+      courses_endpoint text DEFAULT '/user/courses' NOT NULL,
+      send_otp_endpoint text DEFAULT '/users/sendVerificationCodeByMobile' NOT NULL,
+      verify_otp_endpoint text DEFAULT '/users/checkVerificationCode' NOT NULL,
+      products_endpoint text DEFAULT '/invoices/productListByUser' NOT NULL,
+      code_count integer DEFAULT 5 NOT NULL,
+      api_key_header varchar(100) DEFAULT 'g-api-key' NOT NULL,
+      api_key_value text DEFAULT 'AEbk35zB9YfSqw8u9mjH7ykNK4xq2Yq5' NOT NULL,
+      mobile_field_name varchar(50) DEFAULT 'mobile' NOT NULL,
+      password_field_name varchar(50) DEFAULT 'password' NOT NULL,
+      success_status_code integer DEFAULT 2000 NOT NULL,
+      timeout_ms integer DEFAULT 8000 NOT NULL,
+      auto_create_student boolean DEFAULT true NOT NULL,
+      bypass_course_check_if_no_endpoint boolean DEFAULT true NOT NULL,
+      updated_at timestamp DEFAULT now() NOT NULL
+    );
+
+    -- 36. System Audit Logs (Comprehensive audit trail for admin/executive oversight)
+    CREATE TABLE IF NOT EXISTS system_audit_logs (
+      id text PRIMARY KEY,
+      actor_id text NOT NULL,
+      actor_name text NOT NULL,
+      actor_role varchar(30) NOT NULL,
+      event_type varchar(50) NOT NULL,
+      action text NOT NULL,
+      target_entity varchar(50) NOT NULL,
+      target_id text,
+      details text,
+      metadata jsonb DEFAULT '{}'::jsonb,
+      ip_address varchar(45),
+      user_agent text,
+      created_at timestamp DEFAULT now() NOT NULL
+    );
+
+    -- Ensure SSO API Settings columns exist before inserting
+    ALTER TABLE sso_api_settings ADD COLUMN IF NOT EXISTS send_otp_endpoint text DEFAULT '/users/sendVerificationCodeByMobile' NOT NULL;
+    ALTER TABLE sso_api_settings ADD COLUMN IF NOT EXISTS verify_otp_endpoint text DEFAULT '/users/checkVerificationCode' NOT NULL;
+    ALTER TABLE sso_api_settings ADD COLUMN IF NOT EXISTS products_endpoint text DEFAULT '/invoices/productListByUser' NOT NULL;
+    ALTER TABLE sso_api_settings ADD COLUMN IF NOT EXISTS code_count integer DEFAULT 5 NOT NULL;
+
+    -- Pre-seed default SSO API Settings
+    INSERT INTO sso_api_settings (
+      id, is_enabled, service_title, base_url, login_endpoint, courses_endpoint,
+      send_otp_endpoint, verify_otp_endpoint, products_endpoint, code_count,
+      api_key_header, api_key_value, mobile_field_name, password_field_name,
+      success_status_code, timeout_ms, auto_create_student, bypass_course_check_if_no_endpoint
+    ) VALUES (
+      'default', true, 'حساب کاربری مشاهیر دانش', 'https://mashahiredanesh.com/GarnetAPI',
+      '/auth/loginMobile', '/user/courses',
+      '/users/sendVerificationCodeByMobile', '/users/checkVerificationCode', '/invoices/productListByUser', 5,
+      'g-api-key', 'AEbk35zB9YfSqw8u9mjH7ykNK4xq2Yq5',
+      'mobile', 'password', 2000, 8000, true, true
+    ) ON CONFLICT (id) DO NOTHING;
+
     -- Clean up legacy shadow tables (M-08)
     DROP TABLE IF EXISTS tasks, mentor_call_notes, triage_cases, friday_assessment_reports, internal_tickets CASCADE;
   `);
@@ -617,6 +689,25 @@ export async function runDatabaseBootstrap(client: postgres.Sql): Promise<void> 
     ALTER TABLE student_profiles ADD COLUMN IF NOT EXISTS enrolled_course_code text;
     ALTER TABLE student_profiles ADD COLUMN IF NOT EXISTS enrolled_course_name text;
     ALTER TABLE student_profiles ADD COLUMN IF NOT EXISTS has_active_support boolean DEFAULT true NOT NULL;
+    ALTER TABLE student_profiles ADD COLUMN IF NOT EXISTS external_user_id text;
+    ALTER TABLE student_profiles ADD COLUMN IF NOT EXISTS initial_sync_completed boolean DEFAULT false NOT NULL;
+    ALTER TABLE student_profiles ADD COLUMN IF NOT EXISTS initial_sync_at timestamp;
+    ALTER TABLE student_profiles ADD COLUMN IF NOT EXISTS provisioning_source varchar(30) DEFAULT 'LOCAL' NOT NULL;
+    ALTER TABLE student_profiles ADD COLUMN IF NOT EXISTS accepted_legal_terms_at timestamp;
+    ALTER TABLE student_profiles ADD COLUMN IF NOT EXISTS accepted_legal_terms_ip varchar(64);
+    ALTER TABLE student_profiles ADD COLUMN IF NOT EXISTS is_probationary boolean DEFAULT true NOT NULL;
+    ALTER TABLE student_profiles ADD COLUMN IF NOT EXISTS last_entitlement_check_at timestamp;
+    ALTER TABLE student_profiles ADD COLUMN IF NOT EXISTS last_central_check_result text;
+    ALTER TABLE student_profiles ADD COLUMN IF NOT EXISTS suspension_reason text;
+    DO $$ BEGIN
+      ALTER TABLE student_profiles ALTER COLUMN mentor_id DROP NOT NULL;
+    EXCEPTION WHEN OTHERS THEN NULL; END $$;
+
+    -- SSO API Settings column migrations
+    ALTER TABLE sso_api_settings ADD COLUMN IF NOT EXISTS send_otp_endpoint text DEFAULT '/users/sendVerificationCodeByMobile' NOT NULL;
+    ALTER TABLE sso_api_settings ADD COLUMN IF NOT EXISTS verify_otp_endpoint text DEFAULT '/users/checkVerificationCode' NOT NULL;
+    ALTER TABLE sso_api_settings ADD COLUMN IF NOT EXISTS products_endpoint text DEFAULT '/invoices/productListByUser' NOT NULL;
+    ALTER TABLE sso_api_settings ADD COLUMN IF NOT EXISTS code_count integer DEFAULT 5 NOT NULL;
 
     -- Student whitelist column migrations
     ALTER TABLE student_whitelist ADD COLUMN IF NOT EXISTS enrolled_course_name text;
@@ -673,6 +764,12 @@ export async function runDatabaseBootstrap(client: postgres.Sql): Promise<void> 
     ALTER TABLE exam_submissions ADD COLUMN IF NOT EXISTS rank integer;
     ALTER TABLE exam_submissions ADD COLUMN IF NOT EXISTS delta_from_previous integer DEFAULT 0;
     ALTER TABLE exam_submissions ADD COLUMN IF NOT EXISTS delta_from_baseline integer DEFAULT 0;
+
+    -- Drop legacy foreign key constraints from exam_submissions to prevent concurrent insert deadlocks and missing-exam fkey crashes (Requirement 2)
+    ALTER TABLE exam_submissions DROP CONSTRAINT IF EXISTS exam_submissions_exam_id_fkey;
+    ALTER TABLE exam_submissions DROP CONSTRAINT IF EXISTS exam_submissions_student_id_fkey;
+    ALTER TABLE exam_submissions DROP CONSTRAINT IF EXISTS exam_submissions_mentor_id_fkey;
+
     ALTER TABLE friday_reports ADD COLUMN IF NOT EXISTS status varchar(30) DEFAULT 'SUBMITTED';
     ALTER TABLE video_settings ADD COLUMN IF NOT EXISTS is_enabled boolean DEFAULT true NOT NULL;
   `);
@@ -720,6 +817,11 @@ export async function runDatabaseBootstrap(client: postgres.Sql): Promise<void> 
     CREATE INDEX IF NOT EXISTS chat_msg_conv_idx ON chat_messages (conversation_id, created_at);
     CREATE INDEX IF NOT EXISTS friday_report_student_idx ON friday_reports (student_id, week_number);
     CREATE INDEX IF NOT EXISTS friday_report_week_idx ON friday_reports (week_number);
+
+    -- System Audit Logs Indexes
+    CREATE INDEX IF NOT EXISTS sys_audit_actor_idx ON system_audit_logs (actor_id);
+    CREATE INDEX IF NOT EXISTS sys_audit_event_idx ON system_audit_logs (event_type);
+    CREATE INDEX IF NOT EXISTS sys_audit_created_idx ON system_audit_logs (created_at);
   `);
 
   // 5. One-time Plaintext Password Migration to scrypt$ (C-02, C-03)

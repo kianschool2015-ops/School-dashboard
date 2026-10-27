@@ -3,6 +3,7 @@ import { db } from "@/server/db";
 import { weeklyPlanTemplates, studentProfiles, users, scheduleItems, studentSchedules } from "@/server/db/schema";
 import { eq, desc } from "drizzle-orm";
 import { PlansClient } from "./plans-client";
+import { maskPhoneNumber, maskNationalId } from "@/lib/sanitize";
 import type { WeeklyPlanTemplateRecord, StudentProfileRecord, ScheduleItemRecord } from "@/types/models";
 
 interface PlansPageProps {
@@ -44,6 +45,8 @@ export default async function PlansPage({ searchParams }: PlansPageProps) {
 
   const allScheduleItems = await db.select().from(scheduleItems);
 
+  const isPrivileged = session.role === "CEO" || session.role === "ADMIN";
+
   const studentsData = rawStudents.map((st) => {
     const user = userMap.get(st.userId);
     const mentorUser = st.mentorId ? userMap.get(st.mentorId) : null;
@@ -52,8 +55,8 @@ export default async function PlansPage({ searchParams }: PlansPageProps) {
     return {
       id: st.id,
       fullName: user?.fullName || "داوطلب آزمون وکالت",
-      nationalId: user?.nationalId || "---",
-      phoneNumber: user?.phoneNumber || "---",
+      nationalId: isPrivileged ? (user?.nationalId || "---") : maskNationalId(user?.nationalId),
+      phoneNumber: isPrivileged ? (user?.phoneNumber || "---") : maskPhoneNumber(user?.phoneNumber),
       mentorName: mentorUser?.fullName || "پشتیبان آموزشی",
       scheduleItems: items.map((it) => ({
         dayOfWeek: it.dayOfWeek,
