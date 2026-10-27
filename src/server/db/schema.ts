@@ -545,13 +545,18 @@ export const exams = pgTable(
     title: text("title").notNull(), // e.g. "آزمون شبیه‌ساز جامع وکالت - مرحله سوم"
     courseCode: text("course_code"), // Linkable to enrolled course (e.g. "GARNET-BAR-360")
     category: varchar("category", { length: 50 }).notNull(), // "MOCK_BAR", "DIAGNOSTIC", "SUBJECT_SPECIFIC"
+    examType: varchar("exam_type", { length: 30 }).default("MOCK_BAR").notNull(), // "MOCK_BAR", "DIAGNOSTIC", "COMPREHENSIVE", "SUBJECT"
+    passingScore: integer("passing_score").default(50).notNull(),
     durationMinutes: integer("duration_minutes").default(120).notNull(),
     totalQuestions: integer("total_questions").default(0).notNull(),
     hasNegativeMarking: boolean("has_negative_marking").default(true).notNull(), // 1/3 penalty standard for Iranian Bar Exam
     isPublished: boolean("is_published").default(false).notNull(),
     targetAudience: varchar("target_audience", { length: 30 }).default("ALL").notNull(), // "ALL" | "COURSE_CODE" | "SPECIFIC_STUDENTS"
+    targetType: varchar("target_type", { length: 30 }).default("ALL").notNull(), // "ALL" | "COHORT" | "SPECIFIC_STUDENTS" | "MENTOR_STUDENTS"
     targetCourseCodes: jsonb("target_course_codes").default([]).notNull(), // e.g. ["GARNET-BAR-360", "CRASH-BAR"]
+    targetCourses: jsonb("target_courses").default([]).notNull(), // Course names or tags: ["وکالت ۳۶۰", "مرکز وکلا"]
     targetStudentIds: jsonb("target_student_ids").default([]).notNull(), // Array of user IDs: ["usr_student1"]
+    targetMentorId: text("target_mentor_id").references(() => users.id), // Cohort-scoped mentor ID
     startDate: timestamp("start_date"),
     expiryDate: timestamp("expiry_date"),
     createdById: text("created_by_id").references(() => users.id).notNull(),
@@ -564,6 +569,7 @@ export const exams = pgTable(
     examPublishedIdx: index("exams_published_idx").on(table.isPublished),
     examAudienceIdx: index("exams_target_audience_idx").on(table.targetAudience),
     examsCourseCodeIdx: index("exams_course_code_idx").on(table.courseCode),
+    examTargetMentorIdx: index("exams_target_mentor_idx").on(table.targetMentorId),
   })
 );
 
@@ -595,18 +601,33 @@ export const examSubmissions = pgTable(
     examId: text("exam_id").references(() => exams.id, { onDelete: "cascade" }).notNull(),
     studentId: text("student_id").references(() => users.id, { onDelete: "cascade" }).notNull(),
     mentorId: text("mentor_id").references(() => users.id, { onDelete: "set null" }),
+    reviewedById: text("reviewed_by_id").references(() => users.id, { onDelete: "set null" }),
     startedAt: timestamp("started_at").defaultNow().notNull(),
     submittedAt: timestamp("submitted_at"),
-    answers: jsonb("answers").default({}).notNull(), // { [questionId]: selectedOptionNumber }
+    answers: jsonb("answers").default({}).$type<Record<string, number>>().notNull(), // { [questionId]: selectedOptionNumber }
+    flaggedQuestions: jsonb("flagged_questions").default([]).$type<string[]>().notNull(), // Question IDs bookmarked by student
+    eliminatedOptions: jsonb("eliminated_options").default({}).$type<Record<string, number[]>>().notNull(), // { [questionId]: [optionNumbers] } crossed out by candidate
+    tabSwitchCount: integer("tab_switch_count").default(0).notNull(), // Tab blur / anti-cheat counter
     correctCount: integer("correct_count").default(0).notNull(),
     incorrectCount: integer("incorrect_count").default(0).notNull(),
+    wrongCount: integer("wrong_count").default(0).notNull(),
     unansweredCount: integer("unanswered_count").default(0).notNull(),
+    blankCount: integer("blank_count").default(0).notNull(),
     totalPercentage: numeric("total_percentage", { precision: 5, scale: 2 }).default("0.00").notNull(),
-    subjectBreakdown: jsonb("subject_breakdown").default([]).notNull(),
+    rawScore: numeric("raw_score", { precision: 5, scale: 2 }).default("0.00").notNull(),
+    netScore: numeric("net_score", { precision: 5, scale: 2 }).default("0.00").notNull(),
+    subjectBreakdown: jsonb("subject_breakdown").default([]).$type<Array<{
+      subject: string;
+      correct: number;
+      incorrect: number;
+      unattempted: number;
+      percentage: number;
+    }>>().notNull(),
     // Array of: { subject: string, correct: number, incorrect: number, unattempted: number, percentage: number }
     status: varchar("status", { length: 40 }).default("AUTO_GRADED_PENDING_MENTOR").notNull(),
-    // "IN_PROGRESS" | "AUTO_GRADED_PENDING_MENTOR" | "PUBLISHED_TO_STUDENT"
+    // "IN_PROGRESS" | "AUTO_GRADED_PENDING_MENTOR" | "PENDING_MENTOR_REVIEW" | "PUBLISHED_TO_STUDENT"
     mentorNotes: text("mentor_notes"),
+    mentorFeedback: text("mentor_feedback"),
     reviewedAt: timestamp("reviewed_at"),
     publishedAt: timestamp("published_at"),
 
@@ -624,6 +645,7 @@ export const examSubmissions = pgTable(
     examSubExamStudentIdx: index("exam_sub_exam_student_idx").on(table.examId, table.studentId),
     examSubStudentIdx: index("exam_sub_student_idx").on(table.studentId),
     examSubMentorIdx: index("exam_sub_mentor_idx").on(table.mentorId),
+    examSubReviewedByIdx: index("exam_sub_reviewed_by_idx").on(table.reviewedById),
     examSubStatusIdx: index("exam_sub_status_idx").on(table.status),
     examSubmissionsStatusSubmittedIdx: index("exam_submissions_status_submitted_idx").on(table.status, table.submittedAt),
   })

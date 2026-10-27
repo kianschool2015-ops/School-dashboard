@@ -22,6 +22,9 @@ import {
   HelpCircle,
   BookOpen,
   Filter,
+  ShieldAlert,
+  Bookmark,
+  ShieldCheck,
 } from "lucide-react";
 import { toPersianDigits, formatJalaliHuman } from "@/lib/jalali";
 import { publishExamResultToStudentAction } from "@/server/actions/exams";
@@ -40,9 +43,16 @@ interface ExamReviewClientProps {
     incorrectCount: number;
     unansweredCount: number;
     totalPercentage: string | number;
+    rawScore?: string | number | null;
+    netScore?: string | number | null;
+    wrongCount?: number | null;
+    blankCount?: number | null;
+    tabSwitchCount?: number | null;
+    flaggedQuestions?: string[] | null;
     subjectBreakdown: SubjectBreakdownItem[];
     status: string;
     mentorNotes?: string | null;
+    mentorFeedback?: string | null;
     reviewedAt?: Date | string | null;
     publishedAt?: Date | string | null;
   };
@@ -64,15 +74,22 @@ export function ExamReviewClient({
 }: ExamReviewClientProps) {
   const router = useRouter();
   const [submission, setSubmission] = useState(initialSubmission);
-  const [mentorNotes, setMentorNotes] = useState(submission.mentorNotes || "");
+  const [mentorNotes, setMentorNotes] = useState(
+    submission.mentorNotes || submission.mentorFeedback || ""
+  );
   const [isPublishing, setIsPublishing] = useState(false);
   const [feedback, setFeedback] = useState<{ type: "success" | "error"; text: string } | null>(null);
 
-  // Question Filter Tab: ALL, INCORRECT, UNANSWERED, CORRECT
-  const [filterMode, setFilterMode] = useState<"ALL" | "INCORRECT" | "UNANSWERED" | "CORRECT">("ALL");
+  // Question Filter Tab: ALL, INCORRECT, UNANSWERED, CORRECT, FLAGGED
+  const [filterMode, setFilterMode] = useState<
+    "ALL" | "INCORRECT" | "UNANSWERED" | "CORRECT" | "FLAGGED"
+  >("ALL");
 
-  const totalPercentageNum = Number(submission.totalPercentage) || 0;
+  const totalPercentageNum = Number(submission.netScore || submission.totalPercentage || 0);
+  const rawScoreNum = Number(submission.rawScore || submission.totalPercentage || 0);
   const isPublished = submission.status === "PUBLISHED_TO_STUDENT";
+  const flaggedList = Array.isArray(submission.flaggedQuestions) ? submission.flaggedQuestions : [];
+  const tabSwitches = submission.tabSwitchCount ?? 0;
 
   const handlePublish = async () => {
     if (!mentorNotes.trim()) {
@@ -91,6 +108,7 @@ export function ExamReviewClient({
           ...prev,
           status: "PUBLISHED_TO_STUDENT",
           mentorNotes: mentorNotes.trim(),
+          mentorFeedback: mentorNotes.trim(),
           publishedAt: new Date().toISOString(),
         }));
         setFeedback({ type: "success", text: res.message });
@@ -111,10 +129,12 @@ export function ExamReviewClient({
     const isCorrect = isAnswered && studentChoice === q.correctOption;
     const isIncorrect = isAnswered && studentChoice !== q.correctOption;
     const isUnanswered = !isAnswered;
+    const isFlagged = flaggedList.includes(q.id);
 
     if (filterMode === "INCORRECT") return isIncorrect;
     if (filterMode === "UNANSWERED") return isUnanswered;
     if (filterMode === "CORRECT") return isCorrect;
+    if (filterMode === "FLAGGED") return isFlagged;
     return true;
   });
 
@@ -123,10 +143,14 @@ export function ExamReviewClient({
       {/* Top Breadcrumb & Action Bar */}
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border-b border-border pb-4">
         <div className="flex items-center space-x-2 space-x-reverse">
-          <Link href="/mentor/students">
-            <Button variant="ghost" size="sm" className="h-8 text-xs flex items-center gap-1 text-muted-foreground hover:text-foreground">
+          <Link href="/exams?tab=pending">
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-8 text-xs flex items-center gap-1 text-muted-foreground hover:text-foreground"
+            >
               <ArrowLeft className="h-3.5 w-3.5" />
-              <span>بازگشت به فهرست داوطلبان</span>
+              <span>بازگشت به کارتابل آزمون‌ها</span>
             </Button>
           </Link>
           <span className="text-muted-foreground">/</span>
@@ -170,7 +194,7 @@ export function ExamReviewClient({
         </div>
       )}
 
-      {/* Candidate & Exam Summary Card */}
+      {/* Candidate & Exam Summary Card with Telemetry */}
       <Card className="border-border bg-card shadow-xs">
         <CardContent className="p-6">
           <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6">
@@ -189,13 +213,44 @@ export function ExamReviewClient({
                   آزمون: <strong className="text-foreground">{exam.title}</strong> • ارسال شده:{" "}
                   {submission.submittedAt ? formatJalaliHuman(new Date(submission.submittedAt)) : "ثبت سیستمی"}
                 </p>
+
+                {/* Candidate CBT Security & Telemetry Badges */}
+                <div className="flex flex-wrap items-center gap-2 pt-1.5">
+                  {tabSwitches > 0 ? (
+                    <Badge
+                      variant="outline"
+                      className="text-[10px] border-rose-500/30 text-rose-600 bg-rose-500/5 flex items-center gap-1"
+                    >
+                      <ShieldAlert className="h-3 w-3 text-rose-500" />
+                      <span>{toPersianDigits(tabSwitches)} بار خروج از تب / پنجره آزمون</span>
+                    </Badge>
+                  ) : (
+                    <Badge
+                      variant="outline"
+                      className="text-[10px] text-emerald-600 border-emerald-500/30 flex items-center gap-1"
+                    >
+                      <ShieldCheck className="h-3 w-3 text-emerald-500" />
+                      <span>بدون خروج از صفحه آزمون</span>
+                    </Badge>
+                  )}
+
+                  {flaggedList.length > 0 && (
+                    <Badge
+                      variant="outline"
+                      className="text-[10px] text-amber-600 border-amber-500/30 flex items-center gap-1"
+                    >
+                      <Bookmark className="h-3 w-3 text-amber-500" />
+                      <span>{toPersianDigits(flaggedList.length)} سؤال نشان‌دار شده</span>
+                    </Badge>
+                  )}
+                </div>
               </div>
             </div>
 
             {/* Scorecard Hero Metrics */}
             <div className="grid grid-cols-4 gap-3 text-center">
               <div className="p-3 bg-muted/30 rounded-xl border border-border">
-                <span className="text-[10px] text-muted-foreground block">درصد کل نهایی</span>
+                <span className="text-[10px] text-muted-foreground block">تراز نهایی (نمره منفی ۱/۳)</span>
                 <strong
                   className={`text-lg font-bold font-mono block mt-0.5 ${
                     totalPercentageNum >= 60
@@ -217,13 +272,13 @@ export function ExamReviewClient({
               <div className="p-3 bg-rose-500/10 rounded-xl border border-rose-500/30">
                 <span className="text-[10px] text-rose-700 dark:text-rose-400 block font-semibold">غلط (-۱/۳)</span>
                 <strong className="text-lg font-bold font-mono text-rose-600 block mt-0.5">
-                  {toPersianDigits(submission.incorrectCount)}
+                  {toPersianDigits(submission.wrongCount ?? submission.incorrectCount)}
                 </strong>
               </div>
               <div className="p-3 bg-muted/30 rounded-xl border border-border">
                 <span className="text-[10px] text-muted-foreground block">بی‌پاسخ</span>
                 <strong className="text-lg font-bold font-mono text-muted-foreground block mt-0.5">
-                  {toPersianDigits(submission.unansweredCount)}
+                  {toPersianDigits(submission.blankCount ?? submission.unansweredCount)}
                 </strong>
               </div>
             </div>
@@ -237,7 +292,7 @@ export function ExamReviewClient({
           <CardTitle className="text-xs font-bold text-foreground flex items-center justify-between">
             <span className="flex items-center gap-1.5">
               <Scale className="h-4 w-4 text-amber-500" />
-              <span>تفکیک عملکرد در دروس تخصصی حقوقی (فرمول نمره منفی ۱/۳)</span>
+              <span>تفکیک عملکرد در دروس تخصصی حقوقی (فرمول نمره منفی ۱/۳ کانون وکلا)</span>
             </span>
             <span className="text-[11px] text-muted-foreground font-normal">
               میانگین وزنی دروس
@@ -340,6 +395,19 @@ export function ExamReviewClient({
               >
                 + تقویت سرعت تست
               </button>
+              <button
+                type="button"
+                onClick={() =>
+                  setMentorNotes(
+                    (prev) =>
+                      prev +
+                      " مرور جامع نص مواد قانون تجارت و آرای وحدت رویه مرتبط در اولویت قرار گیرد."
+                  )
+                }
+                className="px-2 py-0.5 rounded-md bg-muted hover:bg-muted/80 text-[10px]"
+              >
+                + نص مواد و آرای وحدت رویه
+              </button>
             </div>
 
             {/* Button: تأیید نهایی و انتشار کارنامه برای داوطلب */}
@@ -386,7 +454,7 @@ export function ExamReviewClient({
                   : "bg-rose-500/10 text-rose-600"
               }`}
             >
-              پاسخ‌های اشتباه ({toPersianDigits(submission.incorrectCount)})
+              پاسخ‌های اشتباه ({toPersianDigits(submission.wrongCount ?? submission.incorrectCount)})
             </button>
             <button
               type="button"
@@ -397,7 +465,7 @@ export function ExamReviewClient({
                   : "bg-amber-500/10 text-amber-600"
               }`}
             >
-              بدون پاسخ ({toPersianDigits(submission.unansweredCount)})
+              بدون پاسخ ({toPersianDigits(submission.blankCount ?? submission.unansweredCount)})
             </button>
             <button
               type="button"
@@ -410,6 +478,19 @@ export function ExamReviewClient({
             >
               پاسخ‌های صحیح ({toPersianDigits(submission.correctCount)})
             </button>
+            {flaggedList.length > 0 && (
+              <button
+                type="button"
+                onClick={() => setFilterMode("FLAGGED")}
+                className={`px-2.5 py-1 rounded-lg font-medium transition-all ${
+                  filterMode === "FLAGGED"
+                    ? "bg-amber-600 text-white"
+                    : "bg-amber-500/10 text-amber-600"
+                }`}
+              >
+                نشان‌دارها ({toPersianDigits(flaggedList.length)})
+              </button>
+            )}
           </div>
         </div>
 
@@ -424,6 +505,7 @@ export function ExamReviewClient({
               const isAnswered = studentChoice !== undefined && studentChoice !== null && studentChoice !== 0;
               const isCorrect = isAnswered && studentChoice === q.correctOption;
               const isIncorrect = isAnswered && studentChoice !== q.correctOption;
+              const isFlagged = flaggedList.includes(q.id);
 
               return (
                 <Card
@@ -445,6 +527,12 @@ export function ExamReviewClient({
                         <Badge variant="outline" className="border-border text-xs bg-muted/30">
                           {q.subject}
                         </Badge>
+                        {isFlagged && (
+                          <Badge variant="outline" className="border-amber-500/40 text-amber-600 bg-amber-500/10 text-[10px] flex items-center gap-1">
+                            <Bookmark className="w-3 h-3 text-amber-500" />
+                            <span>نشان‌دار شده توسط داوطلب</span>
+                          </Badge>
+                        )}
                       </div>
 
                       <div>
@@ -517,14 +605,13 @@ export function ExamReviewClient({
                       })}
                     </div>
 
-                    {/* Legal Rationale / Statute Explanation */}
+                    {/* Legal Explanation */}
                     {q.explanation && (
                       <div className="p-3 bg-muted/30 border border-border rounded-xl text-xs space-y-1">
-                        <span className="text-[10px] font-bold text-indigo-500 flex items-center gap-1">
-                          <FileText className="h-3 w-3" />
-                          تحلیل مستند و ماده قانونی پاسخ صحیح:
+                        <span className="text-[10px] font-bold text-[#004071] block">
+                          مستند و ماده قانونی:
                         </span>
-                        <p className="text-[11px] text-muted-foreground leading-relaxed whitespace-pre-line">
+                        <p className="text-muted-foreground leading-relaxed text-[11px] whitespace-pre-line">
                           {q.explanation}
                         </p>
                       </div>

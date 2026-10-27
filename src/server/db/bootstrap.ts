@@ -399,13 +399,18 @@ export async function runDatabaseBootstrap(client: postgres.Sql): Promise<void> 
       title text NOT NULL,
       course_code text,
       category varchar(50) NOT NULL,
+      exam_type varchar(30) DEFAULT 'MOCK_BAR' NOT NULL,
+      passing_score integer DEFAULT 50 NOT NULL,
       duration_minutes integer DEFAULT 120 NOT NULL,
       total_questions integer DEFAULT 0 NOT NULL,
       has_negative_marking boolean DEFAULT true NOT NULL,
       is_published boolean DEFAULT false NOT NULL,
       target_audience varchar(30) DEFAULT 'ALL' NOT NULL,
+      target_type varchar(30) DEFAULT 'ALL' NOT NULL,
       target_course_codes jsonb DEFAULT '[]'::jsonb NOT NULL,
+      target_courses jsonb DEFAULT '[]'::jsonb NOT NULL,
       target_student_ids jsonb DEFAULT '[]'::jsonb NOT NULL,
+      target_mentor_id text REFERENCES users(id),
       start_date timestamp,
       expiry_date timestamp,
       created_by_id text REFERENCES users(id) NOT NULL,
@@ -433,16 +438,25 @@ export async function runDatabaseBootstrap(client: postgres.Sql): Promise<void> 
       student_id text NOT NULL,
       student_name text DEFAULT 'داوطلب مشاهیر دانش',
       mentor_id text,
+      reviewed_by_id text,
       started_at timestamp DEFAULT now() NOT NULL,
       submitted_at timestamp,
       answers jsonb DEFAULT '{}'::jsonb NOT NULL,
+      flagged_questions jsonb DEFAULT '[]'::jsonb NOT NULL,
+      eliminated_options jsonb DEFAULT '{}'::jsonb NOT NULL,
+      tab_switch_count integer DEFAULT 0 NOT NULL,
       correct_count integer DEFAULT 0 NOT NULL,
       incorrect_count integer DEFAULT 0 NOT NULL,
+      wrong_count integer DEFAULT 0 NOT NULL,
       unanswered_count integer DEFAULT 0 NOT NULL,
+      blank_count integer DEFAULT 0 NOT NULL,
       total_percentage numeric(5, 2) DEFAULT 0.00 NOT NULL,
+      raw_score numeric(5, 2) DEFAULT 0.00 NOT NULL,
+      net_score numeric(5, 2) DEFAULT 0.00 NOT NULL,
       subject_breakdown jsonb DEFAULT '[]'::jsonb NOT NULL,
       status varchar(40) DEFAULT 'AUTO_GRADED_PENDING_MENTOR' NOT NULL,
       mentor_notes text,
+      mentor_feedback text,
       reviewed_at timestamp,
       published_at timestamp,
       student_profile_id text,
@@ -733,10 +747,15 @@ export async function runDatabaseBootstrap(client: postgres.Sql): Promise<void> 
     ALTER TABLE daily_checkins ADD COLUMN IF NOT EXISTS planned_hours integer DEFAULT 6;
     ALTER TABLE daily_checkins ADD COLUMN IF NOT EXISTS actual_hours integer DEFAULT 0;
 
-    -- Exams target audience migrations
+    -- Exams target audience & CBT migrations
     ALTER TABLE exams ADD COLUMN IF NOT EXISTS target_audience VARCHAR(30) DEFAULT 'ALL' NOT NULL;
+    ALTER TABLE exams ADD COLUMN IF NOT EXISTS target_type VARCHAR(30) DEFAULT 'ALL' NOT NULL;
+    ALTER TABLE exams ADD COLUMN IF NOT EXISTS exam_type VARCHAR(30) DEFAULT 'MOCK_BAR' NOT NULL;
+    ALTER TABLE exams ADD COLUMN IF NOT EXISTS passing_score INTEGER DEFAULT 50 NOT NULL;
     ALTER TABLE exams ADD COLUMN IF NOT EXISTS target_course_codes JSONB DEFAULT '[]' NOT NULL;
+    ALTER TABLE exams ADD COLUMN IF NOT EXISTS target_courses JSONB DEFAULT '[]' NOT NULL;
     ALTER TABLE exams ADD COLUMN IF NOT EXISTS target_student_ids JSONB DEFAULT '[]' NOT NULL;
+    ALTER TABLE exams ADD COLUMN IF NOT EXISTS target_mentor_id TEXT;
     ALTER TABLE exams ADD COLUMN IF NOT EXISTS start_date timestamp;
     ALTER TABLE exams ADD COLUMN IF NOT EXISTS expiry_date timestamp;
 
@@ -748,12 +767,21 @@ export async function runDatabaseBootstrap(client: postgres.Sql): Promise<void> 
     EXCEPTION WHEN OTHERS THEN NULL; END $$;
     ALTER TABLE exam_submissions ALTER COLUMN student_name SET DEFAULT 'داوطلب مشاهیر دانش';
     ALTER TABLE exam_submissions ADD COLUMN IF NOT EXISTS mentor_id text;
+    ALTER TABLE exam_submissions ADD COLUMN IF NOT EXISTS reviewed_by_id text;
     ALTER TABLE exam_submissions ADD COLUMN IF NOT EXISTS started_at timestamp DEFAULT now();
+    ALTER TABLE exam_submissions ADD COLUMN IF NOT EXISTS flagged_questions jsonb DEFAULT '[]'::jsonb NOT NULL;
+    ALTER TABLE exam_submissions ADD COLUMN IF NOT EXISTS eliminated_options jsonb DEFAULT '{}'::jsonb NOT NULL;
+    ALTER TABLE exam_submissions ADD COLUMN IF NOT EXISTS tab_switch_count integer DEFAULT 0 NOT NULL;
     ALTER TABLE exam_submissions ADD COLUMN IF NOT EXISTS incorrect_count integer DEFAULT 0;
+    ALTER TABLE exam_submissions ADD COLUMN IF NOT EXISTS wrong_count integer DEFAULT 0 NOT NULL;
+    ALTER TABLE exam_submissions ADD COLUMN IF NOT EXISTS blank_count integer DEFAULT 0 NOT NULL;
     ALTER TABLE exam_submissions ADD COLUMN IF NOT EXISTS total_percentage numeric(5, 2) DEFAULT 0.00;
+    ALTER TABLE exam_submissions ADD COLUMN IF NOT EXISTS raw_score numeric(5, 2) DEFAULT 0.00 NOT NULL;
+    ALTER TABLE exam_submissions ADD COLUMN IF NOT EXISTS net_score numeric(5, 2) DEFAULT 0.00 NOT NULL;
     ALTER TABLE exam_submissions ADD COLUMN IF NOT EXISTS subject_breakdown jsonb DEFAULT '[]'::jsonb;
     ALTER TABLE exam_submissions ADD COLUMN IF NOT EXISTS status varchar(40) DEFAULT 'AUTO_GRADED_PENDING_MENTOR';
     ALTER TABLE exam_submissions ADD COLUMN IF NOT EXISTS mentor_notes text;
+    ALTER TABLE exam_submissions ADD COLUMN IF NOT EXISTS mentor_feedback text;
     ALTER TABLE exam_submissions ADD COLUMN IF NOT EXISTS reviewed_at timestamp;
     ALTER TABLE exam_submissions ADD COLUMN IF NOT EXISTS published_at timestamp;
     ALTER TABLE exam_submissions ADD COLUMN IF NOT EXISTS student_profile_id text;

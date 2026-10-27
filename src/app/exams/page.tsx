@@ -1,80 +1,72 @@
-import { requireAuth } from "@/server/auth/guard";
+import { getSession } from "@/server/auth/guard";
+import { redirect } from "next/navigation";
 import { db } from "@/server/db";
-import { evaluationExams, examSubmissions, studentProfiles, users } from "@/server/db/schema";
-import { eq, desc } from "drizzle-orm";
+import { exams } from "@/server/db/schema";
+import { desc } from "drizzle-orm";
 import { ExamsClient } from "./exams-client";
-import type { EvaluationExamRecord, ExamSubmissionRecord } from "@/types/models";
+import {
+  getExamTargetOptionsAction,
+  getPendingMentorReviewsAction,
+  getConfirmedExamSubmissionsAction,
+} from "@/server/actions/exams";
+import type { ExamRecord } from "@/types/models";
 
-export default async function ExamsPage() {
-  const session = await requireAuth();
+interface PageProps {
+  searchParams: Promise<{ tab?: string }>;
+}
 
-  let exams: EvaluationExamRecord[] = [];
-  let submissions: ExamSubmissionRecord[] = [];
-  let studentProfileId = "";
-  let studentsList: { id: string; fullName: string; nationalId: string; phone: string }[] = [];
+export default async function ExamsPage({ searchParams }: PageProps) {
+  const session = await getSession();
 
-  try {
-    const examsRows = await db
-      .select()
-      .from(evaluationExams)
-      .orderBy(desc(evaluationExams.createdAt));
-    exams = examsRows as unknown as EvaluationExamRecord[];
-
-    if (session.role === "STUDENT") {
-      const [profile] = await db
-        .select()
-        .from(studentProfiles)
-        .where(eq(studentProfiles.userId, session.userId))
-        .limit(1);
-
-      if (profile) {
-        studentProfileId = profile.id;
-        const subRows = await db
-          .select()
-          .from(examSubmissions)
-          .where(eq(examSubmissions.studentProfileId, profile.id))
-          .orderBy(desc(examSubmissions.submittedAt));
-        submissions = subRows as unknown as ExamSubmissionRecord[];
-      }
-    } else {
-      // Mentor, Supervisor, or CEO: view all submissions
-      const subRows = await db
-        .select()
-        .from(examSubmissions)
-        .orderBy(desc(examSubmissions.submittedAt));
-      submissions = subRows as unknown as ExamSubmissionRecord[];
-    }
-
-    // Get available candidates for audience targeting
-    const allProfiles = await db.select().from(studentProfiles);
-    const allUsers = await db.select().from(users);
-    const userMap = new Map(allUsers.map((u) => [u.id, u]));
-
-    studentsList = allProfiles.map((st) => {
-      const user = userMap.get(st.userId);
-      return {
-        id: st.id,
-        fullName: user?.fullName || "داوطلب",
-        nationalId: user?.nationalId || "",
-        phone: user?.phoneNumber || "",
-      };
-    });
-  } catch (err) {
-    console.error("[ExamsPage] Data fetch error:", err);
+  if (!session) {
+    redirect("/auth/login");
   }
 
+  // If candidate student visits /exams, redirect to their dedicated CBT runner lobby
+  if (session.role === "STUDENT") {
+    redirect("/student/exams");
+  }
+
+  const { tab } = await searchParams;
+
+  // 1. Fetch authored exams
+  let authoredExams: ExamRecord[] = [];
+  try {
+    const rows = await db.select().from(exams).orderBy(desc(exams.createdAt));
+    if (session.role === "MENTOR") {
+      authoredExams = rows.filter(
+        (r) => r.createdById === session.userId || r.targetMentorId === session.userId
+      ) as unknown as ExamRecord[];
+    } else {
+      authoredExams = rows as unknown as ExamRecord[];
+    }
+  } catch (err) {
+    console.error("[ExamsPage] Exams query error:", err);
+  }
+
+  // 2. Fetch submissions pending mentor review (AUTO_GRADED_PENDING_MENTOR)
+  const pendingSubmissions = await getPendingMentorReviewsAction();
+
+  // 3. Fetch confirmed & published submissions (PUBLISHED_TO_STUDENT)
+  const confirmedSubmissions = await getConfirmedExamSubmissionsAction();
+
+  // 4. Fetch target courses and candidate students for authoring modal
+  const targetOptions = await getExamTargetOptionsAction();
+
   return (
-    <div className="container mx-auto px-4 py-8 max-w-6xl" dir="rtl">
+    <div className="container mx-auto px-4 py-8 max-w-6xl space-y-6" dir="rtl">
       <ExamsClient
         currentUser={{
           id: session.userId,
           fullName: session.fullName,
           role: session.role,
         }}
-        studentProfileId={studentProfileId}
-        exams={exams}
-        submissions={submissions}
-        studentsList={studentsList}
+        initialExams={authoredExams}
+        pendingSubmissions={pendingSubmissions}
+        confirmedSubmissions={confirmedSubmissions}
+        targetCourses={targetOptions.courses}
+        targetStudents={targetOptions.students}
+        initialTab={tab}
       />
     </div>
   );

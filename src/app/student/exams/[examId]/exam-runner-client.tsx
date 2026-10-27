@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useRef, useTransition } from "react";
+import React, { useState, useEffect, useRef, useTransition, useCallback } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
@@ -19,6 +19,15 @@ import {
   RotateCcw,
   Sparkles,
   ShieldAlert,
+  Bookmark,
+  BookmarkCheck,
+  Strikethrough,
+  Filter,
+  Eye,
+  Check,
+  AlertCircle,
+  Play,
+  FileText,
 } from "lucide-react";
 import { toPersianDigits } from "@/lib/jalali";
 import { submitExamAction, reportSuspiciousExamActivityAction } from "@/server/actions/exams";
@@ -32,11 +41,43 @@ interface ExamRunnerClientProps {
   initialRemainingSeconds?: number;
 }
 
-export function ExamRunnerClient({ exam, questions, userId, initialStartedAt, initialRemainingSeconds }: ExamRunnerClientProps) {
+export function ExamRunnerClient({
+  exam,
+  questions,
+  userId,
+  initialStartedAt,
+  initialRemainingSeconds,
+}: ExamRunnerClientProps) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
 
   const storageKey = `exam_state_${exam.id}_${userId}`;
+
+  // Lobby state: show lobby if no saved answers and full time remaining
+  const totalSeconds = (exam.durationMinutes || 120) * 60;
+  const initialRemaining =
+    initialRemainingSeconds !== undefined
+      ? initialRemainingSeconds
+      : initialStartedAt
+      ? Math.max(0, totalSeconds - Math.floor((Date.now() - new Date(initialStartedAt).getTime()) / 1000))
+      : totalSeconds;
+
+  const [hasStarted, setHasStarted] = useState<boolean>(() => {
+    // If exam was started in a previous session or page reload with time elapsed, skip lobby
+    if (initialRemaining < totalSeconds - 5) return true;
+    try {
+      if (typeof window !== "undefined") {
+        const saved = localStorage.getItem(storageKey);
+        if (saved) {
+          const parsed = JSON.parse(saved);
+          if (parsed && (parsed.hasStarted || Object.keys(parsed.answers || {}).length > 0)) {
+            return true;
+          }
+        }
+      }
+    } catch {}
+    return false;
+  });
 
   // Active question index (0 to questions.length - 1)
   const [currentIndex, setCurrentIndex] = useState(0);
@@ -44,16 +85,23 @@ export function ExamRunnerClient({ exam, questions, userId, initialStartedAt, in
   // Answers Map: { [questionId]: optionId (1 to 4) }
   const [answers, setAnswers] = useState<Record<string, number>>({});
 
-  // StartedAt timestamp (derived from server timestamp or fallback)
-  const [startedAt] = useState<string>(() => initialStartedAt || new Date().toISOString());
+  // Flagged / Bookmarked Questions: questionId[]
+  const [flaggedQuestions, setFlaggedQuestions] = useState<string[]>([]);
 
-  // Countdown timer state in seconds (enforced via server start time)
-  const totalSeconds = (exam.durationMinutes || 120) * 60;
-  const initialRemaining = initialRemainingSeconds !== undefined
-    ? initialRemainingSeconds
-    : (initialStartedAt
-      ? Math.max(0, totalSeconds - Math.floor((Date.now() - new Date(initialStartedAt).getTime()) / 1000))
-      : totalSeconds);
+  // Eliminated / Struck-through Options: { [questionId]: optionId[] }
+  const [eliminatedOptions, setEliminatedOptions] = useState<Record<string, number[]>>({});
+
+  // Tab-switch / blur counter
+  const [tabSwitchCount, setTabSwitchCount] = useState<number>(0);
+  const [showTabSwitchModal, setShowTabSwitchModal] = useState<boolean>(false);
+
+  // Palette Filter Tab: ALL, ANSWERED, FLAGGED, UNANSWERED
+  const [paletteFilter, setPaletteFilter] = useState<"ALL" | "ANSWERED" | "FLAGGED" | "UNANSWERED">("ALL");
+
+  // StartedAt timestamp (derived from server timestamp or fallback)
+  const [startedAt, setStartedAt] = useState<string>(() => initialStartedAt || new Date().toISOString());
+
+  // Countdown timer state in seconds
   const [remainingSeconds, setRemainingSeconds] = useState(initialRemaining);
   const [isTimeUp, setIsTimeUp] = useState(() => initialRemaining <= 0);
 
@@ -66,7 +114,7 @@ export function ExamRunnerClient({ exam, questions, userId, initialStartedAt, in
     message?: string;
   } | null>(null);
 
-  // Restore saved answers from localStorage (Requirement 3)
+  // Restore saved state from localStorage
   useEffect(() => {
     try {
       const saved = localStorage.getItem(storageKey);
@@ -75,13 +123,25 @@ export function ExamRunnerClient({ exam, questions, userId, initialStartedAt, in
         if (parsed.answers && typeof parsed.answers === "object") {
           setAnswers((prev) => ({ ...parsed.answers, ...prev }));
         }
+        if (Array.isArray(parsed.flaggedQuestions)) {
+          setFlaggedQuestions(parsed.flaggedQuestions);
+        }
+        if (parsed.eliminatedOptions && typeof parsed.eliminatedOptions === "object") {
+          setEliminatedOptions(parsed.eliminatedOptions);
+        }
+        if (typeof parsed.tabSwitchCount === "number") {
+          setTabSwitchCount(parsed.tabSwitchCount);
+        }
+        if (parsed.hasStarted) {
+          setHasStarted(true);
+        }
       }
     } catch (e) {
       console.warn("[ExamRunnerClient] Failed to restore answers from localStorage:", e);
     }
   }, [storageKey]);
 
-  // Persist answers and state to localStorage (Requirement 3)
+  // Persist state to localStorage on changes
   useEffect(() => {
     if (submissionComplete) {
       try {
@@ -89,30 +149,67 @@ export function ExamRunnerClient({ exam, questions, userId, initialStartedAt, in
       } catch {}
       return;
     }
+    if (!hasStarted) return;
+
     try {
       localStorage.setItem(
         storageKey,
         JSON.stringify({
           answers,
+          flaggedQuestions,
+          eliminatedOptions,
+          tabSwitchCount,
           startedAt,
           remainingSeconds,
+          hasStarted: true,
           updatedAt: Date.now(),
         })
       );
     } catch {}
-  }, [answers, remainingSeconds, startedAt, storageKey, submissionComplete]);
+  }, [
+    answers,
+    flaggedQuestions,
+    eliminatedOptions,
+    tabSwitchCount,
+    remainingSeconds,
+    startedAt,
+    storageKey,
+    submissionComplete,
+    hasStarted,
+  ]);
+
+  // Tab Switch & Visibility Change Anti-Cheat Tracking
+  useEffect(() => {
+    if (!hasStarted || submissionComplete || isTimeUp) return;
+
+    const handleVisibilityChange = () => {
+      if (document.hidden) {
+        setTabSwitchCount((prev) => {
+          const next = prev + 1;
+          void reportSuspiciousExamActivityAction(exam.id, `TAB_SWITCH_COUNT_${next}`);
+          return next;
+        });
+      } else {
+        setShowTabSwitchModal(true);
+      }
+    };
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, [hasStarted, submissionComplete, isTimeUp, exam.id]);
 
   // Layer 4 DRM: Anti-Scraping Tripwire States
   const [isTimerPaused, setIsTimerPaused] = useState(false);
   const [showTripwireModal, setShowTripwireModal] = useState(false);
   const navigationTimestampsRef = useRef<number[]>([]);
   const tripwireTriggeredRef = useRef(false);
-
   const autoSubmittedRef = useRef(false);
 
-  // Timer Countdown Effect (pauses when anti-scraping tripwire fires)
+  // Timer Countdown Effect
   useEffect(() => {
-    if (submissionComplete || isTimeUp || isTimerPaused) return;
+    if (!hasStarted || submissionComplete || isTimeUp || isTimerPaused) return;
 
     const timer = setInterval(() => {
       setRemainingSeconds((prev) => {
@@ -126,22 +223,27 @@ export function ExamRunnerClient({ exam, questions, userId, initialStartedAt, in
     }, 1000);
 
     return () => clearInterval(timer);
-  }, [submissionComplete, isTimeUp, isTimerPaused]);
+  }, [hasStarted, submissionComplete, isTimeUp, isTimerPaused]);
 
   // Auto-submit when countdown hits zero
   useEffect(() => {
-    if (isTimeUp && !autoSubmittedRef.current && !submissionComplete) {
+    if (isTimeUp && !autoSubmittedRef.current && !submissionComplete && hasStarted) {
       autoSubmittedRef.current = true;
       executeSubmit();
     }
-  }, [isTimeUp, submissionComplete]);
+  }, [isTimeUp, submissionComplete, hasStarted]);
 
-  // Layer 4 DRM: Monitored Question Navigation
+  // Start exam from lobby
+  const handleStartExam = () => {
+    setHasStarted(true);
+    setStartedAt(new Date().toISOString());
+  };
+
+  // Monitored Question Navigation
   const handleNavigateQuestion = (targetIndex: number) => {
     if (targetIndex === currentIndex) return;
 
     const now = Date.now();
-    // Keep navigation timestamps occurring within the last 25 seconds
     navigationTimestampsRef.current = navigationTimestampsRef.current.filter(
       (ts) => now - ts <= 25000
     );
@@ -166,12 +268,52 @@ export function ExamRunnerClient({ exam, questions, userId, initialStartedAt, in
     setCurrentIndex(targetIndex);
   };
 
-  // Select Option handler (immediate state update)
+  // Select Option handler
   const handleSelectOption = (questionId: string, optionId: number) => {
+    // If option was struck-through, un-strike it upon selection
+    const currentElim = eliminatedOptions[questionId] || [];
+    if (currentElim.includes(optionId)) {
+      setEliminatedOptions((prev) => ({
+        ...prev,
+        [questionId]: prev[questionId].filter((id) => id !== optionId),
+      }));
+    }
+
     setAnswers((prev) => ({
       ...prev,
       [questionId]: optionId,
     }));
+  };
+
+  // Toggle Strike-through Option
+  const handleToggleStrikeOption = (e: React.MouseEvent, questionId: string, optionId: number) => {
+    e.stopPropagation();
+    setEliminatedOptions((prev) => {
+      const current = prev[questionId] || [];
+      const isElim = current.includes(optionId);
+      const next = isElim ? current.filter((id) => id !== optionId) : [...current, optionId];
+
+      // If eliminated option was currently selected, unselect it
+      if (!isElim && answers[questionId] === optionId) {
+        setAnswers((ansPrev) => {
+          const ansCopy = { ...ansPrev };
+          delete ansCopy[questionId];
+          return ansCopy;
+        });
+      }
+
+      return {
+        ...prev,
+        [questionId]: next,
+      };
+    });
+  };
+
+  // Toggle Bookmark / Flag
+  const handleToggleFlag = (questionId: string) => {
+    setFlaggedQuestions((prev) =>
+      prev.includes(questionId) ? prev.filter((id) => id !== questionId) : [...prev, questionId]
+    );
   };
 
   // Clear answer for current question
@@ -192,6 +334,9 @@ export function ExamRunnerClient({ exam, questions, userId, initialStartedAt, in
       const res = await submitExamAction({
         examId: exam.id,
         answers,
+        flaggedQuestions,
+        eliminatedOptions,
+        tabSwitchCount,
         startedAt,
       });
 
@@ -217,6 +362,7 @@ export function ExamRunnerClient({ exam, questions, userId, initialStartedAt, in
   const currentQ = questions[currentIndex];
   const answeredCount = Object.keys(answers).length;
   const unansweredCount = questions.length - answeredCount;
+  const flaggedCount = flaggedQuestions.length;
 
   // Format time remaining MM:SS
   const formatTime = (secs: number) => {
@@ -227,17 +373,115 @@ export function ExamRunnerClient({ exam, questions, userId, initialStartedAt, in
     )}`;
   };
 
-  // Timer urgency style
   const timerPercent = (remainingSeconds / totalSeconds) * 100;
   const isUrgent = remainingSeconds < 300; // less than 5 minutes
 
   // ============================================================================
-  // RENDER COMPLETION NOTICE CARD
+  // 1. PRE-EXAM READINESS LOBBY
+  // ============================================================================
+  if (!hasStarted) {
+    return (
+      <div className="min-h-[70vh] flex items-center justify-center p-4">
+        <Card className="max-w-2xl w-full border-border bg-card shadow-2xl p-8 space-y-6 rounded-3xl">
+          <div className="flex items-center gap-3 border-b border-border pb-5">
+            <div className="w-12 h-12 rounded-2xl bg-[#004071] text-white flex items-center justify-center font-bold text-xl shadow-md shrink-0">
+              <Scale className="w-6 h-6 text-amber-300" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <Badge variant="outline" className="text-[10px] font-mono">
+                  {exam.courseCode || "BAR-360"}
+                </Badge>
+                <Badge className="bg-emerald-500/10 text-emerald-600 border border-emerald-500/30 text-[10px]">
+                  سامانه سنجش و آزمون هوشمند
+                </Badge>
+              </div>
+              <h1 className="text-lg font-bold text-foreground mt-1">{exam.title}</h1>
+            </div>
+          </div>
+
+          {/* Exam Specs Grid */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-center text-xs">
+            <div className="p-3 bg-muted/20 border border-border rounded-xl">
+              <span className="text-[10px] text-muted-foreground block">تعداد سؤالات</span>
+              <strong className="text-sm font-bold font-mono text-foreground mt-0.5 block">
+                {toPersianDigits(questions.length)} سؤال
+              </strong>
+            </div>
+
+            <div className="p-3 bg-muted/20 border border-border rounded-xl">
+              <span className="text-[10px] text-muted-foreground block">مدت زمان آزمون</span>
+              <strong className="text-sm font-bold font-mono text-foreground mt-0.5 block">
+                {toPersianDigits(exam.durationMinutes)} دقیقه
+              </strong>
+            </div>
+
+            <div className="p-3 bg-muted/20 border border-border rounded-xl">
+              <span className="text-[10px] text-muted-foreground block">قانون نمره منفی</span>
+              <strong className="text-sm font-bold text-foreground mt-0.5 block">
+                {exam.hasNegativeMarking ? "یک‌سوم (۱/۳)" : "ندارد"}
+              </strong>
+            </div>
+
+            <div className="p-3 bg-muted/20 border border-border rounded-xl">
+              <span className="text-[10px] text-muted-foreground block">حد نصاب قبولی</span>
+              <strong className="text-sm font-bold font-mono text-foreground mt-0.5 block">
+                {toPersianDigits(exam.passingScore || 50)}٪
+              </strong>
+            </div>
+          </div>
+
+          {/* Official Rules & Instructions */}
+          <div className="p-4 bg-amber-500/10 border border-amber-500/30 rounded-2xl space-y-2 text-xs leading-relaxed text-foreground">
+            <h4 className="font-bold text-amber-700 dark:text-amber-300 flex items-center gap-1.5">
+              <AlertCircle className="w-4 h-4 text-amber-500" />
+              <span>دستورالعمل و ضوابط برگزاری آزمون CBT:</span>
+            </h4>
+            <ul className="list-disc list-inside space-y-1 text-muted-foreground text-[11px]">
+              <li>
+                <strong>محاسبه نمره منفی:</strong> هر ۳ پاسخ نادرست یک پاسخ صحیح شما را خنثی می‌کند. برای سؤالات بی‌پاسخ نمره منفی محاسبه نمی‌شود.
+              </li>
+              <li>
+                <strong>ابزارهای پیشرفته:</strong> می‌توانید سؤالات را نشان‌دار کنید و با کلیک روی آیکون خط‌زدن، گزینه‌های انحرافی را حذف نمایید.
+              </li>
+              <li>
+                <strong>پایش تقلب و خروج از تب:</strong> هرگونه خروج از صفحه آزمون به صورت هوشمند ثبت شده و به عنوان تخلف به پشتیبان شما گزارش می‌شود.
+              </li>
+              <li>
+                <strong>ذخیره خودکار:</strong> در صورت قطع اینترنت یا رفرش مرورگر، پاسخ‌های شما در حافظه ذخیره مانده و زمان آزمون به صورت ضد رفرش از سرور خوانده می‌شود.
+              </li>
+            </ul>
+          </div>
+
+          {/* Action Button: Start Official Exam */}
+          <div className="flex items-center justify-between pt-2">
+            <Link href="/student/exams">
+              <Button variant="outline" size="sm" className="text-xs text-muted-foreground">
+                انصراف و بازگشت
+              </Button>
+            </Link>
+
+            <Button
+              onClick={handleStartExam}
+              size="lg"
+              className="bg-[#004071] hover:bg-[#00335c] text-white text-xs font-bold px-6 py-2.5 rounded-xl shadow-md flex items-center gap-2"
+            >
+              <Play className="w-4 h-4" />
+              <span>شروع رسمی آزمون و فعال‌سازی زمان‌سنج</span>
+            </Button>
+          </div>
+        </Card>
+      </div>
+    );
+  }
+
+  // ============================================================================
+  // 2. COMPLETION NOTICE CARD (POST-SUBMIT)
   // ============================================================================
   if (submissionComplete) {
     return (
       <div className="min-h-[65vh] flex items-center justify-center p-4">
-        <Card className="max-w-xl w-full border-amber-500/30 bg-amber-500/5 shadow-2xl p-8 space-y-6 text-center rounded-2xl">
+        <Card className="max-w-xl w-full border-amber-500/30 bg-amber-500/5 shadow-2xl p-8 space-y-6 text-center rounded-3xl">
           <div className="w-16 h-16 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-500 flex items-center justify-center mx-auto shadow-sm">
             <CheckCircle2 className="w-8 h-8" />
           </div>
@@ -282,8 +526,19 @@ export function ExamRunnerClient({ exam, questions, userId, initialStartedAt, in
     );
   }
 
+  // Filtered Question list in Palette based on quick filter tabs
+  const filteredPaletteQuestions = questions.map((q, idx) => ({ q, idx })).filter(({ q, idx }) => {
+    const isAnswered = answers[q.id] !== undefined;
+    const isFlagged = flaggedQuestions.includes(q.id);
+
+    if (paletteFilter === "ANSWERED") return isAnswered;
+    if (paletteFilter === "FLAGGED") return isFlagged;
+    if (paletteFilter === "UNANSWERED") return !isAnswered;
+    return true;
+  });
+
   // ============================================================================
-  // RENDER INTERACTIVE EXAM ENGINE
+  // 3. MAIN INTERACTIVE CBT EXAM ENGINE
   // ============================================================================
   return (
     <div className="space-y-6">
@@ -363,8 +618,33 @@ export function ExamRunnerClient({ exam, questions, userId, initialStartedAt, in
                   )}
                 </div>
 
-                <div className="text-xs text-muted-foreground">
-                  سؤال {toPersianDigits(currentIndex + 1)} از {toPersianDigits(questions.length)}
+                <div className="flex items-center gap-3">
+                  {/* Bookmark Button */}
+                  <button
+                    type="button"
+                    onClick={() => handleToggleFlag(currentQ.id)}
+                    className={`flex items-center gap-1 text-xs px-2.5 py-1 rounded-lg border transition-all ${
+                      flaggedQuestions.includes(currentQ.id)
+                        ? "bg-amber-500/10 border-amber-500/30 text-amber-600 dark:text-amber-400 font-bold"
+                        : "border-border text-muted-foreground hover:text-foreground"
+                    }`}
+                  >
+                    {flaggedQuestions.includes(currentQ.id) ? (
+                      <>
+                        <BookmarkCheck className="w-3.5 h-3.5 text-amber-500" />
+                        <span>نشان‌دار شده</span>
+                      </>
+                    ) : (
+                      <>
+                        <Bookmark className="w-3.5 h-3.5" />
+                        <span>نشان‌دار کردن</span>
+                      </>
+                    )}
+                  </button>
+
+                  <div className="text-xs text-muted-foreground">
+                    سؤال {toPersianDigits(currentIndex + 1)} از {toPersianDigits(questions.length)}
+                  </div>
                 </div>
               </CardHeader>
 
@@ -378,39 +658,64 @@ export function ExamRunnerClient({ exam, questions, userId, initialStartedAt, in
 
                 {/* 4 Options Radio Group */}
                 <div className="space-y-3">
-                  <span className="text-xs font-bold text-muted-foreground block">
-                    گزینه مورد نظر خود را انتخاب کنید:
-                  </span>
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-muted-foreground">
+                      گزینه مورد نظر خود را انتخاب کنید:
+                    </span>
+                    <span className="text-[10px] text-muted-foreground">
+                      (برای حذف گزینه‌های انحرافی از دکمه خط‌زدن استفاده کنید)
+                    </span>
+                  </div>
 
                   <div className="space-y-2.5">
                     {currentQ.options.map((opt) => {
                       const isSelected = answers[currentQ.id] === opt.id;
+                      const isEliminated = (eliminatedOptions[currentQ.id] || []).includes(opt.id);
+
                       return (
                         <div
                           key={opt.id}
                           onClick={() => handleSelectOption(currentQ.id, opt.id)}
-                          className={`p-3.5 rounded-xl border transition-all cursor-pointer flex items-start gap-3 select-none ${
+                          className={`p-3.5 rounded-xl border transition-all cursor-pointer flex items-start justify-between gap-3 select-none ${
                             isSelected
                               ? "border-[#004071] bg-[#004071]/10 text-foreground font-semibold shadow-xs"
+                              : isEliminated
+                              ? "border-border/40 bg-muted/40 text-muted-foreground/60 opacity-50 line-through"
                               : "border-border bg-card hover:bg-muted/30 text-foreground"
                           }`}
                         >
-                          <div
-                            className={`w-5 h-5 rounded-full border flex items-center justify-center shrink-0 mt-0.5 transition-all ${
-                              isSelected
-                                ? "border-[#004071] bg-[#004071] text-white"
-                                : "border-muted-foreground/40 bg-background"
-                            }`}
-                          >
-                            {isSelected && <span className="w-2 h-2 rounded-full bg-white" />}
+                          <div className="flex items-start gap-3 flex-1">
+                            <div
+                              className={`w-5 h-5 rounded-full border flex items-center justify-center shrink-0 mt-0.5 transition-all ${
+                                isSelected
+                                  ? "border-[#004071] bg-[#004071] text-white"
+                                  : "border-muted-foreground/40 bg-background"
+                              }`}
+                            >
+                              {isSelected && <span className="w-2 h-2 rounded-full bg-white" />}
+                            </div>
+
+                            <div className="flex-1 text-xs leading-relaxed">
+                              <span className="font-bold ml-1 font-mono text-[11px] text-muted-foreground">
+                                {toPersianDigits(opt.id)})
+                              </span>
+                              <span>{opt.text}</span>
+                            </div>
                           </div>
 
-                          <div className="flex-1 text-xs leading-relaxed">
-                            <span className="font-bold ml-1 font-mono text-[11px] text-muted-foreground">
-                              {toPersianDigits(opt.id)})
-                            </span>
-                            <span>{opt.text}</span>
-                          </div>
+                          {/* Strike-Through Action Button */}
+                          <button
+                            type="button"
+                            onClick={(e) => handleToggleStrikeOption(e, currentQ.id, opt.id)}
+                            title={isEliminated ? "بازگرداندن گزینه" : "خط زدن گزینه انحرافی"}
+                            className={`p-1 rounded-md text-xs transition-colors shrink-0 ${
+                              isEliminated
+                                ? "text-amber-500 bg-amber-500/10 hover:bg-amber-500/20"
+                                : "text-muted-foreground/50 hover:text-rose-500 hover:bg-rose-500/10"
+                            }`}
+                          >
+                            <Strikethrough className="w-4 h-4" />
+                          </button>
                         </div>
                       );
                     })}
@@ -469,19 +774,61 @@ export function ExamRunnerClient({ exam, questions, userId, initialStartedAt, in
         {/* Right Column (1 Col): Question Palette & Summary */}
         <div className="space-y-4">
           <Card className="border-border bg-card shadow-xs">
-            <CardHeader className="pb-3 border-b border-border">
+            <CardHeader className="pb-3 border-b border-border space-y-2">
               <CardTitle className="text-xs font-bold text-foreground flex items-center justify-between">
                 <span>پالت سؤالات آزمون</span>
                 <span className="text-[11px] text-muted-foreground font-mono">
                   {toPersianDigits(answeredCount)} / {toPersianDigits(questions.length)}
                 </span>
               </CardTitle>
+
+              {/* Quick Filter Chips */}
+              <div className="grid grid-cols-4 gap-1 text-[10px] pt-1">
+                <button
+                  type="button"
+                  onClick={() => setPaletteFilter("ALL")}
+                  className={`p-1 rounded-md text-center font-bold transition-all ${
+                    paletteFilter === "ALL" ? "bg-[#004071] text-white" : "bg-muted/40 text-muted-foreground"
+                  }`}
+                >
+                  همه
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPaletteFilter("ANSWERED")}
+                  className={`p-1 rounded-md text-center font-bold transition-all ${
+                    paletteFilter === "ANSWERED" ? "bg-emerald-600 text-white" : "bg-emerald-500/10 text-emerald-600"
+                  }`}
+                >
+                  پاسخ ({toPersianDigits(answeredCount)})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPaletteFilter("FLAGGED")}
+                  className={`p-1 rounded-md text-center font-bold transition-all ${
+                    paletteFilter === "FLAGGED" ? "bg-amber-600 text-white" : "bg-amber-500/10 text-amber-600"
+                  }`}
+                >
+                  نشان ({toPersianDigits(flaggedCount)})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPaletteFilter("UNANSWERED")}
+                  className={`p-1 rounded-md text-center font-bold transition-all ${
+                    paletteFilter === "UNANSWERED" ? "bg-slate-600 text-white" : "bg-muted/40 text-muted-foreground"
+                  }`}
+                >
+                  سفید
+                </button>
+              </div>
             </CardHeader>
+
             <CardContent className="pt-4 space-y-4">
               {/* Question Grid Numbers */}
-              <div className="grid grid-cols-5 gap-2 text-center text-xs">
-                {questions.map((q, idx) => {
+              <div className="grid grid-cols-5 gap-2 text-center text-xs max-h-64 overflow-y-auto p-1">
+                {filteredPaletteQuestions.map(({ q, idx }) => {
                   const isAnswered = answers[q.id] !== undefined;
+                  const isFlagged = flaggedQuestions.includes(q.id);
                   const isActive = idx === currentIndex;
 
                   return (
@@ -489,7 +836,7 @@ export function ExamRunnerClient({ exam, questions, userId, initialStartedAt, in
                       key={q.id}
                       type="button"
                       onClick={() => handleNavigateQuestion(idx)}
-                      className={`h-8 rounded-lg font-mono text-xs font-bold transition-all flex items-center justify-center ${
+                      className={`relative h-8 rounded-lg font-mono text-xs font-bold transition-all flex items-center justify-center ${
                         isActive
                           ? "ring-2 ring-[#004071] bg-[#004071] text-white shadow-sm"
                           : isAnswered
@@ -498,13 +845,16 @@ export function ExamRunnerClient({ exam, questions, userId, initialStartedAt, in
                       }`}
                     >
                       {toPersianDigits(idx + 1)}
+                      {isFlagged && (
+                        <span className="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-amber-500 ring-2 ring-background" />
+                      )}
                     </button>
                   );
                 })}
               </div>
 
               {/* Status Legend */}
-              <div className="pt-3 border-t border-border space-y-2 text-[11px]">
+              <div className="pt-3 border-t border-border space-y-1.5 text-[11px]">
                 <div className="flex items-center justify-between text-muted-foreground">
                   <span className="flex items-center gap-1.5">
                     <span className="w-2.5 h-2.5 rounded-xs bg-[#004071]" />
@@ -521,10 +871,17 @@ export function ExamRunnerClient({ exam, questions, userId, initialStartedAt, in
                 </div>
                 <div className="flex items-center justify-between text-muted-foreground">
                   <span className="flex items-center gap-1.5">
+                    <span className="w-2 h-2 rounded-full bg-amber-500" />
+                    نشان‌دار برای بازبینی
+                  </span>
+                  <span className="font-mono text-amber-500 font-bold">{toPersianDigits(flaggedCount)}</span>
+                </div>
+                <div className="flex items-center justify-between text-muted-foreground">
+                  <span className="flex items-center gap-1.5">
                     <span className="w-2.5 h-2.5 rounded-xs bg-muted/60 border border-border" />
                     بدون پاسخ
                   </span>
-                  <span className="font-mono text-amber-500 font-bold">{toPersianDigits(unansweredCount)}</span>
+                  <span className="font-mono text-muted-foreground font-bold">{toPersianDigits(unansweredCount)}</span>
                 </div>
               </div>
 
@@ -546,7 +903,7 @@ export function ExamRunnerClient({ exam, questions, userId, initialStartedAt, in
         </div>
       </div>
 
-      {/* Confirmation Modal before Submit */}
+      {/* Pre-Submission Confirmation Modal */}
       {showConfirmModal && (
         <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
           <Card className="max-w-md w-full border-border bg-card shadow-2xl p-6 space-y-5 rounded-2xl animate-in fade-in-50">
@@ -555,8 +912,8 @@ export function ExamRunnerClient({ exam, questions, userId, initialStartedAt, in
                 <AlertTriangle className="w-5 h-5" />
               </div>
               <div>
-                <h3 className="text-sm font-bold text-foreground">تأیید پایان و ارسال آزمون</h3>
-                <p className="text-xs text-muted-foreground">پس از ارسال، امکان تغییر پاسخ‌ها وجود نخواهد داشت.</p>
+                <h3 className="text-sm font-bold text-foreground">تأیید پایان و تحویل آزمون</h3>
+                <p className="text-xs text-muted-foreground">پس از تحویل، پاسخ‌ها به پشتیبان شما ارجاع خواهد شد.</p>
               </div>
             </div>
 
@@ -573,6 +930,12 @@ export function ExamRunnerClient({ exam, questions, userId, initialStartedAt, in
                 <span className="text-muted-foreground">سؤالات بدون پاسخ:</span>
                 <span className="font-mono font-bold text-amber-500">{toPersianDigits(unansweredCount)} سؤال</span>
               </div>
+              {flaggedCount > 0 && (
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">سؤالات نشان‌دار:</span>
+                  <span className="font-mono font-bold text-amber-600">{toPersianDigits(flaggedCount)} سؤال</span>
+                </div>
+              )}
               {exam.hasNegativeMarking && unansweredCount > 0 && (
                 <p className="text-[10px] text-amber-500/90 pt-1 border-t border-border/50">
                   توجه: برای سؤالات بی‌پاسخ نمره منفی محاسبه نخواهد شد.
@@ -605,6 +968,37 @@ export function ExamRunnerClient({ exam, questions, userId, initialStartedAt, in
                     <span>تأیید نهایی و تحویل پاسخنامه</span>
                   </>
                 )}
+              </Button>
+            </div>
+          </Card>
+        </div>
+      )}
+
+      {/* Tab Switch Warning Modal */}
+      {showTabSwitchModal && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <Card className="max-w-md w-full border-rose-500/40 bg-card shadow-2xl p-6 space-y-4 rounded-2xl animate-in fade-in-50">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-full bg-rose-500/10 text-rose-500 flex items-center justify-center shrink-0">
+                <ShieldAlert className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-sm font-bold text-foreground">هشدار ممیزی آزمون</h3>
+                <p className="text-xs text-rose-500 font-semibold">خروج از صفحه آزمون ردیابی گردید</p>
+              </div>
+            </div>
+
+            <p className="text-xs text-muted-foreground leading-relaxed">
+              شما از صفحه آزمون خارج شده‌اید. تعداد دفعات خروج شما ({toPersianDigits(tabSwitchCount)} بار) در گزارش ممیزی آزمون ثبت و برای پشتیبان و سرپرست آموزشی ارسال می‌گردد. لطفاً تا پایان آزمون در همین صفحه باقی بمانید.
+            </p>
+
+            <div className="flex justify-end pt-2">
+              <Button
+                size="sm"
+                onClick={() => setShowTabSwitchModal(false)}
+                className="text-xs bg-[#004071] hover:bg-[#00335c] text-white"
+              >
+                متوجه شدم، بازگشت به آزمون
               </Button>
             </div>
           </Card>

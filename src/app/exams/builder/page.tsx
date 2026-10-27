@@ -14,23 +14,13 @@ export default async function ExamBuilderPage() {
     redirect("/auth/login");
   }
 
-  // Route Guard: CEO, SUPERVISOR, ADMIN or MENTOR with canCreateExams
-  const isPrivileged = session.role === "CEO" || session.role === "SUPERVISOR" || session.role === "ADMIN";
-  let canCreate = isPrivileged;
-
-  if (session.role === "MENTOR") {
-    try {
-      const [mentorUser] = await db
-        .select({ canCreateExams: users.canCreateExams })
-        .from(users)
-        .where(eq(users.id, session.userId))
-        .limit(1);
-      canCreate = Boolean(mentorUser?.canCreateExams);
-    } catch (err) {
-      console.error("[ExamBuilderPage] mentor permission check error:", err);
-      canCreate = false;
-    }
-  }
+  // Route Guard: CEO, SUPERVISOR, ADMIN or MENTOR (with cohort scoping)
+  const isPrivileged =
+    session.role === "CEO" ||
+    session.role === "SUPERVISOR" ||
+    session.role === "ADMIN" ||
+    session.role === "MENTOR";
+  const canCreate = isPrivileged;
 
   if (!canCreate) {
     return (
@@ -44,7 +34,7 @@ export default async function ExamBuilderPage() {
             شما مجوز لازم برای طراحی و بارگذاری آزمون را در سامانه ندارید.
           </p>
           <p className="text-[11px] text-muted-foreground/80">
-            طراحی آزمون نیاز به مجوز اختصاصی مدیریت ارشد یا دسترسی فعال طراحی در پنل پشتیبانی دارد.
+            طراحی آزمون نیاز به نقش پشتیبان، سرپرست یا مدیریت ارشد در سامانه دارد.
           </p>
         </div>
       </div>

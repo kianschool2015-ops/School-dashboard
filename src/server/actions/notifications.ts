@@ -2,7 +2,14 @@
 
 import { getSession } from "../auth/guard";
 import { db } from "../db";
-import { directMessages, hierarchyTasks, fridayReports, studentProfiles, mentorTriageCases } from "../db/schema";
+import {
+  directMessages,
+  hierarchyTasks,
+  fridayReports,
+  studentProfiles,
+  mentorTriageCases,
+  examSubmissions,
+} from "../db/schema";
 import { count, eq, and, inArray, isNull } from "drizzle-orm";
 
 export interface NavbarNotificationCounts {
@@ -11,6 +18,7 @@ export interface NavbarNotificationCounts {
   pendingReportsCount: number;
   unassignedStudentsCount: number;
   openTriageCasesCount: number;
+  pendingExamsCount: number;
 }
 
 /**
@@ -26,6 +34,7 @@ export async function getNavbarNotificationCounts(): Promise<NavbarNotificationC
       pendingReportsCount: 0,
       unassignedStudentsCount: 0,
       openTriageCasesCount: 0,
+      pendingExamsCount: 0,
     };
   }
 
@@ -136,12 +145,42 @@ export async function getNavbarNotificationCounts(): Promise<NavbarNotificationC
       openTriageCasesCount = triageRes ? Number(triageRes.count) : 0;
     }
 
+    // 6. Pending Exams (Phase 4 & 6: CBT Submissions requiring mentor review/confirmation)
+    let pendingExamsCount = 0;
+    if (session.role === "MENTOR") {
+      const [examRes] = await db
+        .select({ count: count() })
+        .from(examSubmissions)
+        .where(
+          and(
+            eq(examSubmissions.mentorId, session.userId),
+            inArray(examSubmissions.status, [
+              "AUTO_GRADED_PENDING_MENTOR",
+              "PENDING_MENTOR_REVIEW",
+            ])
+          )
+        );
+      pendingExamsCount = examRes ? Number(examRes.count) : 0;
+    } else if (session.role === "SUPERVISOR" || session.role === "CEO" || session.role === "ADMIN") {
+      const [examRes] = await db
+        .select({ count: count() })
+        .from(examSubmissions)
+        .where(
+          inArray(examSubmissions.status, [
+            "AUTO_GRADED_PENDING_MENTOR",
+            "PENDING_MENTOR_REVIEW",
+          ])
+        );
+      pendingExamsCount = examRes ? Number(examRes.count) : 0;
+    }
+
     return {
       unreadMessagesCount,
       pendingTasksCount,
       pendingReportsCount,
       unassignedStudentsCount,
       openTriageCasesCount,
+      pendingExamsCount,
     };
   } catch (err) {
     console.warn("[Navbar] Failed to fetch notification counts:", err);
@@ -151,6 +190,7 @@ export async function getNavbarNotificationCounts(): Promise<NavbarNotificationC
       pendingReportsCount: 0,
       unassignedStudentsCount: 0,
       openTriageCasesCount: 0,
+      pendingExamsCount: 0,
     };
   }
 }

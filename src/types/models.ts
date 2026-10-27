@@ -422,13 +422,18 @@ export interface ExamRecord {
   title: string;
   courseCode?: string | null;
   category: ExamCategory;
+  examType?: string | null;
+  passingScore?: number;
   durationMinutes: number;
   totalQuestions: number;
   hasNegativeMarking: boolean;
   isPublished: boolean;
   targetAudience: ExamTargetAudience;
+  targetType?: string | null;
   targetCourseCodes: string[];
+  targetCourses?: string[];
   targetStudentIds: string[];
+  targetMentorId?: string | null;
   startDate?: Date | string | null;
   expiryDate?: Date | string | null;
   createdById: string;
@@ -459,24 +464,35 @@ export interface SubjectBreakdownItem {
 export type ExamSubmissionStatus =
   | "IN_PROGRESS"
   | "AUTO_GRADED_PENDING_MENTOR"
-  | "PUBLISHED_TO_STUDENT";
+  | "PENDING_MENTOR_REVIEW"
+  | "PUBLISHED_TO_STUDENT"
+  | "SUBMITTED";
 
 export interface ExamSubmission {
   id: string;
   examId: string;
   studentId: string;
   mentorId: string;
+  reviewedById?: string | null;
   studentName?: string | null;
   startedAt: Date;
   submittedAt?: Date | null;
   answers: Record<string, number>;
+  flaggedQuestions?: string[];
+  eliminatedOptions?: Record<string, number[]>;
+  tabSwitchCount?: number;
   correctCount: number;
   incorrectCount: number;
+  wrongCount?: number;
   unansweredCount: number;
+  blankCount?: number;
   totalPercentage: string | number;
+  rawScore?: string | number;
+  netScore?: string | number;
   subjectBreakdown: SubjectBreakdownItem[];
   status: ExamSubmissionStatus;
   mentorNotes?: string | null;
+  mentorFeedback?: string | null;
   reviewedAt?: Date | null;
   publishedAt?: Date | null;
 }

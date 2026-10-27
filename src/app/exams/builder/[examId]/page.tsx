@@ -19,23 +19,13 @@ export default async function ExamQuestionBuilderPage({ params }: PageProps) {
     redirect("/auth/login");
   }
 
-  // Route Guard: CEO, SUPERVISOR, ADMIN or MENTOR with canCreateExams
-  const isPrivileged = session.role === "CEO" || session.role === "SUPERVISOR" || session.role === "ADMIN";
-  let canCreate = isPrivileged;
-
-  if (session.role === "MENTOR") {
-    try {
-      const [mentorUser] = await db
-        .select({ canCreateExams: users.canCreateExams })
-        .from(users)
-        .where(eq(users.id, session.userId))
-        .limit(1);
-      canCreate = Boolean(mentorUser?.canCreateExams);
-    } catch (err) {
-      console.error("[ExamQuestionBuilderPage] mentor check error:", err);
-      canCreate = false;
-    }
-  }
+  // Route Guard: CEO, SUPERVISOR, ADMIN or MENTOR (with cohort scoping)
+  const isPrivileged =
+    session.role === "CEO" ||
+    session.role === "SUPERVISOR" ||
+    session.role === "ADMIN" ||
+    session.role === "MENTOR";
+  const canCreate = isPrivileged;
 
   if (!canCreate) {
     return (
@@ -46,7 +36,7 @@ export default async function ExamQuestionBuilderPage({ params }: PageProps) {
           </div>
           <h2 className="text-lg font-bold text-rose-600 dark:text-rose-400">دسترسی غیرمجاز</h2>
           <p className="text-xs text-muted-foreground leading-relaxed">
-            UNAUTHORIZED: شما مجوز لازم برای طراحی و بارگذاری آزمون را ندارید.
+            شما مجوز لازم برای طراحی و بارگذاری آزمون را ندارید.
           </p>
         </div>
       </div>
@@ -54,7 +44,8 @@ export default async function ExamQuestionBuilderPage({ params }: PageProps) {
   }
 
   // Fetch Exam and Questions safely
-  let examRow: any = null;
+  type ExamRow = typeof exams.$inferSelect;
+  let examRow: ExamRow | null = null;
   let questions: ExamQuestion[] = [];
 
   try {

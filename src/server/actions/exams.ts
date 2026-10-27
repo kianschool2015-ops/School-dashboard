@@ -13,8 +13,10 @@ import {
   users,
   triageCases,
   auditLogs,
+  mockExams,
+  systemAuditLogs,
 } from "../db/schema";
-import { eq, and, desc, asc, ne, isNotNull } from "drizzle-orm";
+import { eq, and, desc, asc, ne, isNotNull, inArray } from "drizzle-orm";
 import { sendSystemSms } from "../services/sms";
 import { isExamDeadlinePassed, parseJalaliDateTime } from "@/lib/jalali";
 import { getRedisClient } from "../redis";
@@ -38,24 +40,18 @@ import type {
 
 /**
  * Route Guard for Exam Authoring:
- * Only CEO, SUPERVISOR, ADMIN, or MENTOR with canCreateExams flag
+ * Only CEO, SUPERVISOR, ADMIN, or MENTOR (with cohort scoping)
  */
 async function verifyExamAuthorPermission(session: { role: string; userId: string }) {
-  if (session.role === "CEO" || session.role === "SUPERVISOR" || session.role === "ADMIN") {
+  if (
+    session.role === "CEO" ||
+    session.role === "SUPERVISOR" ||
+    session.role === "ADMIN" ||
+    session.role === "MENTOR"
+  ) {
     return;
   }
-  if (session.role === "MENTOR") {
-    const [user] = await db
-      .select({ canCreateExams: users.canCreateExams })
-      .from(users)
-      .where(eq(users.id, session.userId))
-      .limit(1);
-
-    if (user?.canCreateExams) {
-      return;
-    }
-  }
-  throw new Error("UNAUTHORIZED: شما مجوز لازم برای طراحی و بارگذاری آزمون را ندارید.");
+  throw new Error("شما مجوز لازم برای طراحی و بارگذاری آزمون را ندارید.");
 }
 
 /**
@@ -77,10 +73,13 @@ async function ensureExamExists(examId: string, examTitle?: string) {
           id: examId,
           title: examTitle || "آزمون شبیه‌ساز وکالت",
           category: "MOCK_BAR",
+          examType: "MOCK_BAR",
+          passingScore: 50,
           durationMinutes: 120,
           createdById: "usr_admin1",
           isPublished: true,
           targetAudience: "ALL",
+          targetType: "ALL",
         })
         .onConflictDoNothing();
     }
@@ -98,13 +97,18 @@ async function ensureExamExists(examId: string, examTitle?: string) {
  */
 export async function createExamAction(payload: {
   title: string;
-  courseCode?: string;
+  courseCode?: string | null;
   category: ExamCategory;
+  examType?: string;
+  passingScore?: number;
   durationMinutes: number;
   hasNegativeMarking: boolean;
   targetAudience?: ExamTargetAudience;
+  targetType?: string;
   targetCourseCodes?: string[];
+  targetCourses?: string[];
   targetStudentIds?: string[];
+  targetMentorId?: string | null;
   startDate?: string | Date | null;
   expiryDate?: string | Date | null;
 }): Promise<{ success: boolean; examId?: string; message: string }> {
@@ -137,18 +141,27 @@ export async function createExamAction(payload: {
       }
     }
 
+    const targetType = payload.targetType || payload.targetAudience || "ALL";
+    const targetMentorId =
+      payload.targetMentorId || (session.role === "MENTOR" ? session.userId : null);
+
     await db.insert(exams).values({
       id: examId,
       title: payload.title.trim(),
       courseCode: payload.courseCode?.trim() || "GARNET-BAR-360",
       category: payload.category,
+      examType: payload.examType || "MOCK_BAR",
+      passingScore: payload.passingScore ?? 50,
       durationMinutes: payload.durationMinutes || 120,
       totalQuestions: 0,
       hasNegativeMarking: payload.hasNegativeMarking ?? true,
       isPublished: false,
       targetAudience: payload.targetAudience || "ALL",
+      targetType,
       targetCourseCodes: payload.targetCourseCodes || [],
+      targetCourses: payload.targetCourses || [],
       targetStudentIds: payload.targetStudentIds || [],
+      targetMentorId,
       startDate: parsedStartDate,
       expiryDate: parsedExpiryDate,
       createdById: session.userId,
@@ -179,13 +192,18 @@ export async function createExamAction(payload: {
 export async function updateExamHeaderAction(payload: {
   examId: string;
   title: string;
-  courseCode?: string;
+  courseCode?: string | null;
   category: ExamCategory;
+  examType?: string;
+  passingScore?: number;
   durationMinutes: number;
   hasNegativeMarking: boolean;
   targetAudience?: ExamTargetAudience;
+  targetType?: string;
   targetCourseCodes?: string[];
+  targetCourses?: string[];
   targetStudentIds?: string[];
+  targetMentorId?: string | null;
   startDate?: string | Date | null;
   expiryDate?: string | Date | null;
 }): Promise<{ success: boolean; message: string }> {
@@ -226,11 +244,16 @@ export async function updateExamHeaderAction(payload: {
         title: payload.title.trim(),
         courseCode: payload.courseCode?.trim() || null,
         category: payload.category,
+        examType: payload.examType || existing.examType || "MOCK_BAR",
+        passingScore: payload.passingScore ?? existing.passingScore ?? 50,
         durationMinutes: payload.durationMinutes,
         hasNegativeMarking: payload.hasNegativeMarking,
-        targetAudience: payload.targetAudience || "ALL",
-        targetCourseCodes: payload.targetCourseCodes || [],
-        targetStudentIds: payload.targetStudentIds || [],
+        targetAudience: payload.targetAudience || existing.targetAudience || "ALL",
+        targetType: payload.targetType || existing.targetType || "ALL",
+        targetCourseCodes: payload.targetCourseCodes || existing.targetCourseCodes || [],
+        targetCourses: payload.targetCourses || existing.targetCourses || [],
+        targetStudentIds: payload.targetStudentIds || existing.targetStudentIds || [],
+        targetMentorId: payload.targetMentorId !== undefined ? payload.targetMentorId : existing.targetMentorId,
         startDate: parsedStartDate,
         expiryDate: parsedExpiryDate,
         updatedAt: new Date(),
@@ -533,6 +556,46 @@ export async function publishExamAction(
 }
 
 /**
+ * Delete Modern CBT Exam and its questions/submissions
+ */
+export async function deleteExamAction(
+  examId: string
+): Promise<{ success: boolean; message: string }> {
+  try {
+    const session = await requireAuth();
+    await verifyExamAuthorPermission(session);
+
+    const [exam] = await db.select().from(exams).where(eq(exams.id, examId)).limit(1);
+    if (!exam) {
+      return { success: false, message: "آزمون مورد نظر یافت نشد." };
+    }
+
+    if (session.role === "MENTOR" && exam.createdById !== session.userId) {
+      return { success: false, message: "شما مجاز به حذف آزمون دیگران نیستید." };
+    }
+
+    // Cascade delete submissions, questions, and the exam
+    await db.delete(examSubmissions).where(eq(examSubmissions.examId, examId));
+    await db.delete(examQuestions).where(eq(examQuestions.examId, examId));
+    await db.delete(exams).where(eq(exams.id, examId));
+
+    revalidatePath("/exams");
+    revalidatePath("/student/exams");
+    revalidatePath("/student/dashboard");
+
+    return {
+      success: true,
+      message: "آزمون و تمامی سؤالات آن با موفقیت حذف گردید.",
+    };
+  } catch (error: unknown) {
+    return {
+      success: false,
+      message: error instanceof Error ? error.message : "خطا در حذف آزمون.",
+    };
+  }
+}
+
+/**
  * Fetch Exam With All Questions
  * Implements C-04: Strip correctOption and explanation from student queries unless published
  */
@@ -694,7 +757,15 @@ export async function getExamTargetOptionsAction(): Promise<{
 
     const profileMap = new Map(profiles.map((p) => [p.userId, p]));
 
-    const students = studentUsers.map((u) => {
+    const filteredStudentUsers =
+      session.role === "MENTOR"
+        ? studentUsers.filter((u) => {
+            const prof = profileMap.get(u.id);
+            return prof?.mentorId === session.userId;
+          })
+        : studentUsers;
+
+    const students = filteredStudentUsers.map((u) => {
       const prof = profileMap.get(u.id);
       return {
         id: u.id,
@@ -820,6 +891,9 @@ export async function startExamAttemptAction(examId: string): Promise<{
 export async function submitExamAction(payload: {
   examId: string;
   answers: Record<string, number>; // { [questionId]: selectedOption (1 to 4) }
+  flaggedQuestions?: string[];
+  eliminatedOptions?: Record<string, number[]>;
+  tabSwitchCount?: number;
   startedAt?: string;
 }): Promise<{
   success: boolean;
@@ -957,14 +1031,16 @@ export async function submitExamAction(payload: {
       }
     }
 
-    // Build subject breakdown
+    // Build subject breakdown with clamp >= 0
     const subjectBreakdown: SubjectBreakdownItem[] = Object.entries(subjectMap).map(
       ([subject, counts]) => {
         let percentage = 0;
         if (counts.total > 0) {
           if (exam.hasNegativeMarking) {
-            percentage =
-              ((counts.correct * 3 - counts.incorrect) / (counts.total * 3)) * 100;
+            percentage = Math.max(
+              0,
+              ((counts.correct * 3 - counts.incorrect) / (counts.total * 3)) * 100
+            );
           } else {
             percentage = (counts.correct / counts.total) * 100;
           }
@@ -979,18 +1055,21 @@ export async function submitExamAction(payload: {
       }
     );
 
-    // Calculate overall total percentage
+    // Calculate overall total percentage (clamped >= 0)
     let totalPercentage = 0;
     const totalQCount = questions.length;
     if (totalQCount > 0) {
       if (exam.hasNegativeMarking) {
-        totalPercentage =
-          ((totalCorrect * 3 - totalIncorrect) / (totalQCount * 3)) * 100;
+        totalPercentage = Math.max(
+          0,
+          ((totalCorrect * 3 - totalIncorrect) / (totalQCount * 3)) * 100
+        );
       } else {
         totalPercentage = (totalCorrect / totalQCount) * 100;
       }
     }
     const finalPercentageNum = Number(totalPercentage.toFixed(2));
+    const rawPercentageNum = totalQCount > 0 ? Number(((totalCorrect / totalQCount) * 100).toFixed(2)) : 0;
 
     const subjectScoresPayload = subjectBreakdown.reduce<Record<string, number>>((acc, curr) => {
       acc[curr.subject] = curr.percentage;
@@ -1000,22 +1079,34 @@ export async function submitExamAction(payload: {
     const submissionId = existingSub?.id || `sub_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
     const resolvedStartedAt = startedAtDate || (payload.startedAt ? new Date(payload.startedAt) : new Date(Date.now() - exam.durationMinutes * 60 * 1000));
 
+    const submissionFields = {
+      submittedAt: new Date(),
+      studentName,
+      mentorId,
+      studentProfileId: studentProfile?.id || null,
+      examTitle: exam.title,
+      answers: payload.answers,
+      flaggedQuestions: payload.flaggedQuestions || [],
+      eliminatedOptions: payload.eliminatedOptions || {},
+      tabSwitchCount: payload.tabSwitchCount || 0,
+      correctCount: totalCorrect,
+      incorrectCount: totalIncorrect,
+      wrongCount: totalIncorrect,
+      unansweredCount: totalUnanswered,
+      blankCount: totalUnanswered,
+      totalPercentage: finalPercentageNum.toFixed(2),
+      rawScore: rawPercentageNum.toFixed(2),
+      netScore: finalPercentageNum.toFixed(2),
+      subjectBreakdown,
+      subjectScores: subjectScoresPayload,
+      status: "AUTO_GRADED_PENDING_MENTOR" as const,
+      scorePercent: Math.round(finalPercentageNum),
+    };
+
     if (existingSub) {
       await db
         .update(examSubmissions)
-        .set({
-          submittedAt: new Date(),
-          studentName,
-          answers: payload.answers,
-          correctCount: totalCorrect,
-          incorrectCount: totalIncorrect,
-          unansweredCount: totalUnanswered,
-          totalPercentage: finalPercentageNum.toFixed(2),
-          subjectBreakdown,
-          subjectScores: subjectScoresPayload,
-          status: "AUTO_GRADED_PENDING_MENTOR",
-          scorePercent: Math.round(finalPercentageNum),
-        })
+        .set(submissionFields)
         .where(eq(examSubmissions.id, existingSub.id));
     } else {
       await ensureExamExists(exam.id, exam.title);
@@ -1024,21 +1115,8 @@ export async function submitExamAction(payload: {
         id: submissionId,
         examId: exam.id,
         studentId: session.userId,
-        studentName,
-        mentorId,
-        studentProfileId: studentProfile?.id || null,
-        examTitle: exam.title,
         startedAt: resolvedStartedAt,
-        submittedAt: new Date(),
-        answers: payload.answers,
-        correctCount: totalCorrect,
-        incorrectCount: totalIncorrect,
-        unansweredCount: totalUnanswered,
-        totalPercentage: finalPercentageNum.toFixed(2),
-        subjectBreakdown,
-        subjectScores: subjectScoresPayload,
-        status: "AUTO_GRADED_PENDING_MENTOR",
-        scorePercent: Math.round(finalPercentageNum),
+        ...submissionFields,
       });
     }
 
@@ -1185,7 +1263,8 @@ export async function getSubmissionForReviewAction(submissionId: string) {
 }
 
 /**
- * Publish Exam Result To Student (Stage 2 Publishing)
+ * Publish Exam Result To Student (Stage 2 Publishing / Mentor Confirmation Gate)
+ * Bridges modern examSubmissions with legacy mock_exams for 100% multi-dashboard synchronization.
  */
 export async function publishExamResultToStudentAction(
   submissionId: string,
@@ -1204,41 +1283,119 @@ export async function publishExamResultToStudentAction(
       return { success: false, message: "پاسخنامه مورد نظر یافت نشد." };
     }
 
-    if (session.role === "MENTOR") {
-      const isDirectMentor = sub.mentorId === session.userId;
-      let isCurrentAssignedMentor = false;
-      if (!isDirectMentor && sub.studentId) {
-        const [prof] = await db
-          .select({ mentorId: studentProfiles.mentorId })
-          .from(studentProfiles)
-          .where(eq(studentProfiles.userId, sub.studentId))
-          .limit(1);
-        isCurrentAssignedMentor = prof?.mentorId === session.userId;
+    let resolvedProfileId = sub.studentProfileId;
+    if (sub.studentId) {
+      const [prof] = await db
+        .select({ id: studentProfiles.id, mentorId: studentProfiles.mentorId })
+        .from(studentProfiles)
+        .where(eq(studentProfiles.userId, sub.studentId))
+        .limit(1);
+
+      if (prof) {
+        resolvedProfileId = prof.id;
       }
-      if (!isDirectMentor && !isCurrentAssignedMentor) {
-        return { success: false, message: "شما پشتیبان مستقیم این داوطلب نیستید." };
+
+      if (session.role === "MENTOR") {
+        const isDirectMentor = sub.mentorId === session.userId;
+        const isCurrentAssignedMentor = prof?.mentorId === session.userId;
+        if (!isDirectMentor && !isCurrentAssignedMentor) {
+          return { success: false, message: "شما پشتیبان مستقیم این داوطلب نیستید." };
+        }
       }
     }
 
     const now = new Date();
+    const cleanNotes = mentorNotes.trim();
 
+    // 1. Update examSubmissions
     await db
       .update(examSubmissions)
       .set({
         mentorId: session.userId,
+        reviewedById: session.userId,
         status: "PUBLISHED_TO_STUDENT",
-        mentorNotes: mentorNotes.trim(),
+        mentorNotes: cleanNotes,
+        mentorFeedback: cleanNotes,
         reviewedAt: now,
         publishedAt: now,
       })
       .where(eq(examSubmissions.id, submissionId));
 
+    // 2. Bridge to mock_exams for instant multi-dashboard synchronization (Phase 4 & 6)
+    if (resolvedProfileId) {
+      try {
+        const mockId = `mock_${sub.id}`;
+        const scorePercent = Math.max(0, Math.round(Number(sub.netScore || sub.totalPercentage || 0)));
+        const jalaliDate = new Intl.DateTimeFormat("fa-IR-u-ca-persian", {
+          year: "numeric",
+          month: "2-digit",
+          day: "2-digit",
+        })
+          .format(now)
+          .replace(/\//g, "-");
+
+        const [existingMock] = await db
+          .select({ id: mockExams.id })
+          .from(mockExams)
+          .where(eq(mockExams.id, mockId))
+          .limit(1);
+
+        const mockPayload = {
+          studentProfileId: resolvedProfileId,
+          examTitle: sub.examTitle || "آزمون شبیه‌ساز وکالت",
+          examDate: jalaliDate,
+          hasParticipated: true,
+          isExcusedAbsence: false,
+          overallScorePercent: scorePercent,
+          correctCount: sub.correctCount,
+          wrongCount: sub.wrongCount || sub.incorrectCount || 0,
+          unansweredCount: sub.unansweredCount || sub.blankCount || 0,
+          subjectScores: (sub.subjectScores as Record<string, number>) || {},
+          analysisStatus: "DONE" as const,
+          primaryErrorCause: cleanNotes || undefined,
+        };
+
+        if (existingMock) {
+          await db.update(mockExams).set(mockPayload).where(eq(mockExams.id, mockId));
+        } else {
+          await db.insert(mockExams).values({
+            id: mockId,
+            ...mockPayload,
+          });
+        }
+      } catch (bridgeErr) {
+        console.warn("[publishExamResultToStudentAction] mock_exams sync warning:", bridgeErr);
+      }
+    }
+
+    // 3. System Audit Log Entry
+    try {
+      await db.insert(systemAuditLogs).values({
+        id: `log_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+        actorId: session.userId,
+        actorName: session.fullName || "پشتیبان آموزشی",
+        actorRole: session.role,
+        eventType: "EXAM_MANAGEMENT",
+        action: "CONFIRM_AND_PUBLISH_RESULT",
+        targetEntity: "exam_submissions",
+        targetId: submissionId,
+        details: `تایید و انتشار کارنامه آزمون «${sub.examTitle || "آزمون"}» برای داوطلب با نمره تراز ${sub.netScore || sub.totalPercentage}٪`,
+      });
+    } catch {}
+
+    // 4. Revalidate all dependent dashboards and views
     revalidatePath("/student/exams");
     revalidatePath("/student/dashboard");
     revalidatePath("/exams");
     revalidatePath(`/student/exams/${sub.examId}`);
     revalidatePath("/mentor/students");
+    if (resolvedProfileId) {
+      revalidatePath(`/mentor/student/${resolvedProfileId}`);
+    }
     revalidatePath(`/mentor/exams/review/${submissionId}`);
+    revalidatePath("/supervisor");
+    revalidatePath("/supervisor/mentors");
+    revalidatePath("/executive");
 
     return {
       success: true,
@@ -1253,13 +1410,18 @@ export async function publishExamResultToStudentAction(
 }
 
 /**
+ * Confirm and publish exam result action (Alias for Phase 4 Mentor Confirmation Gate)
+ */
+export const confirmAndPublishExamResultAction = publishExamResultToStudentAction;
+
+/**
  * Get List of Submissions Requiring Mentor Review
  */
 export async function getPendingMentorReviewsAction() {
   try {
     const session = await requireRole(["MENTOR", "SUPERVISOR", "CEO", "ADMIN"]);
 
-    let query = db
+    const query = db
       .select({
         submission: examSubmissions,
         studentName: users.fullName,
@@ -1269,8 +1431,48 @@ export async function getPendingMentorReviewsAction() {
       .from(examSubmissions)
       .innerJoin(users, eq(examSubmissions.studentId, users.id))
       .innerJoin(exams, eq(examSubmissions.examId, exams.id))
-      .where(eq(examSubmissions.status, "AUTO_GRADED_PENDING_MENTOR"))
+      .where(
+        inArray(examSubmissions.status, [
+          "AUTO_GRADED_PENDING_MENTOR",
+          "PENDING_MENTOR_REVIEW",
+        ])
+      )
       .orderBy(desc(examSubmissions.submittedAt));
+
+    const rows = await query;
+    const isPrivileged = session.role === "CEO" || session.role === "ADMIN";
+    const filteredRows = session.role === "MENTOR"
+      ? rows.filter((r) => r.submission.mentorId === session.userId)
+      : rows;
+
+    return filteredRows.map((r) => ({
+      ...r,
+      studentPhone: isPrivileged ? r.studentPhone : maskPhoneNumber(r.studentPhone),
+    }));
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Get List of Confirmed Exam Submissions (Published to Student)
+ */
+export async function getConfirmedExamSubmissionsAction() {
+  try {
+    const session = await requireRole(["MENTOR", "SUPERVISOR", "CEO", "ADMIN"]);
+
+    const query = db
+      .select({
+        submission: examSubmissions,
+        studentName: users.fullName,
+        studentPhone: users.phoneNumber,
+        examTitle: exams.title,
+      })
+      .from(examSubmissions)
+      .innerJoin(users, eq(examSubmissions.studentId, users.id))
+      .innerJoin(exams, eq(examSubmissions.examId, exams.id))
+      .where(eq(examSubmissions.status, "PUBLISHED_TO_STUDENT"))
+      .orderBy(desc(examSubmissions.publishedAt));
 
     const rows = await query;
     const isPrivileged = session.role === "CEO" || session.role === "ADMIN";

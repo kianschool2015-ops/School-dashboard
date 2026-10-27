@@ -46,6 +46,7 @@ interface SidebarProps {
   pendingReportsCount?: number;
   unassignedStudentsCount?: number;
   openTriageCasesCount?: number;
+  pendingExamsCount?: number;
 }
 
 interface NavItem {
@@ -65,6 +66,7 @@ export function AppSidebar({
   pendingReportsCount: initialPendingReports = 0,
   unassignedStudentsCount: initialUnassignedStudents = 0,
   openTriageCasesCount: initialOpenTriageCases = 0,
+  pendingExamsCount: initialPendingExams = 0,
 }: SidebarProps) {
   const pathname = usePathname();
   const router = useRouter();
@@ -77,6 +79,7 @@ export function AppSidebar({
   const [pendingReports, setPendingReports] = useState(initialPendingReports);
   const [unassignedStudents, setUnassignedStudents] = useState(initialUnassignedStudents);
   const [openTriageCases, setOpenTriageCases] = useState(initialOpenTriageCases);
+  const [pendingExams, setPendingExams] = useState(initialPendingExams);
 
   const syncNotificationCounts = useCallback(async () => {
     try {
@@ -86,6 +89,7 @@ export function AppSidebar({
       setPendingReports(counts.pendingReportsCount);
       setUnassignedStudents(counts.unassignedStudentsCount);
       setOpenTriageCases(counts.openTriageCasesCount || 0);
+      setPendingExams(counts.pendingExamsCount || 0);
     } catch {
       // Ignore background sync errors silently
     }
@@ -170,7 +174,12 @@ export function AppSidebar({
         icon: CheckSquare,
         badge: pendingTasks > 0 ? pendingTasks : undefined,
       },
-      { title: "طراحی و بارگذاری آزمون", href: "/exams", icon: FileEdit },
+      {
+        title: "طراحی و بارگذاری آزمون",
+        href: "/exams",
+        icon: FileEdit,
+        badge: pendingExams > 0 ? pendingExams : undefined,
+      },
       { title: "ساعات پاسخگویی تلفنی", href: "/mentor/calling-schedule", icon: PhoneCall },
       {
         title: "پیام‌ها و اسناد",
@@ -203,7 +212,12 @@ export function AppSidebar({
         badge: pendingTasks > 0 ? pendingTasks : undefined,
       },
       { title: "برنامه‌ریزی هفتگی", href: "/plans", icon: CalendarRange },
-      { title: "تایید و بانک آزمون‌ها", href: "/exams", icon: FileEdit },
+      {
+        title: "تایید و بانک آزمون‌ها",
+        href: "/exams",
+        icon: FileEdit,
+        badge: pendingExams > 0 ? pendingExams : undefined,
+      },
       {
         title: "پیام‌ها و ارتباطات",
         href: "/messages",
@@ -227,7 +241,12 @@ export function AppSidebar({
       },
       { title: "نظارت و پیگیری سرپرستان", href: "/supervisor", icon: Users },
       { title: "برنامه‌ریزی هفتگی", href: "/plans", icon: CalendarRange },
-      { title: "طراحی و بانک آزمون‌ها", href: "/exams", icon: FileEdit },
+      {
+        title: "طراحی و بانک آزمون‌ها",
+        href: "/exams",
+        icon: FileEdit,
+        badge: pendingExams > 0 ? pendingExams : undefined,
+      },
       {
         title: "کارتابل وظایف سازمانی",
         href: "/tasks",
